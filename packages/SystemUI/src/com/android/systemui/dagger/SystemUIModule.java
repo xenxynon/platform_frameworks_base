@@ -48,6 +48,7 @@ import com.android.systemui.biometrics.domain.BiometricsDomainLayerModule;
 import com.android.systemui.bouncer.data.repository.BouncerRepositoryModule;
 import com.android.systemui.bouncer.domain.interactor.BouncerInteractorModule;
 import com.android.systemui.bouncer.ui.BouncerViewModule;
+import com.android.systemui.p404.P404Module;
 import com.android.systemui.brightness.dagger.ScreenBrightnessModule;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.classifier.FalsingModule;
@@ -213,6 +214,7 @@ import javax.inject.Named;
         CameraProtectionModule.class,
         ClipboardOverlayModule.class,
         ClockRegistryModule.class,
+        P404Module.class,
         CommunalModule.class,
         CommonDataLayerModule.class,
         ConfigurationControllerModule.class,

@@ -525,6 +525,7 @@ android_library {
         "androidx.lifecycle_lifecycle-viewmodel-compose",
         "device_policy_aconfig_flags_lib",
         "bcsmartspace-google",
+        "vendor.p404.powershare-V1-java",
     ],
     manifest: "AndroidManifest.xml",
     libs: [
@@ -690,6 +691,7 @@ android_library {
         "androidx.compose.animation_animation-graphics",
         "androidx.lifecycle_lifecycle-viewmodel-compose",
         "TraceurCommon",
+        "vendor.p404.powershare-V1-java",
     ],
 }
 

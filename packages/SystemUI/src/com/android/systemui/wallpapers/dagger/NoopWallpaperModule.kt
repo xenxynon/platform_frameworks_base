@@ -14,34 +14,17 @@
  * limitations under the License.
  */
 
-package android.content.res;
+package com.android.systemui.wallpapers.dagger
 
-/**
- * Counter used to track the number of tags seen during manifest validation.
- *
- * {@hide}
- */
-public class TagCounter {
-    private static final int DEFAULT_MAX_COUNT = 512;
+import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.wallpapers.data.repository.NoopWallpaperRepository
+import com.android.systemui.wallpapers.data.repository.WallpaperRepository
+import dagger.Binds
+import dagger.Module
 
-    private int mMaxValue;
-    private int mCount;
-
-    public TagCounter() {
-        mMaxValue = DEFAULT_MAX_COUNT;
-        mCount = 0;
-    }
-
-    void reset(int maxValue) {
-        this.mMaxValue = maxValue;
-        this.mCount = 0;
-    }
-
-    void increment() {
-        mCount += 1;
-    }
-
-    public boolean isValid() {
-        return mCount <= mMaxValue;
-    }
+@Module
+interface NoopWallpaperModule {
+    @Binds
+    @SysUISingleton
+    fun bindWallpaperRepository(impl: NoopWallpaperRepository): WallpaperRepository
 }

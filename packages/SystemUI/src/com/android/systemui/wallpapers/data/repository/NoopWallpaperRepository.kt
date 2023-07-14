@@ -14,34 +14,20 @@
  * limitations under the License.
  */
 
-package android.content.res;
+package com.android.systemui.wallpapers.data.repository
+
+import com.android.systemui.dagger.SysUISingleton
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Counter used to track the number of tags seen during manifest validation.
+ * A no-op implementation of [WallpaperRepository].
  *
- * {@hide}
+ * Used for variants of SysUI that do not support wallpaper but require other SysUI classes that
+ * have a wallpaper dependency.
  */
-public class TagCounter {
-    private static final int DEFAULT_MAX_COUNT = 512;
-
-    private int mMaxValue;
-    private int mCount;
-
-    public TagCounter() {
-        mMaxValue = DEFAULT_MAX_COUNT;
-        mCount = 0;
-    }
-
-    void reset(int maxValue) {
-        this.mMaxValue = maxValue;
-        this.mCount = 0;
-    }
-
-    void increment() {
-        mCount += 1;
-    }
-
-    public boolean isValid() {
-        return mCount <= mMaxValue;
-    }
+@SysUISingleton
+class NoopWallpaperRepository @Inject constructor() : WallpaperRepository {
+    override val wallpaperSupportsAmbientMode = MutableStateFlow(false).asStateFlow()
 }

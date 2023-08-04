@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package com.android.server.wm.flicker.notification
+package com.android.systemui.log.dagger
 
-import android.tools.common.traces.component.ComponentNameMatcher
+import javax.inject.Qualifier
 
-object Consts {
-    val IMAGE_WALLPAPER = ComponentNameMatcher("", "com.android.systemui.wallpapers.ImageWallpaper")
-}
+/** A [com.android.systemui.log.LogBuffer] for the Scene Framework. */
+@Qualifier
+@MustBeDocumented
+@Retention(AnnotationRetention.RUNTIME)
+annotation class SceneFrameworkLog

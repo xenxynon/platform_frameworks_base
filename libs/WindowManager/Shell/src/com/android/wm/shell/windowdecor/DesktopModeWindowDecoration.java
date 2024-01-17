@@ -293,7 +293,8 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
                     mDecorationContainerSurface,
                     mDragPositioningCallback,
                     mSurfaceControlBuilderSupplier,
-                    mSurfaceControlTransactionSupplier);
+                    mSurfaceControlTransactionSupplier,
+                    mDisplayController);
         }
 
         final int touchSlop = ViewConfiguration.get(mResult.mRootView.getContext())
@@ -521,6 +522,20 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
         }
     }
 
+    /**
+     * Close an open maximize menu if input is outside of menu coordinates
+     *
+     * @param ev the tapped point to compare against
+     */
+    void closeMaximizeMenuIfNeeded(MotionEvent ev) {
+        if (!isMaximizeMenuActive()) return;
+
+        final PointF inputPoint = offsetCaptionLocation(ev);
+        if (!mMaximizeMenu.isValidMenuInput(inputPoint)) {
+            closeMaximizeMenu();
+        }
+    }
+
     boolean isFocused() {
         return mTaskInfo.isFocused;
     }
@@ -533,8 +548,10 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
      */
     private PointF offsetCaptionLocation(MotionEvent ev) {
         final PointF result = new PointF(ev.getX(), ev.getY());
-        final Point positionInParent = mTaskOrganizer.getRunningTaskInfo(mTaskInfo.taskId)
-                .positionInParent;
+        final ActivityManager.RunningTaskInfo taskInfo =
+                mTaskOrganizer.getRunningTaskInfo(mTaskInfo.taskId);
+        if (taskInfo == null) return result;
+        final Point positionInParent = taskInfo.positionInParent;
         result.offset(-mRelayoutParams.mCaptionX, -mRelayoutParams.mCaptionY);
         result.offset(-positionInParent.x, -positionInParent.y);
         return result;
@@ -560,6 +577,13 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
     }
 
     /**
+     * Returns true if motion event is within the caption's root view's bounds.
+     */
+    boolean checkTouchEventInCaption(MotionEvent ev) {
+        return checkEventInCaptionView(ev, getCaptionViewId());
+    }
+
+    /**
      * Check a passed MotionEvent if a click has occurred on any button on this caption
      * Note this should only be called when a regular onClick is not possible
      * (i.e. the button was clicked through status bar layer)
@@ -574,6 +598,7 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
             clickIfPointInView(new PointF(ev.getX(), ev.getY()), handle);
         } else {
             mHandleMenu.checkClickEvent(ev);
+            closeHandleMenuIfNeeded(ev);
         }
     }
 

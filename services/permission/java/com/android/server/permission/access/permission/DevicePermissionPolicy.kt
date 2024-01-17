@@ -59,6 +59,35 @@ class DevicePermissionPolicy : SchemePolicy() {
         }
     }
 
+    fun MutateStateScope.trimDevicePermissionStates(deviceIds: Set<String>) {
+        newState.userStates.forEachIndexed { _, userId, userState ->
+            userState.appIdDevicePermissionFlags.forEachReversedIndexed { _, appId, _ ->
+                val appIdDevicePermissionFlags =
+                    newState.mutateUserState(userId)!!.mutateAppIdDevicePermissionFlags()
+                val devicePermissionFlags =
+                    appIdDevicePermissionFlags.mutate(appId) ?: return@forEachReversedIndexed
+
+                devicePermissionFlags.forEachReversedIndexed { _, deviceId, _ ->
+                    if (deviceId !in deviceIds) {
+                        devicePermissionFlags -= deviceId
+                    }
+                }
+            }
+        }
+    }
+
+    fun MutateStateScope.onDeviceIdRemoved(deviceId: String) {
+        newState.userStates.forEachIndexed { _, userId, userState ->
+            userState.appIdDevicePermissionFlags.forEachReversedIndexed { _, appId, _ ->
+                val appIdDevicePermissionFlags =
+                    newState.mutateUserState(userId)!!.mutateAppIdDevicePermissionFlags()
+                val devicePermissionFlags =
+                    appIdDevicePermissionFlags.mutate(appId) ?: return@forEachReversedIndexed
+                devicePermissionFlags -= deviceId
+            }
+        }
+    }
+
     override fun MutateStateScope.onStorageVolumeMounted(
         volumeUuid: String?,
         packageNames: List<String>,
@@ -88,6 +117,10 @@ class DevicePermissionPolicy : SchemePolicy() {
         resetRuntimePermissions(packageName, userId)
     }
 
+    /**
+     * Reset permission states for all permissions requested by the given package, if no other
+     * package (sharing the App ID) request these permissions.
+     */
     fun MutateStateScope.resetRuntimePermissions(packageName: String, userId: Int) {
         // It's okay to skip resetting permissions for packages that are removed,
         // because their states will be trimmed in onPackageRemoved()/onAppIdRemoved()
@@ -110,6 +143,7 @@ class DevicePermissionPolicy : SchemePolicy() {
         }
     }
 
+    // Trims permission state for permissions not requested by the App ID anymore.
     private fun MutateStateScope.trimPermissionStates(appId: Int) {
         val requestedPermissions = MutableIndexedSet<String>()
         forEachPackageInAppId(appId) {
@@ -211,10 +245,6 @@ class DevicePermissionPolicy : SchemePolicy() {
         flagMask: Int,
         flagValues: Int
     ): Boolean {
-        if (!isDeviceAwarePermission(permissionName)) {
-            Slog.w(LOG_TAG, "$permissionName is not a device aware permission.")
-            return false
-        }
         val oldFlags =
             newState.userStates[userId]!!
                 .appIdDevicePermissionFlags[appId]
@@ -261,26 +291,12 @@ class DevicePermissionPolicy : SchemePolicy() {
         synchronized(listenersLock) { listeners = listeners + listener }
     }
 
-    fun removeOnPermissionFlagsChangedListener(listener: OnDevicePermissionFlagsChangedListener) {
-        synchronized(listenersLock) { listeners = listeners - listener }
-    }
-
-    private fun isDeviceAwarePermission(permissionName: String): Boolean =
-        DEVICE_AWARE_PERMISSIONS.contains(permissionName)
-
     companion object {
         private val LOG_TAG = DevicePermissionPolicy::class.java.simpleName
-
-        /** These permissions are supported for virtual devices. */
-        // TODO: b/298661870 - Use new API to get the list of device aware permissions.
-        val DEVICE_AWARE_PERMISSIONS = emptySet<String>()
     }
 
-    /**
-     * TODO: b/289355341 - implement listener for permission changes Listener for permission flags
-     *   changes.
-     */
-    abstract class OnDevicePermissionFlagsChangedListener {
+    /** Listener for permission flags changes. */
+    interface OnDevicePermissionFlagsChangedListener {
         /**
          * Called when a permission flags change has been made to the upcoming new state.
          *
@@ -288,7 +304,7 @@ class DevicePermissionPolicy : SchemePolicy() {
          * and only call external code after [onStateMutated] when the new state has actually become
          * the current state visible to external code.
          */
-        abstract fun onDevicePermissionFlagsChanged(
+        fun onDevicePermissionFlagsChanged(
             appId: Int,
             userId: Int,
             deviceId: String,
@@ -302,6 +318,6 @@ class DevicePermissionPolicy : SchemePolicy() {
          *
          * Implementations should keep this method fast to avoid stalling the locked state mutation.
          */
-        abstract fun onStateMutated()
+        fun onStateMutated()
     }
 }

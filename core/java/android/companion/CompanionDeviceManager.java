@@ -20,7 +20,6 @@ import static android.Manifest.permission.REQUEST_COMPANION_PROFILE_APP_STREAMIN
 import static android.Manifest.permission.REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION;
 import static android.Manifest.permission.REQUEST_COMPANION_PROFILE_COMPUTER;
 import static android.Manifest.permission.REQUEST_COMPANION_PROFILE_WATCH;
-import static android.annotation.SystemApi.Client.MODULE_LIBRARIES;
 
 import android.annotation.CallbackExecutor;
 import android.annotation.FlaggedApi;
@@ -33,9 +32,11 @@ import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.annotation.UserHandleAware;
+import android.annotation.UserIdInt;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
+import android.app.ActivityOptions;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.bluetooth.BluetoothAdapter;
@@ -217,38 +218,31 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @TestApi public static final int MESSAGE_REQUEST_PING = 0x63807378; // ?PIN
+    public static final int MESSAGE_REQUEST_PING = 0x63807378; // ?PIN
     /**
      * Message header assigned to the remote authentication handshakes.
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     public static final int MESSAGE_REQUEST_REMOTE_AUTHENTICATION = 0x63827765; // ?RMA
     /**
      * Message header assigned to the telecom context sync metadata.
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     public static final int MESSAGE_REQUEST_CONTEXT_SYNC = 0x63678883; // ?CXS
     /**
      * Message header assigned to the permission restore request.
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     public static final int MESSAGE_REQUEST_PERMISSION_RESTORE = 0x63826983; // ?RES
 
     /**
      * The length limit of Association tag.
      * @hide
      */
-    private static final int ASSOCIATION_TAG_LENGTH_LIMIT = 100;
+    private static final int ASSOCIATION_TAG_LENGTH_LIMIT = 1024;
 
     /**
      * Callback for applications to receive updates about and the outcome of
@@ -708,7 +702,9 @@ public final class CompanionDeviceManager {
             IntentSender intentSender = mService
                     .requestNotificationAccess(component, mContext.getUserId())
                     .getIntentSender();
-            mContext.startIntentSender(intentSender, null, 0, 0, 0);
+            mContext.startIntentSender(intentSender, null, 0, 0, 0,
+                    ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         } catch (IntentSender.SendIntentException e) {
@@ -795,9 +791,19 @@ public final class CompanionDeviceManager {
     @UserHandleAware
     @RequiresPermission(android.Manifest.permission.MANAGE_COMPANION_DEVICES)
     public @NonNull List<AssociationInfo> getAllAssociations() {
+        return getAllAssociations(mContext.getUserId());
+    }
+
+    /**
+     * Per-user version of {@link #getAllAssociations()}.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.MANAGE_COMPANION_DEVICES)
+    public @NonNull List<AssociationInfo> getAllAssociations(@UserIdInt int userId) {
         if (!checkFeaturePresent()) return Collections.emptyList();
         try {
-            return mService.getAllAssociationsForUser(mContext.getUserId());
+            return mService.getAllAssociationsForUser(userId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -830,12 +836,25 @@ public final class CompanionDeviceManager {
     @RequiresPermission(android.Manifest.permission.MANAGE_COMPANION_DEVICES)
     public void addOnAssociationsChangedListener(
             @NonNull Executor executor, @NonNull OnAssociationsChangedListener listener) {
+        addOnAssociationsChangedListener(executor, listener, mContext.getUserId());
+    }
+
+    /**
+     * Per-user version of
+     * {@link #addOnAssociationsChangedListener(Executor, OnAssociationsChangedListener)}.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.MANAGE_COMPANION_DEVICES)
+    public void addOnAssociationsChangedListener(
+            @NonNull Executor executor, @NonNull OnAssociationsChangedListener listener,
+            @UserIdInt int userId) {
         if (!checkFeaturePresent()) return;
         synchronized (mListeners) {
             final OnAssociationsChangedListenerProxy proxy = new OnAssociationsChangedListenerProxy(
                     executor, listener);
             try {
-                mService.addOnAssociationsChangedListener(proxy, mContext.getUserId());
+                mService.addOnAssociationsChangedListener(proxy, userId);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -878,8 +897,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     public interface OnTransportsChangedListener {
         /**
          * Invoked when a transport is attached or detached.
@@ -898,8 +915,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.USE_COMPANION_TRANSPORTS)
     public void addOnTransportsChangedListener(
             @NonNull @CallbackExecutor Executor executor,
@@ -920,8 +935,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.USE_COMPANION_TRANSPORTS)
     public void removeOnTransportsChangedListener(
             @NonNull OnTransportsChangedListener listener) {
@@ -942,8 +955,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.USE_COMPANION_TRANSPORTS)
     public void sendMessage(int messageType, @NonNull byte[] data, @NonNull int[] associationIds) {
         try {
@@ -960,8 +971,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     public interface OnMessageReceivedListener {
         /**
          * Called when a message is received.
@@ -974,8 +983,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.USE_COMPANION_TRANSPORTS)
     public void addOnMessageReceivedListener(
             @NonNull @CallbackExecutor Executor executor, int messageType,
@@ -994,8 +1001,6 @@ public final class CompanionDeviceManager {
      *
      * @hide
      */
-    @FlaggedApi(Flags.FLAG_COMPANION_TRANSPORT_APIS)
-    @SystemApi(client = MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.USE_COMPANION_TRANSPORTS)
     public void removeOnMessageReceivedListener(int messageType,
             @NonNull OnMessageReceivedListener listener) {
@@ -1334,6 +1339,36 @@ public final class CompanionDeviceManager {
     }
 
     /**
+     * Return the current state of consent for permission transfer for the association.
+     * True if the user has allowed permission transfer for the association, false otherwise.
+     *
+     * <p>
+     * Note: The initial user consent is collected via
+     * {@link #buildPermissionTransferUserConsentIntent(int) a permission transfer user consent dialog}.
+     * After the user has made their initial selection, they can toggle the permission transfer
+     * feature in the settings.
+     * This method always returns the state of the toggle setting.
+     * </p>
+     *
+     * @param associationId The unique {@link AssociationInfo#getId ID} assigned to the association
+     *                      of the companion device recorded by CompanionDeviceManager
+     * @return True if the user has consented to the permission transfer, or false otherwise.
+     * @throws DeviceNotAssociatedException Exception if the companion device is not associated with
+     *                                      the user or the calling app.
+     */
+    @UserHandleAware
+    @FlaggedApi(Flags.FLAG_PERM_SYNC_USER_CONSENT)
+    public boolean isPermissionTransferUserConsented(int associationId) {
+        try {
+            return mService.isPermissionTransferUserConsented(mContext.getOpPackageName(),
+                    mContext.getUserId(), associationId);
+        } catch (RemoteException e) {
+            ExceptionUtils.propagateIfInstanceOf(e.getCause(), DeviceNotAssociatedException.class);
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Start system data transfer which has been previously approved by the user.
      *
      * <p>Before calling this method, the app needs to make sure there's a communication channel
@@ -1427,7 +1462,7 @@ public final class CompanionDeviceManager {
     /**
      * Sets the {@link AssociationInfo#getTag() tag} for this association.
      *
-     * <p>The length of the tag must be at most 100 characters to save disk space.
+     * <p>The length of the tag must be at most 1024 characters to save disk space.
      *
      * <p>This allows to store useful information about the associated devices.
      *
@@ -1441,7 +1476,8 @@ public final class CompanionDeviceManager {
         Objects.requireNonNull(tag, "tag cannot be null");
 
         if (tag.length() > ASSOCIATION_TAG_LENGTH_LIMIT) {
-            throw new IllegalArgumentException("Length of the tag must be at most 100 characters");
+            throw new IllegalArgumentException("Length of the tag must be at most"
+                    + ASSOCIATION_TAG_LENGTH_LIMIT + " characters");
         }
 
         try {

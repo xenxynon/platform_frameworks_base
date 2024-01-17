@@ -24,7 +24,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.android.settingslib.fuelgauge.BatteryStatus;
-import com.android.systemui.plugins.WeatherData;
+import com.android.systemui.plugins.clocks.WeatherData;
 import com.android.systemui.statusbar.KeyguardIndicationController;
 import com.android.systemui.util.annotations.WeaklyReferencedCallback;
 
@@ -299,9 +299,14 @@ public class KeyguardUpdateMonitorCallback {
     public void onLogoutEnabledChanged() { }
 
     /**
-     * Called when authenticated biometrics are cleared.
+     * Called when authenticated fingerprint biometrics are cleared.
      */
-    public void onBiometricsCleared() { }
+    public void onFingerprintsCleared() { }
+
+    /**
+     * Called when authenticated face biometrics have cleared.
+     */
+    public void onFacesCleared() { }
 
     /**
      * Called when the secondary lock screen requirement changes.

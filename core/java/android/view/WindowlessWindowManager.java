@@ -16,6 +16,7 @@
 
 package android.view;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.WindowConfiguration;
 import android.content.res.Configuration;
@@ -228,14 +229,14 @@ public class WindowlessWindowManager implements IWindowSession {
                 if (mRealWm instanceof IWindowSession.Stub) {
                     mRealWm.grantInputChannel(displayId,
                             new SurfaceControl(sc, "WindowlessWindowManager.addToDisplay"),
-                            window, mHostInputToken, attrs.flags, attrs.privateFlags,
+                            window.asBinder(), mHostInputToken, attrs.flags, attrs.privateFlags,
                             attrs.inputFeatures, attrs.type,
                             attrs.token, state.mInputTransferToken, attrs.getTitle().toString(),
                             outInputChannel);
                 } else {
-                    mRealWm.grantInputChannel(displayId, sc, window, mHostInputToken, attrs.flags,
-                            attrs.privateFlags, attrs.inputFeatures, attrs.type, attrs.token,
-                            state.mInputTransferToken, attrs.getTitle().toString(),
+                    mRealWm.grantInputChannel(displayId, sc, window.asBinder(), mHostInputToken,
+                            attrs.flags, attrs.privateFlags, attrs.inputFeatures, attrs.type,
+                            attrs.token, state.mInputTransferToken, attrs.getTitle().toString(),
                             outInputChannel);
                 }
                 state.mInputChannelToken =
@@ -245,8 +246,7 @@ public class WindowlessWindowManager implements IWindowSession {
             }
         }
 
-        final int res = WindowManagerGlobal.ADD_OKAY | WindowManagerGlobal.ADD_FLAG_APP_VISIBLE |
-                        WindowManagerGlobal.ADD_FLAG_USE_BLAST;
+        final int res = WindowManagerGlobal.ADD_OKAY | WindowManagerGlobal.ADD_FLAG_APP_VISIBLE;
 
         sendLayoutParamsToParent();
         // Include whether the window is in touch mode.
@@ -277,11 +277,11 @@ public class WindowlessWindowManager implements IWindowSession {
     }
 
     @Override
-    public void remove(android.view.IWindow window) throws RemoteException {
-        mRealWm.remove(window);
+    public void remove(IBinder clientToken) throws RemoteException {
+        mRealWm.remove(clientToken);
         State state;
         synchronized (this) {
-            state = mStateForWindow.remove(window.asBinder());
+            state = mStateForWindow.remove(clientToken);
         }
         if (state == null) {
             throw new IllegalArgumentException(
@@ -489,8 +489,9 @@ public class WindowlessWindowManager implements IWindowSession {
 
     @Override
     public android.os.IBinder performDrag(android.view.IWindow window, int flags,
-            android.view.SurfaceControl surface, int touchSource, float touchX, float touchY,
-            float thumbCenterX, float thumbCenterY, android.content.ClipData data) {
+            android.view.SurfaceControl surface, int touchSource, int touchDeviceId,
+            int touchPointerId, float touchX, float touchY, float thumbCenterX, float thumbCenterY,
+            android.content.ClipData data) {
         return null;
     }
 
@@ -593,7 +594,7 @@ public class WindowlessWindowManager implements IWindowSession {
             List<Rect> unrestrictedRects) {}
 
     @Override
-    public void grantInputChannel(int displayId, SurfaceControl surface, IWindow window,
+    public void grantInputChannel(int displayId, SurfaceControl surface, IBinder clientToken,
             IBinder hostInputToken, int flags, int privateFlags, int inputFeatures, int type,
             IBinder windowToken, IBinder focusGrantToken, String inputHandleName,
             InputChannel outInputChannel) {
@@ -656,6 +657,14 @@ public class WindowlessWindowManager implements IWindowSession {
         return false;
     }
 
+    @Override
+    public boolean transferHostTouchGestureToEmbedded(IWindow hostWindow,
+            IBinder embeddedInputToken) {
+        Log.e(TAG, "Received request to transferHostTouchGestureToEmbedded on"
+                + " WindowlessWindowManager. We shouldn't get here!");
+        return false;
+    }
+
     void setParentInterface(@Nullable ISurfaceControlViewHostParent parentInterface) {
         IBinder oldInterface = mParentInterface == null ? null : mParentInterface.asBinder();
         IBinder newInterface = parentInterface == null ? null : parentInterface.asBinder();
@@ -695,5 +704,18 @@ public class WindowlessWindowManager implements IWindowSession {
             } catch (RemoteException e) {
             }
         }
+    }
+
+    boolean forwardBackKeyToParent(@NonNull KeyEvent keyEvent) {
+        if (mParentInterface == null) {
+            return false;
+        }
+        try {
+            mParentInterface.forwardBackKeyToParent(keyEvent);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to forward back key To Parent: ", e);
+            return false;
+        }
+        return true;
     }
 }

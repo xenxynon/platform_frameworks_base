@@ -85,7 +85,9 @@ public class EmptyShadeView extends StackScrollerDecorView {
 
     public void setFooterVisibility(@Visibility int visibility) {
         mFooterVisibility = visibility;
-        setSecondaryVisible(visibility == View.VISIBLE, false);
+        setSecondaryVisible(/* visible = */ visibility == View.VISIBLE,
+                /* animate = */false,
+                /* onAnimationEnded = */ null);
     }
 
     public void setFooterText(@StringRes int text) {
@@ -145,7 +147,7 @@ public class EmptyShadeView extends StackScrollerDecorView {
             if (view instanceof EmptyShadeView) {
                 EmptyShadeView emptyShadeView = (EmptyShadeView) view;
                 boolean visible = this.clipTopAmount <= mEmptyText.getPaddingTop() * 0.6f;
-                emptyShadeView.setContentVisible(visible && emptyShadeView.isVisible());
+                emptyShadeView.setContentVisibleAnimated(visible && emptyShadeView.isVisible());
             }
         }
     }

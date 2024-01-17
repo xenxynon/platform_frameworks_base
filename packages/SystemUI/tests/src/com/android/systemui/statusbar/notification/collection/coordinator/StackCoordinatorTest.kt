@@ -15,11 +15,12 @@
  */
 package com.android.systemui.statusbar.notification.collection.coordinator
 
+import android.platform.test.annotations.DisableFlags
+import android.platform.test.annotations.EnableFlags
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper.RunWithLooper
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.flags.setFlagValue
 import com.android.systemui.statusbar.notification.collection.NotifPipeline
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.collection.NotificationEntryBuilder
@@ -28,6 +29,7 @@ import com.android.systemui.statusbar.notification.collection.listbuilder.OnAfte
 import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManagerImpl
 import com.android.systemui.statusbar.notification.collection.render.NotifStackController
 import com.android.systemui.statusbar.notification.collection.render.NotifStats
+import com.android.systemui.statusbar.notification.domain.interactor.ActiveNotificationsInteractor
 import com.android.systemui.statusbar.notification.domain.interactor.RenderNotificationListInteractor
 import com.android.systemui.statusbar.notification.shared.NotificationIconContainerRefactor
 import com.android.systemui.statusbar.notification.stack.BUCKET_ALERTING
@@ -39,10 +41,9 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
-import org.mockito.Mockito.reset
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.`when` as whenever
 import org.mockito.MockitoAnnotations.initMocks
+import org.mockito.Mockito.`when` as whenever
 
 @SmallTest
 @RunWith(AndroidTestingRunner::class)
@@ -57,24 +58,20 @@ class StackCoordinatorTest : SysuiTestCase() {
     @Mock private lateinit var groupExpansionManagerImpl: GroupExpansionManagerImpl
     @Mock private lateinit var notificationIconAreaController: NotificationIconAreaController
     @Mock private lateinit var renderListInteractor: RenderNotificationListInteractor
+    @Mock private lateinit var activeNotificationsInteractor: ActiveNotificationsInteractor
     @Mock private lateinit var stackController: NotifStackController
     @Mock private lateinit var section: NotifSection
 
     @Before
     fun setUp() {
         initMocks(this)
-        setUp(NotificationIconContainerRefactor.FLAG_NAME to null)
         entry = NotificationEntryBuilder().setSection(section).build()
-    }
-
-    private fun setUp(vararg flags: Pair<String, Boolean?>) {
-        flags.forEach { (name, value) -> mSetFlagsRule.setFlagValue(name, value) }
-        reset(pipeline)
         coordinator =
             StackCoordinator(
                 groupExpansionManagerImpl,
                 notificationIconAreaController,
                 renderListInteractor,
+                activeNotificationsInteractor,
             )
         coordinator.attach(pipeline)
         afterRenderListListener = withArgCaptor {
@@ -83,15 +80,15 @@ class StackCoordinatorTest : SysuiTestCase() {
     }
 
     @Test
+    @DisableFlags(NotificationIconContainerRefactor.FLAG_NAME)
     fun testUpdateNotificationIcons() {
-        setUp(NotificationIconContainerRefactor.FLAG_NAME to false)
         afterRenderListListener.onAfterRenderList(listOf(entry), stackController)
         verify(notificationIconAreaController).updateNotificationIcons(eq(listOf(entry)))
     }
 
     @Test
+    @EnableFlags(NotificationIconContainerRefactor.FLAG_NAME)
     fun testSetRenderedListOnInteractor() {
-        setUp(NotificationIconContainerRefactor.FLAG_NAME to true)
         afterRenderListListener.onAfterRenderList(listOf(entry), stackController)
         verify(renderListInteractor).setRenderedList(eq(listOf(entry)))
     }

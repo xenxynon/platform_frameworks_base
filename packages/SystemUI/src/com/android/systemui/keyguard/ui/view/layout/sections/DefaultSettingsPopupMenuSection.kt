@@ -28,15 +28,16 @@ import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
 import androidx.constraintlayout.widget.ConstraintSet.START
 import androidx.constraintlayout.widget.ConstraintSet.WRAP_CONTENT
 import androidx.core.view.isVisible
-import com.android.systemui.res.R
+import com.android.systemui.Flags.keyguardBottomAreaRefactor
 import com.android.systemui.animation.view.LaunchableLinearLayout
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.keyguard.ui.binder.KeyguardSettingsViewBinder
+import com.android.systemui.keyguard.ui.viewmodel.KeyguardLongPressViewModel
+import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardSettingsMenuViewModel
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.res.R
 import com.android.systemui.statusbar.VibratorHelper
 import javax.inject.Inject
 import kotlinx.coroutines.DisposableHandle
@@ -45,15 +46,16 @@ class DefaultSettingsPopupMenuSection
 @Inject
 constructor(
     @Main private val resources: Resources,
-    private val featureFlags: FeatureFlags,
     private val keyguardSettingsMenuViewModel: KeyguardSettingsMenuViewModel,
+    private val keyguardLongPressViewModel: KeyguardLongPressViewModel,
+    private val keyguardRootViewModel: KeyguardRootViewModel,
     private val vibratorHelper: VibratorHelper,
     private val activityStarter: ActivityStarter,
 ) : KeyguardSection() {
     private var settingsPopupMenuHandle: DisposableHandle? = null
 
     override fun addViews(constraintLayout: ConstraintLayout) {
-        if (!featureFlags.isEnabled(Flags.MIGRATE_SPLIT_KEYGUARD_BOTTOM_AREA)) {
+        if (!keyguardBottomAreaRefactor()) {
             return
         }
         val view =
@@ -68,11 +70,13 @@ constructor(
     }
 
     override fun bindData(constraintLayout: ConstraintLayout) {
-        if (featureFlags.isEnabled(Flags.MIGRATE_SPLIT_KEYGUARD_BOTTOM_AREA)) {
+        if (keyguardBottomAreaRefactor()) {
             settingsPopupMenuHandle =
                 KeyguardSettingsViewBinder.bind(
                     constraintLayout.requireViewById<View>(R.id.keyguard_settings_button),
                     keyguardSettingsMenuViewModel,
+                    keyguardLongPressViewModel,
+                    keyguardRootViewModel,
                     vibratorHelper,
                     activityStarter,
                 )

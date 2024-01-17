@@ -18,6 +18,7 @@ package android.provider;
 
 import android.Manifest;
 import android.annotation.CallbackExecutor;
+import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
@@ -604,6 +605,23 @@ public final class Settings {
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_REQUEST_MANAGE_MEDIA =
             "android.settings.REQUEST_MANAGE_MEDIA";
+
+    /**
+     * Activity Action: Show settings to allow configuration of
+     * {@link Manifest.permission#MEDIA_ROUTING_CONTROL} permission.
+     *
+     * Input: Optionally, the Intent's data URI can specify the application package name to
+     * directly invoke the management GUI specific to the package name. For example
+     * "package:com.my.app". However, modifying this permission setting for any package is allowed
+     * only when that package holds an appropriate companion device profile such as
+     * {@link android.companion.AssociationRequest#DEVICE_PROFILE_WATCH}.
+     * <p>
+     * Output: Nothing.
+     */
+    @FlaggedApi("com.android.media.flags.enable_privileged_routing_for_media_routing_control")
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_REQUEST_MEDIA_ROUTING_CONTROL =
+            "android.settings.REQUEST_MEDIA_ROUTING_CONTROL";
 
     /**
      * Activity Action: Show settings to allow configuration of
@@ -1904,6 +1922,36 @@ public final class Settings {
             = "android.settings.ACTION_CONDITION_PROVIDER_SETTINGS";
 
     /**
+     * Activity Action: Shows the settings page for an {@link AutomaticZenRule} mode.
+     * <p>
+     * Users can change the behavior of the mode when it's activated and access the owning app's
+     * additional configuration screen, where triggering criteria can be modified (see
+     * {@link AutomaticZenRule#setConfigurationActivity(ComponentName)}).
+     * <p>
+     * A matching Activity will only be found if
+     * {@link NotificationManager#areAutomaticZenRulesUserManaged()} is true.
+     * <p>
+     * Input: Intent's data URI set with an application name, using the "package" schema (like
+     * "package:com.my.app").
+     * Input: The id of the rule, provided in {@link #EXTRA_AUTOMATIC_ZEN_RULE_ID}.
+     * <p>
+     * Output: Nothing.
+     */
+    @FlaggedApi(android.app.Flags.FLAG_MODES_API)
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_AUTOMATIC_ZEN_RULE_SETTINGS
+            = "android.settings.AUTOMATIC_ZEN_RULE_SETTINGS";
+
+    /**
+     * Activity Extra: The String id of the {@link AutomaticZenRule mode} settings to display.
+     * <p>
+     * This must be passed as an extra field to the {@link #ACTION_AUTOMATIC_ZEN_RULE_SETTINGS}.
+     */
+    @FlaggedApi(android.app.Flags.FLAG_MODES_API)
+    public static final String EXTRA_AUTOMATIC_ZEN_RULE_ID
+            = "android.provider.extra.AUTOMATIC_ZEN_RULE_ID";
+
+    /**
      * Activity Action: Show settings for video captioning.
      * <p>
      * In some cases, a matching Activity may not exist, so ensure you safeguard
@@ -2510,6 +2558,7 @@ public final class Settings {
      * ComponentName)} and only use this action to start an activity if they return {@code false}.
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    @FlaggedApi(android.credentials.flags.Flags.FLAG_NEW_SETTINGS_INTENTS)
     public static final String ACTION_CREDENTIAL_PROVIDER =
             "android.settings.CREDENTIAL_PROVIDER";
 
@@ -4054,6 +4103,7 @@ public final class Settings {
          */
         @RequiresPermission(Manifest.permission.MODIFY_SETTINGS_OVERRIDEABLE_BY_RESTORE)
         @SystemApi
+        @FlaggedApi(Flags.FLAG_SYSTEM_SETTINGS_DEFAULT)
         public static boolean putString(@NonNull ContentResolver resolver, @NonNull String name,
                 @Nullable String value, boolean makeDefault, boolean overrideableByRestore) {
             return putStringForUser(resolver, name, value, /* tag= */ null,
@@ -4109,6 +4159,7 @@ public final class Settings {
          * @hide
          */
         @SystemApi
+        @FlaggedApi(Flags.FLAG_SYSTEM_SETTINGS_DEFAULT)
         public static void resetToDefaults(@NonNull ContentResolver resolver,
                 @Nullable String tag) {
             resetToDefaultsAsUser(resolver, tag, RESET_MODE_PACKAGE_DEFAULTS,
@@ -5923,6 +5974,7 @@ public final class Settings {
          *
          * @hide
          */
+        @Readable
         public static final String TOUCHPAD_NATURAL_SCROLLING = "touchpad_natural_scrolling";
 
         /**
@@ -7289,7 +7341,7 @@ public final class Settings {
                 "hearing_aid_media_routing";
 
         /**
-         * System sounds routing value for hearing aid. It routes system sounds to hearing aid
+         * Notification routing value for hearing aid. It routes notification sounds to hearing aid
          * or device speaker.
          * <ul>
          *     <li> 0 = Default
@@ -7298,8 +7350,8 @@ public final class Settings {
          * </ul>
          * @hide
          */
-        public static final String HEARING_AID_SYSTEM_SOUNDS_ROUTING =
-                "hearing_aid_system_sounds_routing";
+        public static final String HEARING_AID_NOTIFICATION_ROUTING =
+                "hearing_aid_notification_routing";
 
         /**
          * Setting to indicate that on device captions are enabled.
@@ -7748,6 +7800,25 @@ public final class Settings {
         @Readable
         @SuppressLint("NoSettingsProvider")
         public static final String SHOW_IME_WITH_HARD_KEYBOARD = "show_ime_with_hard_keyboard";
+
+        /**
+         * Whether to enable bounce keys for Physical Keyboard accessibility.
+         *
+         * If set to non-zero value, any key press on physical keyboard within the provided
+         * threshold duration (in milliseconds) of the same key, will be ignored.
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_BOUNCE_KEYS = "accessibility_bounce_keys";
+
+        /**
+         * Whether to enable sticky keys for Physical Keyboard accessibility.
+         *
+         * This is a boolean value that determines if Sticky keys feature is enabled.
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_STICKY_KEYS = "accessibility_sticky_keys";
 
         /**
          * Whether stylus button presses are disabled. This is a boolean that
@@ -8248,6 +8319,17 @@ public final class Settings {
          */
         @Readable
         public static final String ACCESSIBILITY_BUTTON_TARGETS = "accessibility_button_targets";
+
+        /**
+         * Setting specifying the accessibility services, accessibility shortcut targets,
+         * or features to be toggled via a tile in the quick settings panel.
+         *
+         * <p> This is a colon-separated string list which contains the flattened
+         * {@link ComponentName} and the class name of a system class implementing a supported
+         * accessibility feature.
+         * @hide
+         */
+        public static final String ACCESSIBILITY_QS_TARGETS = "accessibility_qs_targets";
 
         /**
          * The system class name of magnification controller which is a target to be toggled via
@@ -8821,6 +8903,24 @@ public final class Settings {
          */
         public static final String REDUCE_BRIGHT_COLORS_PERSIST_ACROSS_REBOOTS =
                 "reduce_bright_colors_persist_across_reboots";
+
+        /**
+         * Setting that specifies whether Even Dimmer - a feature that allows the brightness
+         * slider to go below what the display can conventionally do, should be enabled.
+         *
+         * @hide
+         */
+        public static final String EVEN_DIMMER_ACTIVATED =
+                "even_dimmer_activated";
+
+        /**
+         * Setting that specifies which nits level Even Dimmer should allow the screen brightness
+         * to go down to.
+         *
+         * @hide
+         */
+        public static final String EVEN_DIMMER_MIN_NITS =
+                "even_dimmer_min_nits";
 
         /**
          * List of the enabled print services.
@@ -10319,6 +10419,13 @@ public final class Settings {
         @Readable
         public static final String SHOW_NOTIFICATION_SNOOZE = "show_notification_snooze";
 
+       /**
+         * 1 if it is allowed to remove the primary GAIA account. 0 by default.
+         * @hide
+         */
+        public static final String ALLOW_PRIMARY_GAIA_ACCOUNT_REMOVAL_FOR_TESTS =
+                "allow_primary_gaia_account_removal_for_tests";
+
         /**
          * List of TV inputs that are currently hidden. This is a string
          * containing the IDs of all hidden TV inputs. Each ID is encoded by
@@ -11673,45 +11780,6 @@ public final class Settings {
                 "accessibility_magnification_two_finger_triple_tap_enabled";
 
         /**
-         * Controls magnification enable gesture. Accessibility magnification can have one or more
-         * enable gestures.
-         *
-         * @see #ACCESSIBILITY_MAGNIFICATION_GESTURE_NONE
-         * @see #ACCESSIBILITY_MAGNIFICATION_GESTURE_SINGLE_FINGER_TRIPLE_TAP
-         * @see #ACCESSIBILITY_MAGNIFICATION_GESTURE_TWO_FINGER_TRIPLE_TAP
-         * @hide
-         */
-        public static final String ACCESSIBILITY_MAGNIFICATION_GESTURE =
-                "accessibility_magnification_gesture";
-
-        /**
-         * Magnification enable gesture value that is a default value.
-         * @hide
-         */
-        public static final int ACCESSIBILITY_MAGNIFICATION_GESTURE_NONE = 0x0;
-
-        /**
-         * Magnification enable gesture value is single finger triple tap.
-         * @hide
-         */
-        public static final int ACCESSIBILITY_MAGNIFICATION_GESTURE_SINGLE_FINGER_TRIPLE_TAP = 0x1;
-
-        /**
-         * Magnification enable gesture value is two finger triple tap.
-         * @hide
-         */
-        public static final int ACCESSIBILITY_MAGNIFICATION_GESTURE_TWO_FINGER_TRIPLE_TAP = 0x2;
-
-        /**
-         * Magnification enable gesture values include single finger triple tap and two finger
-         * triple tap.
-         * @hide
-         */
-        public static final int ACCESSIBILITY_MAGNIFICATION_GESTURE_ALL =
-                ACCESSIBILITY_MAGNIFICATION_GESTURE_SINGLE_FINGER_TRIPLE_TAP
-                | ACCESSIBILITY_MAGNIFICATION_GESTURE_TWO_FINGER_TRIPLE_TAP;
-
-        /**
          * Controls magnification capability. Accessibility magnification is capable of at least one
          * of the magnification modes.
          *
@@ -12099,6 +12167,7 @@ public final class Settings {
             CLONE_TO_MANAGED_PROFILE.add(LOCATION_CHANGER);
             CLONE_TO_MANAGED_PROFILE.add(LOCATION_MODE);
             CLONE_TO_MANAGED_PROFILE.add(SHOW_IME_WITH_HARD_KEYBOARD);
+            CLONE_TO_MANAGED_PROFILE.add(ACCESSIBILITY_BOUNCE_KEYS);
             CLONE_TO_MANAGED_PROFILE.add(NOTIFICATION_BUBBLES);
         }
 
@@ -12857,15 +12926,6 @@ public final class Settings {
         @Readable
         public static final String DEVELOPMENT_RENDER_SHADOWS_IN_COMPOSITOR =
                 "render_shadows_in_compositor";
-
-        /**
-         * If true, submit buffers using blast in ViewRootImpl.
-         * (0 = false, 1 = true)
-         * @hide
-         */
-        @Readable
-        public static final String DEVELOPMENT_USE_BLAST_ADAPTER_VR =
-                "use_blast_adapter_vr";
 
         /**
          * Path to the WindowManager display settings file. If unset, the default file path will
@@ -15006,6 +15066,38 @@ public final class Settings {
         public static final String APP_OPS_CONSTANTS = "app_ops_constants";
 
         /**
+         * Device Idle (Doze) specific settings.
+         * This is encoded as a key=value list, separated by commas. Ex:
+         *
+         * "inactive_to=60000,sensing_to=400000"
+         *
+         * The following keys are supported:
+         *
+         * <pre>
+         * inactive_to                      (long)
+         * sensing_to                       (long)
+         * motion_inactive_to               (long)
+         * idle_after_inactive_to           (long)
+         * idle_pending_to                  (long)
+         * max_idle_pending_to              (long)
+         * idle_pending_factor              (float)
+         * quick_doze_delay_to              (long)
+         * idle_to                          (long)
+         * max_idle_to                      (long)
+         * idle_factor                      (float)
+         * min_time_to_alarm                (long)
+         * max_temp_app_whitelist_duration  (long)
+         * notification_whitelist_duration  (long)
+         * </pre>
+         *
+         * <p>
+         * Type: string
+         * @hide
+         * @see com.android.server.DeviceIdleController.Constants
+         */
+        public static final String DEVICE_IDLE_CONSTANTS = "device_idle_constants";
+
+        /**
          * Battery Saver specific settings
          * This is encoded as a key=value list, separated by commas. Ex:
          *
@@ -15333,6 +15425,7 @@ public final class Settings {
          * max_history_files (int)
          * max_history_buffer_kb (int)
          * battery_charged_delay_ms (int)
+         * battery_charging_enforce_level (int)
          * </pre>
          *
          * <p>
@@ -18368,8 +18461,11 @@ public final class Settings {
 
         /**
          * Delay for sending ACTION_CHARGING after device is plugged in.
-         * This is used as an override for constants defined in BatteryStatsImpl for
-         * ease of experimentation.
+         * This is used as an override for constants defined in BatteryStatsImpl. Its purposes are:
+         * <ol>
+         *     <li>Ease of experimentation</li>
+         *     <li>Customization of different device</li>
+         * </ol>
          *
          * @see com.android.internal.os.BatteryStatsImpl.Constants.KEY_BATTERY_CHARGED_DELAY_MS
          * @hide
@@ -18377,6 +18473,22 @@ public final class Settings {
         @Readable
         public static final String BATTERY_CHARGING_STATE_UPDATE_DELAY =
                 "battery_charging_state_update_delay";
+
+        /**
+         * Threshold battery level to enforce battery state as charging. That means when battery
+         * level is equal to or higher than this threshold, it is always considered charging, even
+         * if battery level lowered.
+         * This is used as an override for constants defined in BatteryStatsImpl. Its purposes are:
+         * <ol>
+         *     <li>Ease of experimentation</li>
+         *     <li>Customization of different device</li>
+         * </ol>
+         *
+         * @hide
+         * @see com.android.internal.os.BatteryStatsImpl.Constants.BATTERY_CHARGING_ENFORCE_LEVEL
+         */
+        public static final String BATTERY_CHARGING_STATE_ENFORCE_LEVEL =
+                "battery_charging_state_enforce_level";
 
         /**
          * A serialized string of params that will be loaded into a text classifier action model.
@@ -19081,6 +19193,14 @@ public final class Settings {
             public static final int BATTERY_SAVER_MODE_CUSTOM = 4;
 
             /**
+             Whether 1P apps vote for enabling data during different modes,
+             i.e. BTM, BBSM
+             * @hide
+             */
+            @Readable(maxTargetSdk = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+            public static final String CONNECTIVITY_KEEP_DATA_ON = "wear_connectivity_keep_data_on";
+
+            /**
              * The maximum ambient mode duration when an activity is allowed to auto resume.
              * @hide
              */
@@ -19506,6 +19626,7 @@ public final class Settings {
              *
              * @hide
              */
+            @Readable
             public static final String WEAR_MEDIA_CONTROLS_PACKAGE = "wear_media_controls_package";
 
             /**
@@ -19513,6 +19634,7 @@ public final class Settings {
              *
              * @hide
              */
+            @Readable
             public static final String WEAR_MEDIA_SESSIONS_PACKAGE = "wear_media_sessions_package";
 
             /*

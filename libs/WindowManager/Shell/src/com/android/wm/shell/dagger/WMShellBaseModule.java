@@ -103,6 +103,7 @@ import com.android.wm.shell.sysui.ShellInterface;
 import com.android.wm.shell.taskview.TaskViewFactory;
 import com.android.wm.shell.taskview.TaskViewFactoryController;
 import com.android.wm.shell.taskview.TaskViewTransitions;
+import com.android.wm.shell.transition.HomeTransitionObserver;
 import com.android.wm.shell.transition.ShellTransitions;
 import com.android.wm.shell.transition.Transitions;
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider;
@@ -220,34 +221,57 @@ public abstract class WMShellBaseModule {
             Context context,
             ShellInit shellInit,
             ShellCommandHandler shellCommandHandler,
-            CompatUIController compatUI,
+            Optional<CompatUIController> compatUI,
             Optional<UnfoldAnimationController> unfoldAnimationController,
             Optional<RecentTasksController> recentTasksOptional,
-            @ShellMainThread ShellExecutor mainExecutor
-    ) {
+            @ShellMainThread ShellExecutor mainExecutor) {
         if (!context.getResources().getBoolean(R.bool.config_registerShellTaskOrganizerOnInit)) {
             // TODO(b/238217847): Force override shell init if registration is disabled
             shellInit = new ShellInit(mainExecutor);
         }
-        return new ShellTaskOrganizer(shellInit, shellCommandHandler, compatUI,
-                unfoldAnimationController, recentTasksOptional, mainExecutor);
+        return new ShellTaskOrganizer(
+                shellInit,
+                shellCommandHandler,
+                compatUI.orElse(null),
+                unfoldAnimationController,
+                recentTasksOptional,
+                mainExecutor);
     }
 
     @WMSingleton
     @Provides
-    static CompatUIController provideCompatUIController(Context context,
+    static Optional<CompatUIController> provideCompatUIController(
+            Context context,
             ShellInit shellInit,
             ShellController shellController,
-            DisplayController displayController, DisplayInsetsController displayInsetsController,
-            DisplayImeController imeController, SyncTransactionQueue syncQueue,
-            @ShellMainThread ShellExecutor mainExecutor, Lazy<Transitions> transitionsLazy,
-            DockStateReader dockStateReader, CompatUIConfiguration compatUIConfiguration,
-            CompatUIShellCommandHandler compatUIShellCommandHandler,
-            AccessibilityManager accessibilityManager) {
-        return new CompatUIController(context, shellInit, shellController, displayController,
-                displayInsetsController, imeController, syncQueue, mainExecutor, transitionsLazy,
-                dockStateReader, compatUIConfiguration, compatUIShellCommandHandler,
-                accessibilityManager);
+            DisplayController displayController,
+            DisplayInsetsController displayInsetsController,
+            DisplayImeController imeController,
+            SyncTransactionQueue syncQueue,
+            @ShellMainThread ShellExecutor mainExecutor,
+            Lazy<Transitions> transitionsLazy,
+            Lazy<DockStateReader> dockStateReader,
+            Lazy<CompatUIConfiguration> compatUIConfiguration,
+            Lazy<CompatUIShellCommandHandler> compatUIShellCommandHandler,
+            Lazy<AccessibilityManager> accessibilityManager) {
+        if (!context.getResources().getBoolean(R.bool.config_enableCompatUIController)) {
+            return Optional.empty();
+        }
+        return Optional.of(
+                new CompatUIController(
+                        context,
+                        shellInit,
+                        shellController,
+                        displayController,
+                        displayInsetsController,
+                        imeController,
+                        syncQueue,
+                        mainExecutor,
+                        transitionsLazy,
+                        dockStateReader.get(),
+                        compatUIConfiguration.get(),
+                        compatUIShellCommandHandler.get(),
+                        accessibilityManager.get()));
     }
 
     @WMSingleton
@@ -300,13 +324,16 @@ public abstract class WMShellBaseModule {
 
     @WMSingleton
     @Provides
-    static SystemPerformanceHinter provideSystemPerformanceHinter(Context context,
+    static Optional<SystemPerformanceHinter> provideSystemPerformanceHinter(Context context,
             ShellInit shellInit,
             ShellCommandHandler shellCommandHandler,
             RootTaskDisplayAreaOrganizer rootTdaOrganizer) {
+        if (!com.android.window.flags.Flags.explicitRefreshRateHints()) {
+            return Optional.empty();
+        }
         final PerfHintController perfHintController =
                 new PerfHintController(context, shellInit, shellCommandHandler, rootTdaOrganizer);
-        return perfHintController.getHinter();
+        return Optional.of(perfHintController.getHinter());
     }
 
     //
@@ -336,7 +363,8 @@ public abstract class WMShellBaseModule {
             @ShellMainThread ShellExecutor shellExecutor,
             @ShellBackgroundThread Handler backgroundHandler,
             BackAnimationBackground backAnimationBackground,
-            Optional<ShellBackAnimationRegistry> shellBackAnimationRegistry) {
+            Optional<ShellBackAnimationRegistry> shellBackAnimationRegistry,
+            ShellCommandHandler shellCommandHandler) {
         if (BackAnimationController.IS_ENABLED) {
             return shellBackAnimationRegistry.map(
                     (animations) ->
@@ -347,7 +375,8 @@ public abstract class WMShellBaseModule {
                                     backgroundHandler,
                                     context,
                                     backAnimationBackground,
-                                    animations));
+                                    animations,
+                                    shellCommandHandler));
         }
         return Optional.empty();
     }
@@ -613,14 +642,22 @@ public abstract class WMShellBaseModule {
             @ShellMainThread ShellExecutor mainExecutor,
             @ShellMainThread Handler mainHandler,
             @ShellAnimationThread ShellExecutor animExecutor,
-            RootTaskDisplayAreaOrganizer rootTaskDisplayAreaOrganizer) {
+            RootTaskDisplayAreaOrganizer rootTaskDisplayAreaOrganizer,
+            HomeTransitionObserver homeTransitionObserver) {
         if (!context.getResources().getBoolean(R.bool.config_registerShellTransitionsOnInit)) {
             // TODO(b/238217847): Force override shell init if registration is disabled
             shellInit = new ShellInit(mainExecutor);
         }
         return new Transitions(context, shellInit, shellCommandHandler, shellController, organizer,
                 pool, displayController, mainExecutor, mainHandler, animExecutor,
-                rootTaskDisplayAreaOrganizer);
+                rootTaskDisplayAreaOrganizer, homeTransitionObserver);
+    }
+
+    @WMSingleton
+    @Provides
+    static HomeTransitionObserver provideHomeTransitionObserver(Context context,
+            @ShellMainThread ShellExecutor mainExecutor) {
+        return new HomeTransitionObserver(context, mainExecutor);
     }
 
     @WMSingleton
@@ -637,11 +674,12 @@ public abstract class WMShellBaseModule {
     @Provides
     static KeyguardTransitionHandler provideKeyguardTransitionHandler(
             ShellInit shellInit,
+            ShellController shellController,
             Transitions transitions,
             @ShellMainThread Handler mainHandler,
             @ShellMainThread ShellExecutor mainExecutor) {
         return new KeyguardTransitionHandler(
-                    shellInit, transitions, mainHandler, mainExecutor);
+                    shellInit, shellController, transitions, mainHandler, mainExecutor);
     }
 
     @WMSingleton
@@ -828,10 +866,12 @@ public abstract class WMShellBaseModule {
         // Use optional-of-lazy for the dependency that this provider relies on.
         // Lazy ensures that this provider will not be the cause the dependency is created
         // when it will not be returned due to the condition below.
-        if (DesktopModeStatus.isEnabled()) {
-            return desktopTasksController.map(Lazy::get);
-        }
-        return Optional.empty();
+        return desktopTasksController.flatMap((lazy)-> {
+            if (DesktopModeStatus.isEnabled()) {
+                return Optional.of(lazy.get());
+            }
+            return Optional.empty();
+        });
     }
 
     @BindsOptionalOf
@@ -845,10 +885,12 @@ public abstract class WMShellBaseModule {
         // Use optional-of-lazy for the dependency that this provider relies on.
         // Lazy ensures that this provider will not be the cause the dependency is created
         // when it will not be returned due to the condition below.
-        if (DesktopModeStatus.isEnabled()) {
-            return desktopModeTaskRepository.map(Lazy::get);
-        }
-        return Optional.empty();
+        return desktopModeTaskRepository.flatMap((lazy)-> {
+            if (DesktopModeStatus.isEnabled()) {
+                return Optional.of(lazy.get());
+            }
+            return Optional.empty();
+        });
     }
 
     //

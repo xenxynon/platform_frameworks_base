@@ -57,6 +57,7 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
+import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
@@ -312,7 +313,8 @@ public class BubbleExpandedView extends LinearLayout {
                         + " bubble=" + getBubbleKey());
             }
             if (mBubble != null) {
-                mController.removeBubble(mBubble.getKey(), Bubbles.DISMISS_TASK_FINISHED);
+                mController.removeFloatingBubbleAfterTaskRemoval(
+                        mBubble.getKey(), Bubbles.DISMISS_TASK_FINISHED);
             }
             if (mTaskView != null) {
                 // Release the surface
@@ -411,6 +413,23 @@ public class BubbleExpandedView extends LinearLayout {
         setLayoutDirection(LAYOUT_DIRECTION_LOCALE);
     }
 
+
+    /** Updates the width of the task view if it changed. */
+    void updateTaskViewContentWidth() {
+        if (mTaskView != null) {
+            int width = getContentWidth();
+            if (mTaskView.getWidth() != width) {
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, MATCH_PARENT);
+                mTaskView.setLayoutParams(lp);
+            }
+        }
+    }
+
+    private int getContentWidth() {
+        boolean isStackOnLeft = mPositioner.isStackOnLeft(mStackView.getStackPosition());
+        return mPositioner.getTaskViewContentWidth(isStackOnLeft);
+    }
+
     /**
      * Initialize {@link BubbleController} and {@link BubbleStackView} here, this method must need
      * to be called after view inflate.
@@ -437,7 +456,12 @@ public class BubbleExpandedView extends LinearLayout {
                     mController.getTaskViewTransitions(), mController.getSyncTransactionQueue());
             mTaskView = new TaskView(mContext, mTaskViewTaskController);
             mTaskView.setListener(mController.getMainExecutor(), mTaskViewListener);
-            mExpandedViewContainer.addView(mTaskView);
+
+            // set a fixed width so it is not recalculated as part of a rotation. the width will be
+            // updated manually after the rotation.
+            FrameLayout.LayoutParams lp =
+                    new FrameLayout.LayoutParams(getContentWidth(), MATCH_PARENT);
+            mExpandedViewContainer.addView(mTaskView, lp);
             bringChildToFront(mTaskView);
         }
     }
@@ -470,6 +494,17 @@ public class BubbleExpandedView extends LinearLayout {
                     R.layout.bubble_manage_button, this /* parent */, false /* attach */);
             addView(mManageButton);
             mManageButton.setVisibility(visibility);
+            post(() -> {
+                int touchAreaHeight =
+                        getResources().getDimensionPixelSize(
+                                R.dimen.bubble_manage_button_touch_area_height);
+                Rect r = new Rect();
+                mManageButton.getHitRect(r);
+                int extraTouchArea = (touchAreaHeight - r.height()) / 2;
+                r.top -= extraTouchArea;
+                r.bottom += extraTouchArea;
+                setTouchDelegate(new TouchDelegate(r, mManageButton));
+            });
         }
     }
 
@@ -949,7 +984,13 @@ public class BubbleExpandedView extends LinearLayout {
         if (mTaskView != null
                 && mTaskView.getVisibility() == VISIBLE
                 && mTaskView.isAttachedToWindow()) {
-            mTaskView.onLocationChanged();
+            // post this to the looper, because if the device orientation just changed, we need to
+            // let the current shell transition complete before updating the task view bounds.
+            post(() -> {
+                if (mTaskView != null) {
+                    mTaskView.onLocationChanged();
+                }
+            });
         }
         if (mIsOverflow) {
             // post this to the looper so that the view has a chance to be laid out before it can

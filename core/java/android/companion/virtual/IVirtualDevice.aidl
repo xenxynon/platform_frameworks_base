@@ -23,8 +23,7 @@ import android.companion.virtual.audio.IAudioRoutingCallback;
 import android.companion.virtual.sensor.VirtualSensor;
 import android.companion.virtual.sensor.VirtualSensorConfig;
 import android.companion.virtual.sensor.VirtualSensorEvent;
-import android.companion.virtual.camera.IVirtualCamera;
-import android.companion.virtual.camera.VirtualCameraHalConfig;
+import android.companion.virtual.camera.VirtualCameraConfig;
 import android.content.ComponentName;
 import android.content.IntentFilter;
 import android.graphics.Point;
@@ -220,6 +219,10 @@ interface IVirtualDevice {
     @EnforcePermission("CREATE_VIRTUAL_DEVICE")
     void setShowPointerIcon(boolean showPointerIcon);
 
+    /** Sets an IME policy for the given display. */
+    @EnforcePermission("CREATE_VIRTUAL_DEVICE")
+    void setDisplayImePolicy(int displayId, int policy);
+
     /**
      * Registers an intent interceptor that will intercept an intent attempting to launch
      * when matching the provided IntentFilter and calls the callback with the intercepted
@@ -236,8 +239,21 @@ interface IVirtualDevice {
     void unregisterIntentInterceptor(in IVirtualDeviceIntentInterceptor intentInterceptor);
 
     /**
-     * Creates a new VirtualCamera and registers it with the VirtualCameraProvider.
+     * Creates a new virtual camera and registers it with the virtual camera service.
      */
     @EnforcePermission("CREATE_VIRTUAL_DEVICE")
-    void registerVirtualCamera(in IVirtualCamera camera);
+    void registerVirtualCamera(in VirtualCameraConfig camera);
+
+    /**
+     * Destroys the virtual camera with given config and unregisters it from the virtual camera
+     * service.
+     */
+    @EnforcePermission("CREATE_VIRTUAL_DEVICE")
+    void unregisterVirtualCamera(in VirtualCameraConfig camera);
+
+    /**
+     * Returns the id of the virtual camera with given config.
+     */
+    @EnforcePermission("CREATE_VIRTUAL_DEVICE")
+    int getVirtualCameraId(in VirtualCameraConfig camera);
 }

@@ -19,6 +19,7 @@ import static android.content.Intent.LOCAL_FLAG_FROM_SYSTEM;
 
 import android.Manifest;
 import android.annotation.CallbackExecutor;
+import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -54,6 +55,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.telecom.ClientTransactionalServiceRepository;
 import com.android.internal.telecom.ClientTransactionalServiceWrapper;
 import com.android.internal.telecom.ITelecomService;
+import com.android.server.telecom.flags.Flags;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -235,6 +237,14 @@ public class TelecomManager {
      */
     public static final String EXTRA_DEFAULT_CALL_SCREENING_APP_COMPONENT_NAME =
             "android.telecom.extra.DEFAULT_CALL_SCREENING_APP_COMPONENT_NAME";
+
+    /**
+     * Optional extra to indicate a call should not be added to the call log.
+     *
+     * @hide
+     */
+    public static final String EXTRA_DO_NOT_LOG_CALL =
+            "android.telecom.extra.DO_NOT_LOG_CALL";
 
     /**
      * Extra value used with {@link #ACTION_DEFAULT_CALL_SCREENING_APP_CHANGED} broadcast to
@@ -430,6 +440,14 @@ public class TelecomManager {
      */
     public static final String EXTRA_CALL_CREATED_TIME_MILLIS =
             "android.telecom.extra.CALL_CREATED_TIME_MILLIS";
+
+    /**
+     * The extra for call log uri that was used to mark missed calls as read when dialer gets the
+     * notification on reboot.
+     */
+    @FlaggedApi(Flags.FLAG_ADD_CALL_URI_FOR_MISSED_CALLS)
+    public static final String EXTRA_CALL_LOG_URI =
+            "android.telecom.extra.CALL_LOG_URI";
 
     /**
      * Optional extra for incoming containing a long which specifies the time the
@@ -1358,6 +1376,24 @@ public class TelecomManager {
     }
 
     /**
+     * Returns a list of {@link PhoneAccountHandle}s which can be used to make and receive phone
+     * calls. The returned list includes those accounts which have been explicitly enabled by
+     * the user or other users visible to the user.
+     *
+     * @see #EXTRA_PHONE_ACCOUNT_HANDLE
+     * @return A list of {@code PhoneAccountHandle} objects.
+     *
+     * @throws IllegalStateException if telecom service is null.
+     */
+    @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_WORK_PROFILE_API_SPLIT)
+    @RequiresPermission(allOf = {android.Manifest.permission.READ_PHONE_STATE,
+            android.Manifest.permission.INTERACT_ACROSS_PROFILES})
+    public @NonNull List<PhoneAccountHandle> getCallCapablePhoneAccountsAcrossProfiles() {
+        return getCallCapablePhoneAccountsAcrossProfiles(false);
+    }
+
+
+    /**
      * Returns a list of {@link PhoneAccountHandle}s for all self-managed
      * {@link ConnectionService}s owned by the calling {@link UserHandle}.
      * <p>
@@ -1432,13 +1468,44 @@ public class TelecomManager {
         if (service != null) {
             try {
                 return service.getCallCapablePhoneAccounts(includeDisabledAccounts,
-                        mContext.getOpPackageName(), mContext.getAttributionTag()).getList();
+                        mContext.getOpPackageName(), mContext.getAttributionTag(), false).getList();
             } catch (RemoteException e) {
                 Log.e(TAG, "Error calling ITelecomService#getCallCapablePhoneAccounts("
                         + includeDisabledAccounts + ")", e);
             }
         }
         return new ArrayList<>();
+    }
+
+    /**
+     * Returns a list of {@link PhoneAccountHandle}s visible to current user including those which
+     * have not been enabled by the user.
+     *
+     * @param includeDisabledAccounts When {@code true}, disabled phone accounts will be included,
+     *                                when {@code false}, only enabled phone accounts will be
+     *                                included.
+     * @return A list of {@code PhoneAccountHandle} objects.
+     *
+     * @throws IllegalStateException if telecom service is null.
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_WORK_PROFILE_API_SPLIT)
+    @RequiresPermission(allOf = {android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
+            android.Manifest.permission.INTERACT_ACROSS_PROFILES})
+    public @NonNull List<PhoneAccountHandle> getCallCapablePhoneAccountsAcrossProfiles(
+            boolean includeDisabledAccounts) {
+        ITelecomService service = getTelecomService();
+        if (service == null) {
+            throw new IllegalStateException("telecom service is null.");
+        }
+
+        try {
+            return service.getCallCapablePhoneAccounts(includeDisabledAccounts,
+                    mContext.getOpPackageName(), mContext.getAttributionTag(), true).getList();
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
+        }
     }
 
     /**
@@ -2388,6 +2455,11 @@ public class TelecomManager {
      * <p>
      * <b>Note</b>: {@link android.app.Notification.CallStyle} notifications should be posted after
      * the call is placed in order for the notification to be non-dismissible.
+     * <p><b>Note</b>: Call Forwarding MMI codes can only be dialed by applications that are
+     * configured as the user defined default dialer or system dialer role. If a call containing a
+     * call forwarding MMI code is placed by an application that is not in one of these roles, the
+     * dialer will be launched with a UI showing the MMI code already populated so that the user can
+     * confirm the action before the call is placed.
      * @param address The address to make the call to.
      * @param extras Bundle of extras to use with the call.
      */

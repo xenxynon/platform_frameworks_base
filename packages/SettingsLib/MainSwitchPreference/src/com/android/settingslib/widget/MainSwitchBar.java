@@ -18,19 +18,20 @@ package com.android.settingslib.widget;
 
 import android.content.Context;
 import android.content.res.TypedArray;
+import android.os.Build;
+import android.os.Build.VERSION_CODES;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.CompoundButton;
+import android.widget.CompoundButton.OnCheckedChangeListener;
 import android.widget.LinearLayout;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
 
-import com.android.settingslib.utils.BuildCompatUtils;
 import com.android.settingslib.widget.mainswitch.R;
 
 import java.util.ArrayList;
@@ -41,9 +42,9 @@ import java.util.List;
  * This component is used as the main switch of the page
  * to enable or disable the prefereces on the page.
  */
-public class MainSwitchBar extends LinearLayout implements CompoundButton.OnCheckedChangeListener {
+public class MainSwitchBar extends LinearLayout implements OnCheckedChangeListener {
 
-    private final List<OnMainSwitchChangeListener> mSwitchChangeListeners = new ArrayList<>();
+    private final List<OnCheckedChangeListener> mSwitchChangeListeners = new ArrayList<>();
 
     @ColorInt
     private int mBackgroundColor;
@@ -51,8 +52,8 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
     private int mBackgroundActivatedColor;
 
     protected TextView mTextView;
-    protected Switch mSwitch;
-    private View mFrameView;
+    protected CompoundButton mSwitch;
+    private final View mFrameView;
 
     public MainSwitchBar(Context context) {
         this(context, null);
@@ -72,11 +73,18 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
 
         LayoutInflater.from(context).inflate(R.layout.settingslib_main_switch_bar, this);
 
-        if (!BuildCompatUtils.isAtLeastS()) {
-            final TypedArray a = context.obtainStyledAttributes(
-                    new int[]{android.R.attr.colorAccent});
-            mBackgroundActivatedColor = a.getColor(0, 0);
-            mBackgroundColor = context.getColor(androidx.appcompat.R.color.material_grey_600);
+        if (Build.VERSION.SDK_INT < VERSION_CODES.S) {
+            TypedArray a;
+            if (Build.VERSION.SDK_INT >= VERSION_CODES.M) {
+                a = context.obtainStyledAttributes(
+                        new int[]{android.R.attr.colorAccent});
+                mBackgroundActivatedColor = a.getColor(0, 0);
+                mBackgroundColor = context.getColor(androidx.appcompat.R.color.material_grey_600);
+            } else {
+                a = context.obtainStyledAttributes(new int[]{android.R.attr.colorPrimary});
+                mBackgroundActivatedColor = a.getColor(0, 0);
+                mBackgroundColor = a.getColor(0, 0);
+            }
             a.recycle();
         }
 
@@ -84,8 +92,8 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
         setClickable(true);
 
         mFrameView = findViewById(R.id.frame);
-        mTextView = (TextView) findViewById(R.id.switch_text);
-        mSwitch = (Switch) findViewById(android.R.id.switch_widget);
+        mTextView = findViewById(R.id.switch_text);
+        mSwitch = findViewById(android.R.id.switch_widget);
         addOnSwitchChangeListener((switchView, isChecked) -> setChecked(isChecked));
 
         if (mSwitch.getVisibility() == VISIBLE) {
@@ -136,13 +144,6 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
     }
 
     /**
-     * Return the Switch
-     */
-    public final Switch getSwitch() {
-        return mSwitch;
-    }
-
-    /**
      * Set the title text
      */
     public void setTitle(CharSequence text) {
@@ -155,7 +156,7 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
      * Set icon space reserved for title
      */
     public void setIconSpaceReserved(boolean iconSpaceReserved) {
-        if (mTextView != null && !BuildCompatUtils.isAtLeastS()) {
+        if (mTextView != null && (Build.VERSION.SDK_INT < VERSION_CODES.S)) {
             LayoutParams params = (LayoutParams) mTextView.getLayoutParams();
             int iconSpace = getContext().getResources().getDimensionPixelSize(
                     R.dimen.settingslib_switchbar_subsettings_margin_start);
@@ -192,7 +193,7 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
     /**
      * Adds a listener for switch changes
      */
-    public void addOnSwitchChangeListener(OnMainSwitchChangeListener listener) {
+    public void addOnSwitchChangeListener(OnCheckedChangeListener listener) {
         if (!mSwitchChangeListeners.contains(listener)) {
             mSwitchChangeListeners.add(listener);
         }
@@ -201,7 +202,7 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
     /**
      * Remove a listener for switch changes
      */
-    public void removeOnSwitchChangeListener(OnMainSwitchChangeListener listener) {
+    public void removeOnSwitchChangeListener(OnCheckedChangeListener listener) {
         mSwitchChangeListeners.remove(listener);
     }
 
@@ -214,7 +215,7 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
         mTextView.setEnabled(enabled);
         mSwitch.setEnabled(enabled);
 
-        if (BuildCompatUtils.isAtLeastS()) {
+        if (Build.VERSION.SDK_INT >= VERSION_CODES.S) {
             mFrameView.setEnabled(enabled);
             mFrameView.setActivated(isChecked());
         }
@@ -223,14 +224,13 @@ public class MainSwitchBar extends LinearLayout implements CompoundButton.OnChec
     private void propagateChecked(boolean isChecked) {
         setBackground(isChecked);
 
-        final int count = mSwitchChangeListeners.size();
-        for (int n = 0; n < count; n++) {
-            mSwitchChangeListeners.get(n).onSwitchChanged(mSwitch, isChecked);
+        for (OnCheckedChangeListener changeListener : mSwitchChangeListeners) {
+            changeListener.onCheckedChanged(mSwitch, isChecked);
         }
     }
 
     private void setBackground(boolean isChecked) {
-        if (!BuildCompatUtils.isAtLeastS()) {
+        if (Build.VERSION.SDK_INT < VERSION_CODES.S) {
             setBackgroundColor(isChecked ? mBackgroundActivatedColor : mBackgroundColor);
         } else {
             mFrameView.setActivated(isChecked);

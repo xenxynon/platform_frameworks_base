@@ -41,6 +41,18 @@
             "file_patterns": ["StorageManagerService\\.java"]
         },
         {
+            "name": "CtsScopedStorageBypassDatabaseOperationsTest",
+            "file_patterns": ["StorageManagerService\\.java"]
+        },
+        {
+            "name": "CtsScopedStorageGeneralTest",
+            "file_patterns": ["StorageManagerService\\.java"]
+        },
+        {
+            "name": "CtsScopedStorageRedactUriTest",
+            "file_patterns": ["StorageManagerService\\.java"]
+        },
+        {
             "name": "FrameworksMockingServicesTests",
             "options": [
                 {
@@ -57,6 +69,18 @@
                 }
             ],
             "file_patterns": ["BinaryTransparencyService\\.java"]
+        },
+        {
+            "name": "FrameworksServicesTests",
+            "options": [
+                {
+                    "include-filter": "com.android.server.PinnerServiceTest"
+                },
+                {
+                    "exclude-annotation": "org.junit.Ignore"
+                }
+            ],
+            "file_patterns": ["PinnerService\\.java"]
         },
         {
             "name": "BinaryTransparencyHostTest",
@@ -83,6 +107,12 @@
                 }
             ],
             "file_patterns": ["VpnManagerService\\.java"]
+        },
+        {
+            "name": "FrameworksNetTests"
+        },
+        {
+            "name": "CtsSuspendAppsTestCases"
         }
     ],
     "presubmit-large": [
@@ -115,6 +145,24 @@
                 }
             ],
             "file_patterns": ["VpnManagerService\\.java"]
+        }
+    ],
+    "postsubmit": [
+        // these tests need to establish SLO baseline, see go/test-mapping-slo-guide
+        {
+            "name": "CtsPackageManagerTestCases"
+        },
+        {
+            "name": "FrameworksServicesTests",
+            "options": [
+                {
+                    "include-filter": "com.android.server.PinnerServiceTest"
+                },
+                {
+                    "exclude-annotation": "org.junit.Ignore"
+                }
+            ],
+            "file_patterns": ["PinnerService\\.java"]
         }
     ]
 }

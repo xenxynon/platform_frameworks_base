@@ -40,6 +40,7 @@
 #ifdef __ANDROID__
 #include "include/gpu/ganesh/SkImageGanesh.h"
 #endif
+#include "utils/ForceDark.h"
 #include "utils/MathUtils.h"
 #include "utils/StringUtils.h"
 
@@ -403,16 +404,21 @@ void RenderNode::syncDisplayList(TreeObserver& observer, TreeInfo* info) {
     deleteDisplayList(observer, info);
     mDisplayList = std::move(mStagingDisplayList);
     if (mDisplayList) {
-        WebViewSyncData syncData {
-            .applyForceDark = info && !info->disableForceDark
-        };
+        WebViewSyncData syncData{.applyForceDark = shouldEnableForceDark(info)};
         mDisplayList.syncContents(syncData);
         handleForceDark(info);
     }
 }
 
+inline bool RenderNode::shouldEnableForceDark(TreeInfo* info) {
+    return CC_UNLIKELY(
+            info &&
+            (!info->disableForceDark ||
+             info->forceDarkType == android::uirenderer::ForceDarkType::FORCE_INVERT_COLOR_DARK));
+}
+
 void RenderNode::handleForceDark(android::uirenderer::TreeInfo *info) {
-    if (CC_LIKELY(!info || info->disableForceDark)) {
+    if (!shouldEnableForceDark(info)) {
         return;
     }
     auto usage = usageHint();
@@ -421,7 +427,13 @@ void RenderNode::handleForceDark(android::uirenderer::TreeInfo *info) {
         children.push_back(node);
     });
     if (mDisplayList.hasText()) {
-        usage = UsageHint::Foreground;
+        if (mDisplayList.hasFill()) {
+            // Handle a special case for custom views that draw both text and background in the
+            // same RenderNode, which would otherwise be altered to white-on-white text.
+            usage = UsageHint::Container;
+        } else {
+            usage = UsageHint::Foreground;
+        }
     }
     if (usage == UsageHint::Unknown) {
         if (children.size() > 1) {
@@ -447,8 +459,13 @@ void RenderNode::handleForceDark(android::uirenderer::TreeInfo *info) {
             drawn.join(bounds);
         }
     }
-    mDisplayList.applyColorTransform(
-            usage == UsageHint::Background ? ColorTransform::Dark : ColorTransform::Light);
+
+    if (usage == UsageHint::Container) {
+        mDisplayList.applyColorTransform(ColorTransform::Invert);
+    } else {
+        mDisplayList.applyColorTransform(usage == UsageHint::Background ? ColorTransform::Dark
+                                                                        : ColorTransform::Light);
+    }
 }
 
 void RenderNode::pushStagingDisplayListChanges(TreeObserver& observer, TreeInfo& info) {

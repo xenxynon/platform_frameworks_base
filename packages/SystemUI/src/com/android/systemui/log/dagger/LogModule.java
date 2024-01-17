@@ -16,17 +16,14 @@
 
 package com.android.systemui.log.dagger;
 
-import android.content.ContentResolver;
 import android.os.Build;
-import android.os.Looper;
 
 import com.android.systemui.dagger.SysUISingleton;
-import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.log.LogBuffer;
 import com.android.systemui.log.LogBufferFactory;
 import com.android.systemui.log.LogcatEchoTracker;
-import com.android.systemui.log.LogcatEchoTrackerDebug;
-import com.android.systemui.log.LogcatEchoTrackerProd;
+import com.android.systemui.log.echo.LogcatEchoTrackerDebug;
+import com.android.systemui.log.echo.LogcatEchoTrackerProd;
 import com.android.systemui.log.table.TableLogBuffer;
 import com.android.systemui.log.table.TableLogBufferFactory;
 import com.android.systemui.qs.QSFragmentLegacy;
@@ -36,6 +33,7 @@ import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.util.Compile;
 import com.android.systemui.util.wakelock.WakeLockLog;
 
+import dagger.Lazy;
 import dagger.Module;
 import dagger.Provides;
 
@@ -158,6 +156,14 @@ public class LogModule {
         return factory.create("NotifRemoteInputLog", 50 /* maxSize */, false /* systrace */);
     }
 
+    /** Provides a logging buffer for all logs related to keyguard media controller. */
+    @Provides
+    @SysUISingleton
+    @KeyguardMediaControllerLog
+    public static LogBuffer provideKeyguardMediaControllerLogBuffer(LogBufferFactory factory) {
+        return factory.create("KeyguardMediaControllerLog", 50 /* maxSize */, false /* systrace */);
+    }
+
     /** Provides a logging buffer for all logs related to unseen notifications. */
     @Provides
     @SysUISingleton
@@ -182,7 +188,7 @@ public class LogModule {
             LogBufferFactory factory,
             QSPipelineFlagsRepository flags
     ) {
-        if (flags.getPipelineTilesEnabled()) {
+        if (flags.getTilesEnabled()) {
             // we use
             return factory.create("QSLog", 450 /* maxSize */, false /* systrace */);
         } else {
@@ -349,10 +355,11 @@ public class LogModule {
     @Provides
     @SysUISingleton
     public static LogcatEchoTracker provideLogcatEchoTracker(
-            ContentResolver contentResolver,
-            @Main Looper looper) {
+            Lazy<LogcatEchoTrackerDebug> lazyTrackerDebug) {
         if (Build.isDebuggable()) {
-            return LogcatEchoTrackerDebug.create(contentResolver, looper);
+            LogcatEchoTrackerDebug trackerDebug = lazyTrackerDebug.get();
+            trackerDebug.start();
+            return trackerDebug;
         } else {
             return new LogcatEchoTrackerProd();
         }
@@ -515,6 +522,26 @@ public class LogModule {
     @KeyguardLog
     public static LogBuffer provideKeyguardLogBuffer(LogBufferFactory factory) {
         return factory.create("KeyguardLog", 250);
+    }
+
+    /**
+     * Provides a {@link LogBuffer} for keyguard transition animation logs.
+     */
+    @Provides
+    @SysUISingleton
+    @KeyguardTransitionAnimationLog
+    public static LogBuffer provideKeyguardTransitionAnimationLogBuffer(LogBufferFactory factory) {
+        return factory.create("KeyguardTransitionAnimationLog", 250);
+    }
+
+    /**
+     * Provides a {@link LogBuffer} for Scrims like LightRevealScrim.
+     */
+    @Provides
+    @SysUISingleton
+    @ScrimLog
+    public static LogBuffer provideScrimLogBuffer(LogBufferFactory factory) {
+        return factory.create("ScrimLog", 100);
     }
 
     /**

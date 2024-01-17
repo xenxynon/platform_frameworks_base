@@ -49,8 +49,6 @@ import com.android.systemui.biometrics.ui.viewmodel.FingerprintStartMode
 import com.android.systemui.biometrics.ui.viewmodel.PromptMessage
 import com.android.systemui.biometrics.ui.viewmodel.PromptSize
 import com.android.systemui.biometrics.ui.viewmodel.PromptViewModel
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags.ONE_WAY_HAPTICS_API_MIGRATION
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.VibratorHelper
@@ -78,7 +76,6 @@ object BiometricViewBinder {
         legacyCallback: Spaghetti.Callback,
         applicationScope: CoroutineScope,
         vibratorHelper: VibratorHelper,
-        featureFlags: FeatureFlags,
     ): Spaghetti {
         val accessibilityManager = view.context.getSystemService(AccessibilityManager::class.java)!!
 
@@ -379,14 +376,28 @@ object BiometricViewBinder {
                     }
                 }
 
-                // Play haptics
-                if (featureFlags.isEnabled(ONE_WAY_HAPTICS_API_MIGRATION)) {
+                // Talkback directional guidance
+                backgroundView.setOnHoverListener { _, event ->
                     launch {
-                        viewModel.hapticsToPlay.collect { hapticFeedbackConstant ->
-                            if (hapticFeedbackConstant != HapticFeedbackConstants.NO_HAPTICS) {
-                                vibratorHelper.performHapticFeedback(view, hapticFeedbackConstant)
-                                viewModel.clearHaptics()
-                            }
+                        viewModel.onAnnounceAccessibilityHint(
+                            event,
+                            accessibilityManager.isTouchExplorationEnabled
+                        )
+                    }
+                    false
+                }
+                launch {
+                    viewModel.accessibilityHint.collect { message ->
+                        if (message.isNotBlank()) view.announceForAccessibility(message)
+                    }
+                }
+
+                // Play haptics
+                launch {
+                    viewModel.hapticsToPlay.collect { hapticFeedbackConstant ->
+                        if (hapticFeedbackConstant != HapticFeedbackConstants.NO_HAPTICS) {
+                            vibratorHelper.performHapticFeedback(view, hapticFeedbackConstant)
+                            viewModel.clearHaptics()
                         }
                     }
                 }

@@ -41,7 +41,6 @@ import static android.app.ActivityManager.PROCESS_STATE_PERSISTENT_UI;
 import static android.app.ActivityManager.PROCESS_STATE_SERVICE;
 import static android.app.ActivityManager.PROCESS_STATE_TOP;
 import static android.app.ActivityManager.PROCESS_STATE_TRANSIENT_BACKGROUND;
-import static android.app.ActivityManager.PROCESS_STATE_UNKNOWN;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_ACTIVITY;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_ALLOWLIST;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_BACKUP;
@@ -145,6 +144,7 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.ServiceInfo;
 import android.net.NetworkPolicyManager;
+import android.os.Flags;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManagerInternal;
@@ -391,6 +391,8 @@ public class OomAdjuster {
     //Per Task Boost of top-app renderThread
     public static BoostFramework mPerfBoost = new BoostFramework();
     public static int mPerfHandle = -1;
+    public static int mCurAppPid = -1;
+    public static int mCurRenderTid = -1;
     public static int mCurRenderThreadTid = -1;
     public static boolean mIsTopAppRenderThreadBoostEnabled = false;
 
@@ -1907,7 +1909,7 @@ public class OomAdjuster {
                     // screen on or animating, promote UI
                     state.setCurProcState(ActivityManager.PROCESS_STATE_PERSISTENT_UI);
                     state.setCurrentSchedulingGroup(SCHED_GROUP_TOP_APP);
-                } else {
+                } else if (!app.getWindowProcessController().isShowingUiWhileDozing()) {
                     // screen off, restrict UI scheduling
                     state.setCurProcState(PROCESS_STATE_BOUND_FOREGROUND_SERVICE);
                     state.setCurrentSchedulingGroup(SCHED_GROUP_RESTRICTED);
@@ -1966,6 +1968,21 @@ public class OomAdjuster {
                         Slog.d(TAG, "VENDOR_HINT_BOOST_RENDERTHREAD perfHint was called. mPerfHandle: "
                                + mPerfHandle);
                     }
+                }
+            }
+
+            if (mCurAppPid != app.getPid() && app.getPid() > 0) {
+                mCurAppPid = app.getPid();
+                if (mPerfBoost != null) {
+                    mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_PASS_PID, app.processName,
+                                        mCurAppPid, BoostFramework.PassPid.APP_PID);
+                }
+            }
+            if (mCurRenderTid != app.getRenderThreadTid() && app.getRenderThreadTid() > 0) {
+                mCurRenderTid = app.getRenderThreadTid();
+                if (mPerfBoost != null) {
+                    mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_PASS_PID, app.processName,
+                                        mCurRenderTid, BoostFramework.PassPid.RENDER_TID);
                 }
             }
 
@@ -2327,8 +2344,10 @@ public class OomAdjuster {
                             || now < (s.lastActivity + mConstants.MAX_SERVICE_INACTIVITY)) {
                         // This service has seen some activity within
                         // recent memory, so we will keep its process ahead
-                        // of the background processes.
-                        if (adj > SERVICE_ADJ) {
+                        // of the background processes. This does not apply
+                        // to the SDK sandbox process since it should never
+                        // be more important than its corresponding app.
+                        if (!app.isSdkSandbox && adj > SERVICE_ADJ) {
                             adj = SERVICE_ADJ;
                             state.setAdjType("started-services");
                             if (DEBUG_OOM_ADJ_REASON || logUid == appUid) {
@@ -2349,7 +2368,7 @@ public class OomAdjuster {
 
             if (s.isForeground) {
                 final int fgsType = s.foregroundServiceType;
-                if (s.isFgsAllowedWIU()) {
+                if (s.isFgsAllowedWiu_forCapabilities()) {
                     capabilityFromFGS |=
                             (fgsType & FOREGROUND_SERVICE_TYPE_LOCATION)
                                     != 0 ? PROCESS_CAPABILITY_FOREGROUND_LOCATION : 0;
@@ -2513,9 +2532,23 @@ public class OomAdjuster {
                     // normally be a B service, but if we are low on RAM and it
                     // is large we want to force it down since we would prefer to
                     // keep launcher over it.
+                    long lastPssOrRss = !Flags.removeAppProfilerPssCollection()
+                            ? app.mProfile.getLastPss() : app.mProfile.getLastRss();
+
+                    // RSS is larger than PSS, but the RSS/PSS ratio varies per-process based on how
+                    // many shared pages a process uses. The threshold is increased if the flag for
+                    // reading RSS instead of PSS is enabled.
+                    //
+                    // TODO(b/296454553): Tune the second value so that the relative number of
+                    // service B is similar before/after this flag is enabled.
+                    double thresholdModifier = !Flags.removeAppProfilerPssCollection()
+                            ? 1
+                            : mConstants.PSS_TO_RSS_THRESHOLD_MODIFIER;
+                    double cachedRestoreThreshold =
+                            mProcessList.getCachedRestoreThresholdKb() * thresholdModifier;
+
                     if (!mService.mAppProfiler.isLastMemoryLevelNormal()
-                            && app.mProfile.getLastPss()
-                            >= mProcessList.getCachedRestoreThresholdKb()) {
+                            && lastPssOrRss >= cachedRestoreThreshold) {
                         state.setServiceHighRam(true);
                         state.setServiceB(true);
                         //Slog.i(TAG, "ADJ " + app + " high ram!");
@@ -3599,8 +3632,8 @@ public class OomAdjuster {
         int initialCapability =  PROCESS_CAPABILITY_NONE;
         boolean initialCached = true;
         final ProcessStateRecord state = app.mState;
-        final int prevProcState = PROCESS_STATE_UNKNOWN;
-        final int prevAdj = UNKNOWN_ADJ;
+        final int prevProcState = state.getCurRawProcState();
+        final int prevAdj = state.getCurRawAdj();
         // If the process has been marked as foreground, it is starting as the top app (with
         // Zygote#START_AS_TOP_APP_ARG), so boost the thread priority of its default UI thread.
         if (state.hasForegroundActivities()) {
@@ -3884,11 +3917,6 @@ public class OomAdjuster {
             mCachedAppOptimizer.unfreezeTemporarily(proc, reason);
         }
         processes.clear();
-    }
-
-    @GuardedBy("mService")
-    void onProcessBeginLocked(@NonNull ProcessRecord app) {
-        // Empty, the OomAdjusterModernImpl will have an implementation.
     }
 
     @GuardedBy("mService")

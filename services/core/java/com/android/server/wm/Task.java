@@ -35,7 +35,6 @@ import static android.content.Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.content.Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS;
 import static android.content.Intent.FLAG_ACTIVITY_TASK_ON_HOME;
-import static android.content.pm.ActivityInfo.CONFIG_SCREEN_LAYOUT;
 import static android.content.pm.ActivityInfo.FLAG_RELINQUISH_TASK_IDENTITY;
 import static android.content.pm.ActivityInfo.FLAG_RESUME_WHILE_PAUSING;
 import static android.content.pm.ActivityInfo.FLAG_SHOW_FOR_ALL_USERS;
@@ -140,6 +139,7 @@ import android.app.ActivityManager.RecentTaskInfo.PersistedTaskSnapshotData;
 import android.app.ActivityManager.TaskDescription;
 import android.app.ActivityOptions;
 import android.app.ActivityTaskManager;
+import android.app.AppCompatTaskInfo;
 import android.app.AppGlobals;
 import android.app.IActivityController;
 import android.app.PictureInPictureParams;
@@ -431,6 +431,11 @@ class Task extends TaskFragment {
     // The content overlay to be applied with mLastRecentsAnimationTransaction
     // TODO: remove this once the recents animation is moved to the Shell
     SurfaceControl mLastRecentsAnimationOverlay;
+
+    // A surface that is used by TaskFragmentOrganizer to place content on top of own activities and
+    // trusted TaskFragments.
+    @Nullable
+    DecorSurfaceContainer mDecorSurfaceContainer;
 
     static final int LAYER_RANK_INVISIBLE = -1;
     // Ranking (from top) of this task among all visible tasks. (-1 means it's not visible)
@@ -1562,6 +1567,11 @@ class Task extends TaskFragment {
             mAtmService.getTaskChangeNotificationController().notifyTaskStackChanged();
         }
 
+        if (mDecorSurfaceContainer != null && r == mDecorSurfaceContainer.mOwnerTaskFragment) {
+            // Remove the decor surface if the owner TaskFragment is removed;
+            removeDecorSurface();
+        }
+
         if (hasChild()) {
             updateEffectiveIntent();
 
@@ -2667,6 +2677,9 @@ class Task extends TaskFragment {
         }
         // If applicable let the TaskOrganizer know the Task is vanishing.
         setTaskOrganizer(null);
+        if (mDecorSurfaceContainer != null) {
+            mDecorSurfaceContainer.release();
+        }
 
         super.removeImmediately();
         mRemoving = false;
@@ -2947,7 +2960,7 @@ class Task extends TaskFragment {
         if (mDragResizing != dragResizing) {
             // No need to check if allowed if it's leaving dragResize
             if (dragResizing
-                    && !(getRootTask().getWindowingMode() == WINDOWING_MODE_FREEFORM)) {
+                    && !(getRootTask().getWindowConfiguration().canResizeTask())) {
                 Slog.e(TAG, "Drag resize isn't allowed for root task id=" + getRootTaskId());
                 return;
             }
@@ -3501,20 +3514,21 @@ class Task extends TaskFragment {
                 && top.getOrganizedTask() == this && top.isState(RESUMED);
         final boolean isTopActivityVisible = top != null
                 && top.getOrganizedTask() == this && top.isVisible();
+        final AppCompatTaskInfo appCompatTaskInfo = info.appCompatTaskInfo;
         // Whether the direct top activity is in size compat mode
-        info.topActivityInSizeCompat = isTopActivityVisible && top.inSizeCompatMode();
-        if (info.topActivityInSizeCompat
+        appCompatTaskInfo.topActivityInSizeCompat = isTopActivityVisible && top.inSizeCompatMode();
+        if (appCompatTaskInfo.topActivityInSizeCompat
                 && mWmService.mLetterboxConfiguration.isTranslucentLetterboxingEnabled()) {
             // We hide the restart button in case of transparent activities.
-            info.topActivityInSizeCompat = top.fillsParent();
+            appCompatTaskInfo.topActivityInSizeCompat = top.fillsParent();
         }
         // Whether the direct top activity is eligible for letterbox education.
-        info.topActivityEligibleForLetterboxEducation = isTopActivityResumed
+        appCompatTaskInfo.topActivityEligibleForLetterboxEducation = isTopActivityResumed
                 && top.isEligibleForLetterboxEducation();
         // Whether the direct top activity requested showing camera compat control.
-        info.cameraCompatControlState = isTopActivityResumed
+        appCompatTaskInfo.cameraCompatControlState = isTopActivityResumed
                 ? top.getCameraCompatControlState()
-                : TaskInfo.CAMERA_COMPAT_CONTROL_HIDDEN;
+                : AppCompatTaskInfo.CAMERA_COMPAT_CONTROL_HIDDEN;
 
         final Task parentTask = getParent() != null ? getParent().asTask() : null;
         info.parentTaskId = parentTask != null && parentTask.mCreatedByOrganizer
@@ -3524,34 +3538,35 @@ class Task extends TaskFragment {
         info.isVisible = hasVisibleChildren();
         info.isVisibleRequested = isVisibleRequested();
         info.isSleeping = shouldSleepActivities();
-        info.isLetterboxDoubleTapEnabled = top != null
-                && top.mLetterboxUiController.isLetterboxDoubleTapEducationEnabled();
-        info.topActivityLetterboxVerticalPosition = TaskInfo.PROPERTY_VALUE_UNSET;
-        info.topActivityLetterboxHorizontalPosition = TaskInfo.PROPERTY_VALUE_UNSET;
-        info.topActivityLetterboxWidth = TaskInfo.PROPERTY_VALUE_UNSET;
-        info.topActivityLetterboxHeight = TaskInfo.PROPERTY_VALUE_UNSET;
-        info.isUserFullscreenOverrideEnabled = top != null
-                && top.mLetterboxUiController.shouldApplyUserFullscreenOverride();
         info.isTopActivityTransparent = top != null && !top.fillsParent();
-        info.isFromLetterboxDoubleTap = top != null && top.mLetterboxUiController.isFromDoubleTap();
-        if (info.isLetterboxDoubleTapEnabled) {
-            info.topActivityLetterboxWidth = top.getBounds().width();
-            info.topActivityLetterboxHeight = top.getBounds().height();
-            if (info.topActivityLetterboxWidth < info.topActivityLetterboxHeight) {
+        appCompatTaskInfo.isLetterboxDoubleTapEnabled = top != null
+                && top.mLetterboxUiController.isLetterboxDoubleTapEducationEnabled();
+        appCompatTaskInfo.topActivityLetterboxVerticalPosition = TaskInfo.PROPERTY_VALUE_UNSET;
+        appCompatTaskInfo.topActivityLetterboxHorizontalPosition = TaskInfo.PROPERTY_VALUE_UNSET;
+        appCompatTaskInfo.topActivityLetterboxWidth = TaskInfo.PROPERTY_VALUE_UNSET;
+        appCompatTaskInfo.topActivityLetterboxHeight = TaskInfo.PROPERTY_VALUE_UNSET;
+        appCompatTaskInfo.isUserFullscreenOverrideEnabled = top != null
+                && top.mLetterboxUiController.shouldApplyUserFullscreenOverride();
+        appCompatTaskInfo.isFromLetterboxDoubleTap = top != null
+                && top.mLetterboxUiController.isFromDoubleTap();
+        if (appCompatTaskInfo.isLetterboxDoubleTapEnabled) {
+            appCompatTaskInfo.topActivityLetterboxWidth = top.getBounds().width();
+            appCompatTaskInfo.topActivityLetterboxHeight = top.getBounds().height();
+            if (appCompatTaskInfo.isTopActivityPillarboxed()) {
                 // Pillarboxed
-                info.topActivityLetterboxHorizontalPosition =
+                appCompatTaskInfo.topActivityLetterboxHorizontalPosition =
                         top.mLetterboxUiController.getLetterboxPositionForHorizontalReachability();
             } else {
                 // Letterboxed
-                info.topActivityLetterboxVerticalPosition =
+                appCompatTaskInfo.topActivityLetterboxVerticalPosition =
                         top.mLetterboxUiController.getLetterboxPositionForVerticalReachability();
             }
         }
-        // User Aspect Ratio Settings is enabled if the app is not in SCM
-        info.topActivityEligibleForUserAspectRatioButton = top != null
-                && !info.topActivityInSizeCompat
-                && top.mLetterboxUiController.shouldEnableUserAspectRatioSettings();
-        info.topActivityBoundsLetterboxed = top != null && top.areBoundsLetterboxed();
+        appCompatTaskInfo.topActivityEligibleForUserAspectRatioButton = top != null
+                && !appCompatTaskInfo.topActivityInSizeCompat
+                && top.mLetterboxUiController.shouldEnableUserAspectRatioSettings()
+                && !info.isTopActivityTransparent;
+        appCompatTaskInfo.topActivityBoundsLetterboxed = top != null  && top.areBoundsLetterboxed();
     }
 
     /**
@@ -3680,7 +3695,8 @@ class Task extends TaskFragment {
      */
     TaskFragmentParentInfo getTaskFragmentParentInfo() {
         return new TaskFragmentParentInfo(getConfiguration(), getDisplayId(),
-                shouldBeVisible(null /* starting */), hasNonFinishingDirectActivity());
+                shouldBeVisible(null /* starting */), hasNonFinishingDirectActivity(),
+                getDecorSurface());
     }
 
     @Override
@@ -3700,6 +3716,62 @@ class Task extends TaskFragment {
         if (childOrganizedTf != null) {
             childOrganizedTf.sendTaskFragmentParentInfoChanged();
         }
+    }
+
+    @Override
+    void assignChildLayers(@NonNull SurfaceControl.Transaction t) {
+        int layer = 0;
+        boolean decorSurfacePlaced = false;
+
+        // We use two passes as a way to promote children which
+        // need Z-boosting to the end of the list.
+        for (int j = 0; j < mChildren.size(); ++j) {
+            final WindowContainer wc = mChildren.get(j);
+            wc.assignChildLayers(t);
+            if (!wc.needsZBoost()) {
+                // Place the decor surface under any untrusted content.
+                if (mDecorSurfaceContainer != null && !decorSurfacePlaced
+                        && shouldPlaceDecorSurfaceBelowContainer(wc)) {
+                    mDecorSurfaceContainer.assignLayer(t, layer++);
+                    decorSurfacePlaced = true;
+                }
+                wc.assignLayer(t, layer++);
+
+                // Place the decor surface just above the owner TaskFragment.
+                if (mDecorSurfaceContainer != null && !decorSurfacePlaced
+                        && wc == mDecorSurfaceContainer.mOwnerTaskFragment) {
+                    mDecorSurfaceContainer.assignLayer(t, layer++);
+                    decorSurfacePlaced = true;
+                }
+            }
+        }
+
+        // If not placed yet, the decor surface should be on top of all non-boosted children.
+        if (mDecorSurfaceContainer != null && !decorSurfacePlaced) {
+            mDecorSurfaceContainer.assignLayer(t, layer++);
+            decorSurfacePlaced = true;
+        }
+
+        for (int j = 0; j < mChildren.size(); ++j) {
+            final WindowContainer wc = mChildren.get(j);
+            if (wc.needsZBoost()) {
+                wc.assignLayer(t, layer++);
+            }
+        }
+        if (mOverlayHost != null) {
+            mOverlayHost.setLayer(t, layer++);
+        }
+    }
+
+    boolean shouldPlaceDecorSurfaceBelowContainer(@NonNull WindowContainer wc) {
+        boolean isOwnActivity =
+                wc.asActivityRecord() != null
+                        && wc.asActivityRecord().isUid(effectiveUid);
+        boolean isTrustedTaskFragment =
+                wc.asTaskFragment() != null
+                        && wc.asTaskFragment().isEmbedded()
+                        && wc.asTaskFragment().isAllowedToBeEmbeddedInTrustedMode();
+        return !isOwnActivity && !isTrustedTaskFragment;
     }
 
     boolean isTaskId(int taskId) {
@@ -4581,12 +4653,6 @@ class Task extends TaskFragment {
      * @param creating {@code true} if this is being run during task construction.
      */
     void setWindowingMode(int preferredWindowingMode, boolean creating) {
-        mWmService.inSurfaceTransaction(() -> setWindowingModeInSurfaceTransaction(
-                preferredWindowingMode, creating));
-    }
-
-    private void setWindowingModeInSurfaceTransaction(int preferredWindowingMode,
-            boolean creating) {
         final TaskDisplayArea taskDisplayArea = getDisplayArea();
         if (taskDisplayArea == null) {
             Slog.d(TAG, "taskDisplayArea is null, bail early");
@@ -4661,7 +4727,12 @@ class Task extends TaskFragment {
             if (topActivity != null) {
                 mTaskSupervisor.mNoAnimActivities.add(topActivity);
             }
-            super.setWindowingMode(windowingMode);
+
+            final boolean isPip2ExperimentEnabled =
+                    ActivityTaskManagerService.isPip2ExperimentEnabled();
+            if (!isPip2ExperimentEnabled) {
+                super.setWindowingMode(windowingMode);
+            }
 
             if (currentMode == WINDOWING_MODE_PINNED && topActivity != null) {
                 // Try reparent pinned activity back to its original task after
@@ -4670,32 +4741,37 @@ class Task extends TaskFragment {
                 // PiP, we set final windowing mode on the ActivityRecord first and then on its
                 // Task when the exit PiP transition finishes. Meanwhile, the exit transition is
                 // always performed on its original task, reparent immediately in ActivityRecord
-                // breaks it.
-                if (topActivity.getLastParentBeforePip() != null) {
-                    // Do not reparent if the pinned task is in removal, indicated by the
-                    // force hidden flag.
-                    if (!isForceHidden()) {
-                        final Task lastParentBeforePip = topActivity.getLastParentBeforePip();
-                        if (lastParentBeforePip.isAttached()) {
-                            topActivity.reparent(lastParentBeforePip,
-                                    lastParentBeforePip.getChildCount() /* top */,
-                                    "movePinnedActivityToOriginalTask");
-                            final DisplayContent dc = topActivity.getDisplayContent();
-                            if (dc != null && dc.isFixedRotationLaunchingApp(topActivity)) {
-                                // Expanding pip into new rotation, so create a rotation leash
-                                // until the display is rotated.
-                                topActivity.getOrCreateFixedRotationLeash(
-                                        topActivity.getSyncTransaction());
-                            }
-                            lastParentBeforePip.moveToFront("movePinnedActivityToOriginalTask");
-                        }
+                // breaks it. Do not reparent if the pinned task is in removal, indicated by the
+                // force hidden flag.
+                if (topActivity.getLastParentBeforePip() != null && !isForceHidden()
+                        && topActivity.getLastParentBeforePip().isAttached()) {
+                    // We need to collect the pip activity to allow for screenshots
+                    // to be taken as a part of reparenting.
+                    mTransitionController.collect(topActivity);
+
+                    final Task lastParentBeforePip = topActivity.getLastParentBeforePip();
+                    topActivity.reparent(lastParentBeforePip,
+                            lastParentBeforePip.getChildCount() /* top */,
+                            "movePinnedActivityToOriginalTask");
+                    final DisplayContent dc = topActivity.getDisplayContent();
+                    if (dc != null && dc.isFixedRotationLaunchingApp(topActivity)) {
+                        // Expanding pip into new rotation, so create a rotation leash
+                        // until the display is rotated.
+                        topActivity.getOrCreateFixedRotationLeash(
+                                topActivity.getSyncTransaction());
                     }
+                    lastParentBeforePip.moveToFront("movePinnedActivityToOriginalTask");
+                }
+                if (isPip2ExperimentEnabled) {
+                    super.setWindowingMode(windowingMode);
                 }
                 // Resume app-switches-allowed flag when exiting from pinned mode since
                 // it does not follow the ActivityStarter path.
                 if (topActivity.shouldBeVisible()) {
                     mAtmService.resumeAppSwitches();
                 }
+            } else if (isPip2ExperimentEnabled) {
+                super.setWindowingMode(windowingMode);
             }
 
             if (creating) {
@@ -5779,8 +5855,7 @@ class Task extends TaskFragment {
             }
 
             mRootWindowContainer.ensureVisibilityAndConfig(null /* starting */,
-                    mDisplayContent.mDisplayId, false /* markFrozenIfConfigChanged */,
-                    false /* deferResume */);
+                    mDisplayContent.mDisplayId, false /* deferResume */);
         } finally {
             if (mTransitionController.isShellTransitionsEnabled()) {
                 mAtmService.continueWindowLayout();
@@ -5880,22 +5955,6 @@ class Task extends TaskFragment {
             }
         }
         return activities;
-    }
-
-    ActivityRecord restartPackage(String packageName) {
-        ActivityRecord starting = topRunningActivity();
-
-        // All activities that came from the package must be
-        // restarted as if there was a config change.
-        forAllActivities(r -> {
-            if (!r.info.packageName.equals(packageName)) return;
-            r.forceNewConfig = true;
-            if (starting != null && r == starting && r.isVisibleRequested()) {
-                r.startFreezingScreenLocked(CONFIG_SCREEN_LAYOUT);
-            }
-        });
-
-        return starting;
     }
 
     Task reuseOrCreateTask(ActivityInfo info, Intent intent, boolean toTop) {
@@ -6004,18 +6063,16 @@ class Task extends TaskFragment {
                     "Can't exit pinned mode if it's not pinned already.");
         }
 
-        mWmService.inSurfaceTransaction(() -> {
-            final Task task = getBottomMostTask();
-            setWindowingMode(WINDOWING_MODE_UNDEFINED);
+        final Task task = getBottomMostTask();
+        setWindowingMode(WINDOWING_MODE_UNDEFINED);
 
-            // Task could have been removed from the hierarchy due to windowing mode change
-            // where its only child is reparented back to their original parent task.
-            if (isAttached()) {
-                getDisplayArea().positionChildAt(POSITION_TOP, this, false /* includingParents */);
-            }
+        // Task could have been removed from the hierarchy due to windowing mode change
+        // where its only child is reparented back to their original parent task.
+        if (isAttached()) {
+            getDisplayArea().positionChildAt(POSITION_TOP, this, false /* includingParents */);
+        }
 
-            mTaskSupervisor.scheduleUpdatePictureInPictureModeIfNeeded(task, this);
-        });
+        mTaskSupervisor.scheduleUpdatePictureInPictureModeIfNeeded(task, this);
     }
 
     private int setBounds(Rect existing, Rect bounds) {
@@ -6220,6 +6277,7 @@ class Task extends TaskFragment {
                 // Avoid resuming activities on secondary displays since we don't want bubble
                 // activities to be resumed while bubble is still collapsed.
                 // TODO(b/113840485): Having keyguard going away state for secondary displays.
+                && display != null
                 && display.isDefaultDisplay) {
             return false;
         }
@@ -6589,11 +6647,11 @@ class Task extends TaskFragment {
                 mActivityType = ACTIVITY_TYPE_STANDARD;
             }
 
-            if (mActivityType != ACTIVITY_TYPE_STANDARD
+            if (!DisplayContent.alwaysCreateRootTask(tda.getWindowingMode(), mActivityType)
                     && mActivityType != ACTIVITY_TYPE_UNDEFINED) {
-                // For now there can be only one root task of a particular non-standard activity
-                // type on a display. So, get that ignoring whatever windowing mode it is
-                // currently in.
+                // Only Recents or Standard activity types are allowed to have more than one
+                // root task on a display, this is independent of whatever windowing mode it
+                // is currently in.
                 Task rootTask = tda.getRootTask(WINDOWING_MODE_UNDEFINED, mActivityType);
                 if (rootTask != null) {
                     throw new IllegalArgumentException("Root task=" + rootTask + " of activityType="
@@ -6713,6 +6771,79 @@ class Task extends TaskFragment {
             final InsetsState s = originalChange.getInsetsState(true);
             getBounds(mTmpRect);
             mOverlayHost.dispatchInsetsChanged(s, mTmpRect);
+        }
+    }
+
+    /**
+     * Associates the decor surface with the given TF, or create one if there
+     * isn't one in the Task yet. The surface will be removed with the TF,
+     * and become invisible if the TF is invisible. */
+    void moveOrCreateDecorSurfaceFor(TaskFragment taskFragment) {
+        if (mDecorSurfaceContainer != null) {
+            mDecorSurfaceContainer.mOwnerTaskFragment = taskFragment;
+        } else {
+            mDecorSurfaceContainer = new DecorSurfaceContainer(taskFragment);
+            assignChildLayers();
+            sendTaskFragmentParentInfoChangedIfNeeded();
+        }
+    }
+
+    void removeDecorSurface() {
+        if (mDecorSurfaceContainer == null) {
+            return;
+        }
+        mDecorSurfaceContainer.release();
+        mDecorSurfaceContainer = null;
+        sendTaskFragmentParentInfoChangedIfNeeded();
+    }
+
+    @Nullable SurfaceControl getDecorSurface() {
+        return mDecorSurfaceContainer != null ? mDecorSurfaceContainer.mDecorSurface : null;
+    }
+
+    /**
+     * A decor surface that is requested by a {@code TaskFragmentOrganizer} which will be placed
+     * below children windows except for own Activities and TaskFragment in fully trusted mode.
+     */
+    @VisibleForTesting
+    class DecorSurfaceContainer {
+        @VisibleForTesting
+        @NonNull final SurfaceControl mContainerSurface;
+
+        @VisibleForTesting
+        @NonNull final SurfaceControl mDecorSurface;
+
+        // The TaskFragment that requested the decor surface. If it is destroyed, the decor surface
+        // is also released.
+        @VisibleForTesting
+        @NonNull TaskFragment mOwnerTaskFragment;
+
+        private DecorSurfaceContainer(@NonNull TaskFragment initialOwner) {
+            mOwnerTaskFragment = initialOwner;
+            mContainerSurface = makeSurface().setContainerLayer()
+                    .setParent(mSurfaceControl)
+                    .setName(mSurfaceControl + " - decor surface container")
+                    .setEffectLayer()
+                    .setHidden(false)
+                    .setCallsite("Task.DecorSurfaceContainer")
+                    .build();
+
+            mDecorSurface = makeSurface()
+                    .setParent(mContainerSurface)
+                    .setName(mSurfaceControl + " - decor surface")
+                    .setHidden(false)
+                    .setCallsite("Task.DecorSurfaceContainer")
+                    .build();
+        }
+
+        private void assignLayer(@NonNull SurfaceControl.Transaction t, int layer) {
+            t.setLayer(mContainerSurface, layer);
+            t.setVisibility(mContainerSurface, mOwnerTaskFragment.isVisible());
+        }
+
+        private void release() {
+            mDecorSurface.release();
+            mContainerSurface.release();
         }
     }
 }

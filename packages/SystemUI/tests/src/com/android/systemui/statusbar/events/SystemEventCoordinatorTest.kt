@@ -21,8 +21,6 @@ import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor
 import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor.PendingDisplay
-import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor.State.CONNECTED
-import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.privacy.PrivacyItemController
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.util.mockito.any
@@ -49,7 +47,6 @@ import org.mockito.MockitoAnnotations
 class SystemEventCoordinatorTest : SysuiTestCase() {
 
     private val fakeSystemClock = FakeSystemClock()
-    private val featureFlags = FakeFeatureFlags()
     private val testScope = TestScope(UnconfinedTestDispatcher())
     private val connectedDisplayInteractor = FakeConnectedDisplayInteractor()
 
@@ -67,7 +64,6 @@ class SystemEventCoordinatorTest : SysuiTestCase() {
                     batteryController,
                     privacyController,
                     context,
-                    featureFlags,
                     TestScope(UnconfinedTestDispatcher()),
                     connectedDisplayInteractor
                 )
@@ -79,8 +75,8 @@ class SystemEventCoordinatorTest : SysuiTestCase() {
         testScope.runTest {
             systemEventCoordinator.startObserving()
 
-            connectedDisplayInteractor.emit(CONNECTED)
-            connectedDisplayInteractor.emit(CONNECTED)
+            connectedDisplayInteractor.emit()
+            connectedDisplayInteractor.emit()
 
             verify(scheduler, times(2)).onStatusEvent(any<ConnectedDisplayEvent>())
         }
@@ -90,23 +86,27 @@ class SystemEventCoordinatorTest : SysuiTestCase() {
         testScope.runTest {
             systemEventCoordinator.startObserving()
 
-            connectedDisplayInteractor.emit(CONNECTED)
+            connectedDisplayInteractor.emit()
 
             verify(scheduler).onStatusEvent(any<ConnectedDisplayEvent>())
 
             systemEventCoordinator.stopObserving()
 
-            connectedDisplayInteractor.emit(CONNECTED)
+            connectedDisplayInteractor.emit()
 
             verifyNoMoreInteractions(scheduler)
         }
 
     class FakeConnectedDisplayInteractor : ConnectedDisplayInteractor {
-        private val flow = MutableSharedFlow<ConnectedDisplayInteractor.State>()
-        suspend fun emit(value: ConnectedDisplayInteractor.State) = flow.emit(value)
+        private val flow = MutableSharedFlow<Unit>()
+        suspend fun emit() = flow.emit(Unit)
         override val connectedDisplayState: Flow<ConnectedDisplayInteractor.State>
+            get() = MutableSharedFlow<ConnectedDisplayInteractor.State>()
+        override val connectedDisplayAddition: Flow<Unit>
             get() = flow
         override val pendingDisplay: Flow<PendingDisplay?>
             get() = MutableSharedFlow<PendingDisplay>()
+        override val concurrentDisplaysInProgress: Flow<Boolean>
+            get() = TODO("Not yet implemented")
     }
 }

@@ -908,10 +908,23 @@ public class LockPatternUtils {
     }
 
     /**
-     * Returns true if {@code userHandle} is a managed profile with separate challenge.
+     * Returns true if {@code userHandle} is a profile with separate challenge.
+     * <p>
+     * Returns false if {@code userHandle} is a profile with unified challenge, a profile whose
+     * credential is not shareable with its parent, or a non-profile user.
      */
     public boolean isSeparateProfileChallengeEnabled(int userHandle) {
         return isCredentialSharableWithParent(userHandle) && hasSeparateChallenge(userHandle);
+    }
+
+    /**
+     * Returns true if {@code userHandle} is a profile with unified challenge.
+     * <p>
+     * Returns false if {@code userHandle} is a profile with separate challenge, a profile whose
+     * credential is not shareable with its parent, or a non-profile user.
+     */
+    public boolean isProfileWithUnifiedChallenge(int userHandle) {
+        return isCredentialSharableWithParent(userHandle) && !hasSeparateChallenge(userHandle);
     }
 
     /**
@@ -1947,7 +1960,8 @@ public class LockPatternUtils {
      * If the user is not secured, ie doesn't have an LSKF, then decrypt the user's synthetic
      * password and use it to unlock various cryptographic keys associated with the user.  This
      * primarily includes unlocking the user's credential-encrypted (CE) storage.  It also includes
-     * deriving or decrypting the vendor auth secret and sending it to the AuthSecret HAL.
+     * unlocking the user's Keystore super keys, and deriving or decrypting the vendor auth secret
+     * and sending it to the AuthSecret HAL in order to unlock Secure Element firmware updates.
      * <p>
      * These tasks would normally be done when the LSKF is verified.  This method is where these
      * tasks are done when the user doesn't have an LSKF.  It's called when the user is started.

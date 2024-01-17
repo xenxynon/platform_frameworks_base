@@ -156,6 +156,7 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
 
     public SplitController(@NonNull WindowLayoutComponentImpl windowLayoutComponent,
             @NonNull DeviceStateManagerFoldingFeatureProducer foldingFeatureProducer) {
+        Log.i(TAG, "Initializing Activity Embedding Controller.");
         final MainThreadExecutor executor = new MainThreadExecutor();
         mHandler = executor.mHandler;
         mPresenter = new SplitPresenter(executor, windowLayoutComponent, this);
@@ -208,6 +209,7 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
     @Override
     public void setEmbeddingRules(@NonNull Set<EmbeddingRule> rules) {
         synchronized (mLock) {
+            Log.i(TAG, "Setting embedding rules. Size: " + rules.size());
             mSplitRules.clear();
             mSplitRules.addAll(rules);
         }
@@ -216,6 +218,7 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
     @Override
     public boolean pinTopActivityStack(int taskId, @NonNull SplitPinRule splitPinRule) {
         synchronized (mLock) {
+            Log.i(TAG, "Request to pin top activity stack.");
             final TaskContainer task = getTaskContainer(taskId);
             if (task == null) {
                 Log.e(TAG, "Cannot find the task for id: " + taskId);
@@ -272,6 +275,7 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
     @Override
     public void unpinTopActivityStack(int taskId){
         synchronized (mLock) {
+            Log.i(TAG, "Request to unpin top activity stack.");
             final TaskContainer task = getTaskContainer(taskId);
             if (task == null) {
                 Log.e(TAG, "Cannot find the task to unpin, id: " + taskId);
@@ -1280,9 +1284,9 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
         // Check whether the Intent should be embedded in the known Task.
         final TaskContainer taskContainer = mTaskContainers.valueAt(0);
         if (taskContainer.isInPictureInPicture()
-                || taskContainer.getTopNonFinishingActivity() == null) {
+                || taskContainer.getTopNonFinishingActivity(false /* includeOverlay */) == null) {
             // We don't embed activity when it is in PIP, or if we can't find any other owner
-            // activity in the Task.
+            // activity in non-overlay container in the Task.
             return null;
         }
 
@@ -1431,7 +1435,7 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
         } else {
             final TaskContainer taskContainer = getTaskContainer(taskId);
             activityInTask = taskContainer != null
-                    ? taskContainer.getTopNonFinishingActivity()
+                    ? taskContainer.getTopNonFinishingActivity(true /* includeOverlay */)
                     : null;
         }
         if (activityInTask == null) {
@@ -1760,10 +1764,6 @@ public class SplitController implements JetpackTaskFragmentOrganizer.TaskFragmen
         if (!container.getTaskContainer().isVisible()) {
             // Wait until the Task is visible to avoid unnecessary update when the Task is still in
             // background.
-            return;
-        }
-
-        if (container.isFinished()) {
             return;
         }
 

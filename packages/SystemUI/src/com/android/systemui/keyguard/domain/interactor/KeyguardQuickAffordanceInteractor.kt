@@ -22,6 +22,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.android.app.tracing.TraceUtils.Companion.withContext
 import com.android.internal.widget.LockPatternUtils
 import com.android.systemui.animation.DialogLaunchAnimator
 import com.android.systemui.animation.Expandable
@@ -45,10 +46,10 @@ import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAfforda
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.res.R
 import com.android.systemui.settings.UserTracker
+import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.shared.customization.data.content.CustomizationProviderContract as Contract
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.util.TraceUtils.Companion.withContext
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
@@ -66,6 +67,7 @@ class KeyguardQuickAffordanceInteractor
 @Inject
 constructor(
     private val keyguardInteractor: KeyguardInteractor,
+    private val shadeInteractor: ShadeInteractor,
     private val lockPatternUtils: LockPatternUtils,
     private val keyguardStateController: KeyguardStateController,
     private val userTracker: UserTracker,
@@ -100,9 +102,10 @@ constructor(
             quickAffordanceAlwaysVisible(position),
             keyguardInteractor.isDozing,
             keyguardInteractor.isKeyguardShowing,
+            shadeInteractor.anyExpansion,
             biometricSettingsRepository.isCurrentUserInLockdown,
-        ) { affordance, isDozing, isKeyguardShowing, isUserInLockdown ->
-            if (!isDozing && isKeyguardShowing && !isUserInLockdown) {
+        ) { affordance, isDozing, isKeyguardShowing, qsExpansion, isUserInLockdown ->
+            if (!isDozing && isKeyguardShowing && (qsExpansion < 1.0f) && !isUserInLockdown) {
                 affordance
             } else {
                 KeyguardQuickAffordanceModel.Hidden
@@ -117,10 +120,14 @@ constructor(
      * This is useful for experiences like the lock screen preview mode, where the affordances must
      * always be visible.
      */
-    fun quickAffordanceAlwaysVisible(
+    suspend fun quickAffordanceAlwaysVisible(
         position: KeyguardQuickAffordancePosition,
     ): Flow<KeyguardQuickAffordanceModel> {
-        return quickAffordanceInternal(position)
+        return if (isFeatureDisabledByDevicePolicy()) {
+            flowOf(KeyguardQuickAffordanceModel.Hidden)
+        } else {
+            quickAffordanceInternal(position)
+        }
     }
 
     /**

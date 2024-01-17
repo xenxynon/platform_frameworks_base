@@ -30,12 +30,12 @@ import com.android.internal.jank.InteractionJankMonitor;
 import com.android.keyguard.logging.KeyguardLogger;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository;
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractorFactory;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.power.data.repository.FakePowerRepository;
 import com.android.systemui.power.domain.interactor.PowerInteractorFactory;
+import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.AnimatableProperty;
 import com.android.systemui.statusbar.phone.DozeParameters;
 import com.android.systemui.statusbar.phone.ScreenOffAnimationController;
@@ -60,7 +60,6 @@ public class KeyguardStatusViewControllerBaseTest extends SysuiTestCase {
     @Mock protected ScreenOffAnimationController mScreenOffAnimationController;
     @Mock protected KeyguardLogger mKeyguardLogger;
     @Mock protected KeyguardStatusViewController mControllerMock;
-    @Mock protected FeatureFlags mFeatureFlags;
     @Mock protected InteractionJankMonitor mInteractionJankMonitor;
     @Mock protected ViewTreeObserver mViewTreeObserver;
     @Mock protected KeyguardTransitionInteractor mKeyguardTransitionInteractor;
@@ -72,6 +71,7 @@ public class KeyguardStatusViewControllerBaseTest extends SysuiTestCase {
 
     @Mock protected KeyguardClockSwitch mKeyguardClockSwitch;
     @Mock protected FrameLayout mMediaHostContainer;
+    @Mock protected KeyguardStatusAreaView mKeyguardStatusAreaView;
 
     @Before
     public void setup() {
@@ -91,7 +91,6 @@ public class KeyguardStatusViewControllerBaseTest extends SysuiTestCase {
                 mDozeParameters,
                 mScreenOffAnimationController,
                 mKeyguardLogger,
-                mFeatureFlags,
                 mInteractionJankMonitor,
                 deps.getKeyguardInteractor(),
                 mKeyguardTransitionInteractor,
@@ -112,6 +111,8 @@ public class KeyguardStatusViewControllerBaseTest extends SysuiTestCase {
         when(mKeyguardStatusView.getViewTreeObserver()).thenReturn(mViewTreeObserver);
         when(mKeyguardClockSwitchController.getView()).thenReturn(mKeyguardClockSwitch);
         when(mKeyguardTransitionInteractor.getGoneToAodTransition()).thenReturn(emptyFlow());
+        when(mKeyguardStatusView.findViewById(R.id.keyguard_status_area))
+                .thenReturn(mKeyguardStatusAreaView);
     }
 
     protected void givenViewAttached() {

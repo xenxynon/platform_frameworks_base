@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel
 
+import android.telephony.SubscriptionManager.PROFILE_CLASS_UNSET
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.settingslib.mobile.TelephonyIcons
@@ -27,6 +28,7 @@ import com.android.systemui.statusbar.pipeline.StatusBarPipelineFlags
 import com.android.systemui.statusbar.pipeline.airplane.data.repository.FakeAirplaneModeRepository
 import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.AirplaneModeInteractor
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
+import com.android.systemui.statusbar.pipeline.mobile.data.repository.FakeMobileConnectionsRepository
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.FakeMobileIconsInteractor
 import com.android.systemui.statusbar.pipeline.mobile.domain.model.NetworkTypeIconModel
 import com.android.systemui.statusbar.pipeline.mobile.ui.MobileViewLogger
@@ -74,6 +76,7 @@ class MobileIconsViewModelTest : SysuiTestCase() {
             AirplaneModeInteractor(
                 FakeAirplaneModeRepository(),
                 FakeConnectivityRepository(),
+                FakeMobileConnectionsRepository(),
             )
 
         underTest =
@@ -102,6 +105,7 @@ class MobileIconsViewModelTest : SysuiTestCase() {
                         subscriptionId = 1,
                         isOpportunistic = false,
                         carrierName = "Carrier 1",
+                        profileClass = PROFILE_CLASS_UNSET,
                     ),
                 )
             assertThat(latest).isEqualTo(listOf(1))
@@ -112,16 +116,19 @@ class MobileIconsViewModelTest : SysuiTestCase() {
                         subscriptionId = 2,
                         isOpportunistic = false,
                         carrierName = "Carrier 2",
+                        profileClass = PROFILE_CLASS_UNSET,
                     ),
                     SubscriptionModel(
                         subscriptionId = 5,
                         isOpportunistic = true,
                         carrierName = "Carrier 5",
+                        profileClass = PROFILE_CLASS_UNSET,
                     ),
                     SubscriptionModel(
                         subscriptionId = 7,
                         isOpportunistic = true,
                         carrierName = "Carrier 7",
+                        profileClass = PROFILE_CLASS_UNSET,
                     ),
                 )
             assertThat(latest).isEqualTo(listOf(2, 5, 7))
@@ -335,18 +342,21 @@ class MobileIconsViewModelTest : SysuiTestCase() {
                 subscriptionId = 1,
                 isOpportunistic = false,
                 carrierName = "Carrier 1",
+                profileClass = PROFILE_CLASS_UNSET,
             )
         private val SUB_2 =
             SubscriptionModel(
                 subscriptionId = 2,
                 isOpportunistic = false,
                 carrierName = "Carrier 2",
+                profileClass = PROFILE_CLASS_UNSET,
             )
         private val SUB_3 =
             SubscriptionModel(
                 subscriptionId = 3,
                 isOpportunistic = false,
                 carrierName = "Carrier 3",
+                profileClass = PROFILE_CLASS_UNSET,
             )
     }
 }

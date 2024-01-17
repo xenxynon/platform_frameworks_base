@@ -54,10 +54,14 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Slog;
 import android.util.SparseBooleanArray;
+import android.util.SparseSetArray;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.pm.pkg.component.ParsedInstrumentation;
+import com.android.internal.pm.pkg.component.ParsedPermission;
+import com.android.internal.pm.pkg.component.ParsedUsesPermission;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.FgThread;
@@ -68,9 +72,6 @@ import com.android.server.pm.parsing.pkg.AndroidPackageUtils;
 import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.SharedUserApi;
-import com.android.server.pm.pkg.component.ParsedInstrumentation;
-import com.android.server.pm.pkg.component.ParsedPermission;
-import com.android.server.pm.pkg.component.ParsedUsesPermission;
 import com.android.server.utils.Snappable;
 import com.android.server.utils.SnapshotCache;
 import com.android.server.utils.Watchable;
@@ -1030,14 +1031,20 @@ public final class AppsFilterImpl extends AppsFilterLocked implements Watchable,
     private void recomputeComponentVisibility(
             ArrayMap<String, ? extends PackageStateInternal> existingSettings) {
         final WatchedArraySet<String> protectedBroadcasts;
+        final WatchedArraySet<Integer> forceQueryable;
         synchronized (mProtectedBroadcastsLock) {
             protectedBroadcasts = mProtectedBroadcasts.snapshot();
         }
+        synchronized (mForceQueryableLock) {
+            forceQueryable = mForceQueryable.snapshot();
+        }
         final ParallelComputeComponentVisibility computer = new ParallelComputeComponentVisibility(
-                existingSettings, mForceQueryable, protectedBroadcasts);
+                existingSettings, forceQueryable, protectedBroadcasts);
+        SparseSetArray<Integer> queriesViaComponent = computer.execute();
         synchronized (mQueriesViaComponentLock) {
-            mQueriesViaComponent.clear();
-            computer.execute(mQueriesViaComponent);
+            mQueriesViaComponent = new WatchedSparseSetArray<>(queriesViaComponent);
+            mQueriesViaComponentSnapshot = new SnapshotCache.Auto<>(
+                    mQueriesViaComponent, mQueriesViaComponent, "AppsFilter.mQueriesViaComponent");
         }
 
         mQueriesViaComponentRequireRecompute.set(false);

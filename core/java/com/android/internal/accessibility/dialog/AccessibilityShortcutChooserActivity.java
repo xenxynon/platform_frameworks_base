@@ -28,6 +28,7 @@ import static com.android.internal.accessibility.util.AccessibilityUtils.isUserS
 import android.annotation.Nullable;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -36,6 +37,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.Flags;
 import android.widget.AdapterView;
 
@@ -56,7 +58,7 @@ public class AccessibilityShortcutChooserActivity extends Activity {
             "accessibility_shortcut_menu_mode";
     private final List<AccessibilityTarget> mTargets = new ArrayList<>();
     private AlertDialog mMenuDialog;
-    private AlertDialog mPermissionDialog;
+    private Dialog mPermissionDialog;
     private ShortcutTargetAdapter mTargetAdapter;
 
     @Override
@@ -113,18 +115,39 @@ public class AccessibilityShortcutChooserActivity extends Activity {
     private void onTargetChecked(AdapterView<?> parent, View view, int position, long id) {
         final AccessibilityTarget target = mTargets.get(position);
 
-        if (!target.isShortcutEnabled()) {
-            if (target instanceof AccessibilityServiceTarget
-                    || target instanceof AccessibilityActivityTarget) {
+        if (Flags.cleanupAccessibilityWarningDialog()) {
+            if (target instanceof AccessibilityServiceTarget serviceTarget) {
                 if (sendRestrictedDialogIntentIfNeeded(target)) {
                     return;
                 }
+                final AccessibilityManager am = getSystemService(AccessibilityManager.class);
+                if (am.isAccessibilityServiceWarningRequired(
+                        serviceTarget.getAccessibilityServiceInfo())) {
+                    showPermissionDialogIfNeeded(this, (AccessibilityServiceTarget) target,
+                            position, mTargetAdapter);
+                    return;
+                }
             }
+            if (target instanceof AccessibilityActivityTarget activityTarget) {
+                if (!activityTarget.isShortcutEnabled()
+                        && sendRestrictedDialogIntentIfNeeded(activityTarget)) {
+                    return;
+                }
+            }
+        } else {
+            if (!target.isShortcutEnabled()) {
+                if (target instanceof AccessibilityServiceTarget
+                        || target instanceof AccessibilityActivityTarget) {
+                    if (sendRestrictedDialogIntentIfNeeded(target)) {
+                        return;
+                    }
+                }
 
-            if (target instanceof AccessibilityServiceTarget) {
-                showPermissionDialogIfNeeded(this, (AccessibilityServiceTarget) target,
-                        mTargetAdapter);
-                return;
+                if (target instanceof AccessibilityServiceTarget) {
+                    showPermissionDialogIfNeeded(this, (AccessibilityServiceTarget) target,
+                            position, mTargetAdapter);
+                    return;
+                }
             }
         }
 
@@ -149,20 +172,43 @@ public class AccessibilityShortcutChooserActivity extends Activity {
     }
 
     private void showPermissionDialogIfNeeded(Context context,
-            AccessibilityServiceTarget serviceTarget, ShortcutTargetAdapter targetAdapter) {
+            AccessibilityServiceTarget serviceTarget, int position,
+            ShortcutTargetAdapter targetAdapter) {
         if (mPermissionDialog != null) {
             return;
         }
 
-        mPermissionDialog = new AlertDialog.Builder(context)
-                .setView(createEnableDialogContentView(context, serviceTarget,
-                        v -> {
-                            mPermissionDialog.dismiss();
-                            targetAdapter.notifyDataSetChanged();
-                        },
-                        v -> mPermissionDialog.dismiss()))
-                .setOnDismissListener(dialog -> mPermissionDialog = null)
-                .create();
+        if (Flags.cleanupAccessibilityWarningDialog()) {
+            mPermissionDialog = AccessibilityServiceWarning
+                    .createAccessibilityServiceWarningDialog(context,
+                            serviceTarget.getAccessibilityServiceInfo(),
+                            v -> {
+                                serviceTarget.onCheckedChanged(true);
+                                targetAdapter.notifyDataSetChanged();
+                                mPermissionDialog.dismiss();
+                            }, v -> {
+                                serviceTarget.onCheckedChanged(false);
+                                mPermissionDialog.dismiss();
+                            },
+                            v -> {
+                                mTargets.remove(position);
+                                context.getPackageManager().getPackageInstaller().uninstall(
+                                        serviceTarget.getComponentName().getPackageName(), null);
+                                targetAdapter.notifyDataSetChanged();
+                                mPermissionDialog.dismiss();
+                            });
+            mPermissionDialog.setOnDismissListener(dialog -> mPermissionDialog = null);
+        } else {
+            mPermissionDialog = new AlertDialog.Builder(context)
+                    .setView(createEnableDialogContentView(context, serviceTarget,
+                            v -> {
+                                mPermissionDialog.dismiss();
+                                targetAdapter.notifyDataSetChanged();
+                            },
+                            v -> mPermissionDialog.dismiss()))
+                    .setOnDismissListener(dialog -> mPermissionDialog = null)
+                    .create();
+        }
         mPermissionDialog.show();
     }
 
@@ -214,6 +260,11 @@ public class AccessibilityShortcutChooserActivity extends Activity {
     @VisibleForTesting
     public AlertDialog getMenuDialog() {
         return mMenuDialog;
+    }
+
+    @VisibleForTesting
+    public Dialog getPermissionDialog() {
+        return mPermissionDialog;
     }
 
     private AlertDialog createMenuDialog() {

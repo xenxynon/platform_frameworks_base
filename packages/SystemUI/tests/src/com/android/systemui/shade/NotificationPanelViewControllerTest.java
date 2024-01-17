@@ -31,7 +31,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
@@ -56,13 +55,13 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.constraintlayout.widget.ConstraintSet;
 import androidx.test.filters.SmallTest;
 
-import com.android.keyguard.FaceAuthApiRequestReason;
 import com.android.keyguard.EmergencyButtonController;
 import com.android.systemui.DejankUtils;
-import com.android.systemui.res.R;
 import com.android.systemui.flags.Flags;
+import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.power.domain.interactor.PowerInteractor;
+import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 import com.android.systemui.statusbar.notification.row.ExpandableView.OnHeightChangedListener;
 import com.android.systemui.statusbar.notification.stack.AmbientState;
@@ -203,7 +202,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
                 /* indicationPadding= */ 0,
                 /* ambientPadding= */ 0);
 
-        when(mNotificationShelfController.getIntrinsicHeight()).thenReturn(5);
+        when(mNotificationStackScrollLayoutController.getShelfHeight()).thenReturn(5);
         assertThat(mNotificationPanelViewController.getVerticalSpaceForLockscreenShelf())
                 .isEqualTo(5);
     }
@@ -216,7 +215,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
                 /* indicationPadding= */ 30,
                 /* ambientPadding= */ 0);
 
-        when(mNotificationShelfController.getIntrinsicHeight()).thenReturn(5);
+        when(mNotificationStackScrollLayoutController.getShelfHeight()).thenReturn(5);
         assertThat(mNotificationPanelViewController.getVerticalSpaceForLockscreenShelf())
                 .isEqualTo(0);
     }
@@ -229,7 +228,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
                 /* indicationPadding= */ 0,
                 /* ambientPadding= */ 40);
 
-        when(mNotificationShelfController.getIntrinsicHeight()).thenReturn(5);
+        when(mNotificationStackScrollLayoutController.getShelfHeight()).thenReturn(5);
         assertThat(mNotificationPanelViewController.getVerticalSpaceForLockscreenShelf())
                 .isEqualTo(0);
     }
@@ -242,7 +241,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
                 /* indicationPadding= */ 8,
                 /* ambientPadding= */ 0);
 
-        when(mNotificationShelfController.getIntrinsicHeight()).thenReturn(5);
+        when(mNotificationStackScrollLayoutController.getShelfHeight()).thenReturn(5);
         assertThat(mNotificationPanelViewController.getVerticalSpaceForLockscreenShelf())
                 .isEqualTo(2);
     }
@@ -255,7 +254,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
                 /* indicationPadding= */ 8,
                 /* ambientPadding= */ 0);
 
-        when(mNotificationShelfController.getIntrinsicHeight()).thenReturn(5);
+        when(mNotificationStackScrollLayoutController.getShelfHeight()).thenReturn(5);
         assertThat(mNotificationPanelViewController.getVerticalSpaceForLockscreenShelf())
                 .isEqualTo(0);
     }
@@ -361,6 +360,28 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
 
         // THEN touch is tracked
         assertThat(mNotificationPanelViewController.isTracking()).isTrue();
+    }
+
+    @Test
+    public void onInterceptTouchEvent_nsslMigrationOff_userActivity() {
+        mSetFlagsRule.disableFlags(com.android.systemui.Flags.FLAG_KEYGUARD_SHADE_MIGRATION_NSSL);
+
+        mTouchHandler.onInterceptTouchEvent(MotionEvent.obtain(0L /* downTime */,
+                0L /* eventTime */, MotionEvent.ACTION_DOWN, 0f /* x */, 0f /* y */,
+                0 /* metaState */));
+
+        verify(mCentralSurfaces).userActivity();
+    }
+
+    @Test
+    public void onInterceptTouchEvent_nsslMigrationOn_userActivity_not_called() {
+        mSetFlagsRule.enableFlags(com.android.systemui.Flags.FLAG_KEYGUARD_SHADE_MIGRATION_NSSL);
+
+        mTouchHandler.onInterceptTouchEvent(MotionEvent.obtain(0L /* downTime */,
+                0L /* eventTime */, MotionEvent.ACTION_DOWN, 0f /* x */, 0f /* y */,
+                0 /* metaState */));
+
+        verify(mCentralSurfaces, times(0)).userActivity();
     }
 
     @Test
@@ -794,7 +815,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
         // We are interested in the last value of the stack alpha.
         ArgumentCaptor<Float> alphaCaptor = ArgumentCaptor.forClass(Float.class);
         verify(mNotificationStackScrollLayoutController, atLeastOnce())
-                .setAlpha(alphaCaptor.capture());
+                .setMaxAlphaForExpansion(alphaCaptor.capture());
         assertThat(alphaCaptor.getValue()).isEqualTo(1.0f);
     }
 
@@ -815,7 +836,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
         // We are interested in the last value of the stack alpha.
         ArgumentCaptor<Float> alphaCaptor = ArgumentCaptor.forClass(Float.class);
         verify(mNotificationStackScrollLayoutController, atLeastOnce())
-                .setAlpha(alphaCaptor.capture());
+                .setMaxAlphaForExpansion(alphaCaptor.capture());
         assertThat(alphaCaptor.getValue()).isEqualTo(0.0f);
     }
 
@@ -839,7 +860,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ false);
         mNotificationPanelViewController.setDozing(false, false);
-        when(mFeatureFlags.isEnabled(Flags.LOCKSCREEN_ENABLE_LANDSCAPE)).thenReturn(true);
+        mFeatureFlags.set(Flags.LOCKSCREEN_ENABLE_LANDSCAPE, true);
         when(mResources.getBoolean(R.bool.force_small_clock_on_lockscreen)).thenReturn(true);
         when(mMediaDataManager.hasActiveMedia()).thenReturn(false);
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(0);
@@ -857,7 +878,7 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
         mStatusBarStateController.setState(KEYGUARD);
         enableSplitShade(/* enabled= */ false);
         mNotificationPanelViewController.setDozing(false, false);
-        when(mFeatureFlags.isEnabled(Flags.LOCKSCREEN_ENABLE_LANDSCAPE)).thenReturn(false);
+        mFeatureFlags.set(Flags.LOCKSCREEN_ENABLE_LANDSCAPE, false);
         when(mResources.getBoolean(R.bool.force_small_clock_on_lockscreen)).thenReturn(true);
         when(mMediaDataManager.hasActiveMedia()).thenReturn(false);
         when(mNotificationStackScrollLayoutController.getVisibleNotificationCount()).thenReturn(0);
@@ -1075,38 +1096,11 @@ public class NotificationPanelViewControllerTest extends NotificationPanelViewCo
         mEmptySpaceClickListenerCaptor.getValue().onEmptySpaceClicked(0, 0);
 
         verify(mKeyguardFaceAuthInteractor).onNotificationPanelClicked();
-        verify(mUpdateMonitor).requestFaceAuth(
-                FaceAuthApiRequestReason.NOTIFICATION_PANEL_CLICKED);
-    }
-
-    @Test
-    public void onEmptySpaceClicked_whenDozingAndOnKeyguard_doesNotRequestFaceAuth() {
-        StatusBarStateController.StateListener statusBarStateListener =
-                mNotificationPanelViewController.getStatusBarStateListener();
-        statusBarStateListener.onStateChanged(KEYGUARD);
-        mNotificationPanelViewController.setDozing(true, false);
-
-        // This sets the dozing state that is read when onMiddleClicked is eventually invoked.
-        mTouchHandler.onTouch(mock(View.class), mDownMotionEvent);
-        mEmptySpaceClickListenerCaptor.getValue().onEmptySpaceClicked(0, 0);
-
-        verify(mUpdateMonitor, never()).requestFaceAuth(anyString());
-    }
-
-    @Test
-    public void onEmptySpaceClicked_whenStatusBarShadeLocked_doesNotRequestFaceAuth() {
-        StatusBarStateController.StateListener statusBarStateListener =
-                mNotificationPanelViewController.getStatusBarStateListener();
-        statusBarStateListener.onStateChanged(SHADE_LOCKED);
-
-        mEmptySpaceClickListenerCaptor.getValue().onEmptySpaceClicked(0, 0);
-
-        verify(mUpdateMonitor, never()).requestFaceAuth(anyString());
     }
 
     @Test
     public void nsslFlagEnabled_allowOnlyExternalTouches() {
-        when(mFeatureFlags.isEnabled(Flags.MIGRATE_NSSL)).thenReturn(true);
+        mSetFlagsRule.enableFlags(KeyguardShadeMigrationNssl.FLAG_NAME);
 
         // This sets the dozing state that is read when onMiddleClicked is eventually invoked.
         mTouchHandler.onTouch(mock(View.class), mDownMotionEvent);

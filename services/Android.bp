@@ -41,7 +41,10 @@ soong_config_module_type {
     name: "system_optimized_java_defaults",
     module_type: "java_defaults",
     config_namespace: "ANDROID",
-    bool_variables: ["SYSTEM_OPTIMIZE_JAVA"],
+    bool_variables: [
+        "SYSTEM_OPTIMIZE_JAVA",
+        "FULL_SYSTEM_OPTIMIZE_JAVA",
+    ],
     properties: [
         "optimize",
         "dxflags",
@@ -56,9 +59,11 @@ system_optimized_java_defaults {
                 enabled: true,
                 // TODO(b/210510433): Enable optimizations after improving
                 // retracing infra.
+                // See also FULL_SYSTEM_OPTIMIZE_JAVA.
                 optimize: false,
                 shrink: true,
                 ignore_warnings: false,
+                proguard_compatibility: false,
                 proguard_flags_files: [
                     "proguard.flags",
                     // Ensure classes referenced in the framework-res manifest
@@ -79,6 +84,12 @@ system_optimized_java_defaults {
                 // Explicitly configure R8 to preserve debug info, as this path should
                 // really only allow stripping of permission-specific code and deps.
                 dxflags: ["--debug"],
+            },
+        },
+        // Allow form factors to opt-in full system java optimization
+        FULL_SYSTEM_OPTIMIZE_JAVA: {
+            optimize: {
+                optimize: true,
             },
         },
     },
@@ -105,7 +116,6 @@ filegroup {
         ":services.appwidget-sources",
         ":services.autofill-sources",
         ":services.backup-sources",
-        ":services.bluetooth-sources", // TODO(b/214988855) : Remove once apex/service-bluetooth jar is ready
         ":services.companion-sources",
         ":services.contentcapture-sources",
         ":services.contentsuggestions-sources",
@@ -130,6 +140,7 @@ filegroup {
         ":services.voiceinteraction-sources",
         ":services.wallpapereffectsgeneration-sources",
         ":services.wifi-sources",
+        ":framework-pm-common-shared-srcs",
     ],
     visibility: ["//visibility:private"],
 }

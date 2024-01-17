@@ -79,14 +79,16 @@ public class TaskContainerTest {
 
         configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
         taskContainer.updateTaskFragmentParentInfo(new TaskFragmentParentInfo(configuration,
-                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */));
+                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */,
+                null /* decorSurface */));
 
         assertEquals(WINDOWING_MODE_MULTI_WINDOW,
                 taskContainer.getWindowingModeForSplitTaskFragment(splitBounds));
 
         configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FREEFORM);
         taskContainer.updateTaskFragmentParentInfo(new TaskFragmentParentInfo(configuration,
-                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */));
+                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */,
+                null /* decorSurface */));
 
         assertEquals(WINDOWING_MODE_FREEFORM,
                 taskContainer.getWindowingModeForSplitTaskFragment(splitBounds));
@@ -106,13 +108,15 @@ public class TaskContainerTest {
 
         configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
         taskContainer.updateTaskFragmentParentInfo(new TaskFragmentParentInfo(configuration,
-                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */));
+                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */,
+                null /* decorSurface */));
 
         assertFalse(taskContainer.isInPictureInPicture());
 
         configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_PINNED);
         taskContainer.updateTaskFragmentParentInfo(new TaskFragmentParentInfo(configuration,
-                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */));
+                DEFAULT_DISPLAY, true /* visible */, false /* hasDirectActivity */,
+                null /* decorSurface */));
 
         assertTrue(taskContainer.isInPictureInPicture());
     }
@@ -151,21 +155,24 @@ public class TaskContainerTest {
     @Test
     public void testGetTopNonFinishingActivity() {
         final TaskContainer taskContainer = createTestTaskContainer();
-        assertNull(taskContainer.getTopNonFinishingActivity());
+        assertNull(taskContainer.getTopNonFinishingActivity(true /* includeOverlay */));
 
         final TaskFragmentContainer tf0 = mock(TaskFragmentContainer.class);
         taskContainer.addTaskFragmentContainer(tf0);
         final Activity activity0 = mock(Activity.class);
         doReturn(activity0).when(tf0).getTopNonFinishingActivity();
-        assertEquals(activity0, taskContainer.getTopNonFinishingActivity());
+        assertEquals(activity0, taskContainer.getTopNonFinishingActivity(
+                true /* includeOverlay */));
 
         final TaskFragmentContainer tf1 = mock(TaskFragmentContainer.class);
         taskContainer.addTaskFragmentContainer(tf1);
-        assertEquals(activity0, taskContainer.getTopNonFinishingActivity());
+        assertEquals(activity0, taskContainer.getTopNonFinishingActivity(
+                true /* includeOverlay */));
 
         final Activity activity1 = mock(Activity.class);
         doReturn(activity1).when(tf1).getTopNonFinishingActivity();
-        assertEquals(activity1, taskContainer.getTopNonFinishingActivity());
+        assertEquals(activity1, taskContainer.getTopNonFinishingActivity(
+                true /* includeOverlay */));
     }
 
     @Test

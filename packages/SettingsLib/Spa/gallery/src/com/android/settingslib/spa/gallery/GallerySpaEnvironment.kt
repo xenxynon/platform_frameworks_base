@@ -22,6 +22,7 @@ import com.android.settingslib.spa.framework.common.SettingsPageProviderReposito
 import com.android.settingslib.spa.framework.common.SpaEnvironment
 import com.android.settingslib.spa.framework.common.createSettingsPage
 import com.android.settingslib.spa.gallery.button.ActionButtonPageProvider
+import com.android.settingslib.spa.gallery.card.CardPageProvider
 import com.android.settingslib.spa.gallery.chart.ChartPageProvider
 import com.android.settingslib.spa.gallery.dialog.AlertDialogPageProvider
 import com.android.settingslib.spa.gallery.editor.EditorMainPageProvider
@@ -47,7 +48,9 @@ import com.android.settingslib.spa.gallery.preference.PreferencePageProvider
 import com.android.settingslib.spa.gallery.preference.SwitchPreferencePageProvider
 import com.android.settingslib.spa.gallery.preference.TwoTargetSwitchPreferencePageProvider
 import com.android.settingslib.spa.gallery.scaffold.SearchScaffoldPageProvider
+import com.android.settingslib.spa.gallery.scaffold.SuwScaffoldPageProvider
 import com.android.settingslib.spa.gallery.ui.CategoryPageProvider
+import com.android.settingslib.spa.gallery.ui.CopyablePageProvider
 import com.android.settingslib.spa.gallery.ui.SpinnerPageProvider
 import com.android.settingslib.spa.slice.SpaSliceBroadcastReceiver
 
@@ -98,6 +101,9 @@ class GallerySpaEnvironment(context: Context) : SpaEnvironment(context) {
                 SettingsExposedDropdownMenuCheckBoxProvider,
                 SettingsTextFieldPasswordPageProvider,
                 SearchScaffoldPageProvider,
+                SuwScaffoldPageProvider,
+                CardPageProvider,
+                CopyablePageProvider,
             ),
             rootPages = listOf(
                 HomePageProvider.createSettingsPage(),

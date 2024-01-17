@@ -26,6 +26,7 @@ import com.android.systemui.qs.tiles.base.interactor.QSTileDataToStateMapper
 import com.android.systemui.qs.tiles.base.interactor.QSTileUserActionInteractor
 import com.android.systemui.qs.tiles.base.logging.QSTileLogger
 import com.android.systemui.qs.tiles.impl.di.QSTileComponent
+import com.android.systemui.qs.tiles.viewmodel.QSTileConfig
 import com.android.systemui.qs.tiles.viewmodel.QSTileConfigProvider
 import com.android.systemui.qs.tiles.viewmodel.QSTileState
 import com.android.systemui.user.data.repository.UserRepository
@@ -60,12 +61,17 @@ sealed interface QSTileViewModelFactory<T> {
     ) : QSTileViewModelFactory<T> {
 
         /**
-         * Creates [QSTileViewModelImpl] based on the interactors obtained from [component].
-         * Reference of that [component] is then stored along the view model.
+         * Creates [QSTileViewModelImpl] based on the interactors obtained from [QSTileComponent].
+         * Reference of that [QSTileComponent] is then stored along the view model.
          */
-        fun create(tileSpec: TileSpec, component: QSTileComponent<T>): QSTileViewModelImpl<T> =
-            QSTileViewModelImpl(
-                qsTileConfigProvider.getConfig(tileSpec.spec),
+        fun create(
+            tileSpec: TileSpec,
+            componentFactory: (config: QSTileConfig) -> QSTileComponent<T>
+        ): QSTileViewModelImpl<T> {
+            val config = qsTileConfigProvider.getConfig(tileSpec.spec)
+            val component = componentFactory(config)
+            return QSTileViewModelImpl(
+                config,
                 component::userActionInteractor,
                 component::dataInteractor,
                 component::dataToStateMapper,
@@ -76,7 +82,9 @@ sealed interface QSTileViewModelFactory<T> {
                 qsTileLogger,
                 systemClock,
                 backgroundDispatcher,
+                component.coroutineScope(),
             )
+        }
     }
 
     /**
@@ -94,6 +102,7 @@ sealed interface QSTileViewModelFactory<T> {
         private val qsTileConfigProvider: QSTileConfigProvider,
         private val systemClock: SystemClock,
         @Background private val backgroundDispatcher: CoroutineDispatcher,
+        private val coroutineScopeFactory: QSTileCoroutineScopeFactory,
     ) : QSTileViewModelFactory<T> {
 
         /**
@@ -123,6 +132,7 @@ sealed interface QSTileViewModelFactory<T> {
                 qsTileLogger,
                 systemClock,
                 backgroundDispatcher,
+                coroutineScopeFactory.create(),
             )
     }
 }

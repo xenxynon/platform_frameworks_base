@@ -47,6 +47,7 @@ import android.app.role.RoleManager;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
+import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Context;
@@ -419,6 +420,14 @@ public class TelephonyManager {
 
     /** @hide */
     public static final String PROPERTY_ENABLE_NULL_CIPHER_TOGGLE = "enable_null_cipher_toggle";
+
+    /**
+     * To apply the enforcement telephony feature and API
+     * @hide
+     */
+    @ChangeId
+    @EnabledSince(targetSdkVersion = Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    public static final long ENABLE_FEATURE_MAPPING = 297989574L;
 
     private final Context mContext;
     private final int mSubId;
@@ -1284,14 +1293,59 @@ public class TelephonyManager {
     /**
      * Event reported from the Telephony stack to indicate that the {@link Connection} is not
      * able to find any network and likely will not get connected. Upon receiving this event,
-     * the dialer app should show satellite SOS button if satellite is provisioned.
+     * the dialer app should start the app included in the extras bundle of this event if satellite
+     * is provisioned.
      * <p>
      * The dialer app receives this event via
      * {@link Call.Callback#onConnectionEvent(Call, String, Bundle)}.
+     * <p>
+     * The {@link Bundle} parameter is guaranteed to include the following extras if the below
+     * conditions are met:
+     * <ul>
+     *     <li>{@link #EXTRA_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE} - the recommending handover
+     *         type.</li>
+     *     <li>{@link #EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT} - the {@link PendingIntent}
+     *         which will be launched by the Dialer app when receiving this connection event.</li>
+     * </ul>
+     * <p>
+     * If the device is connected to satellite via carrier within the hysteresis time defined by
+     * the carrier config
+     * {@link CarrierConfigManager#KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT}, the component of
+     * the {@link #EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT} will be set to the default SMS
+     * app.
+     * <p>
+     * Otherwise, if the overlay config {@code config_oem_enabled_satellite_handover_app} is
+     * present, the app defined by this config will be used as the component of the
+     * {@link #EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT}. If this overlay config is empty,
+     * {@link #EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT} will not be included in the event
+     * {@link #EVENT_DISPLAY_EMERGENCY_MESSAGE}.
      */
     @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
-    public static final String EVENT_DISPLAY_SOS_MESSAGE =
-            "android.telephony.event.DISPLAY_SOS_MESSAGE";
+    public static final String EVENT_DISPLAY_EMERGENCY_MESSAGE =
+            "android.telephony.event.DISPLAY_EMERGENCY_MESSAGE";
+
+    /**
+     * Integer extra key used with {@link #EVENT_DISPLAY_EMERGENCY_MESSAGE} which indicates
+     * the type of handover from emergency call to satellite messaging.
+     * <p>
+     * Will be either
+     * android.telephony.satellite.SatelliteManager#EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS
+     * or
+     * android.telephony.satellite.SatelliteManager#EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911
+     * <p>
+     * Set in the extras for the {@link #EVENT_DISPLAY_EMERGENCY_MESSAGE} connection event.
+     */
+    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
+    public static final String EXTRA_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE =
+            "android.telephony.extra.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE";
+
+    /**
+     * Extra key used with the {@link #EVENT_DISPLAY_EMERGENCY_MESSAGE} for a {@link PendingIntent}
+     * which will be launched by the Dialer app.
+     */
+    @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
+    public static final String EXTRA_EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT =
+            "android.telephony.extra.EMERGENCY_CALL_TO_SATELLITE_LAUNCH_INTENT";
 
     /**
      * Integer extra key used with {@link #EVENT_SUPPLEMENTARY_SERVICE_NOTIFICATION} which indicates
@@ -3451,6 +3505,7 @@ public class TelephonyManager {
                     SIM_STATE_LOADED,
                     SIM_STATE_PRESENT,
             })
+    @Retention(RetentionPolicy.SOURCE)
     public @interface SimState {}
 
     /**
@@ -10224,6 +10279,7 @@ public class TelephonyManager {
                 CALL_COMPOSER_STATUS_ON,
                 CALL_COMPOSER_STATUS_OFF,
             })
+    @Retention(RetentionPolicy.SOURCE)
     public @interface CallComposerStatus {}
 
     /**
@@ -13211,7 +13267,7 @@ public class TelephonyManager {
             CARRIER_RESTRICTION_STATUS_RESTRICTED,
             CARRIER_RESTRICTION_STATUS_RESTRICTED_TO_CALLER
     })
-
+    @Retention(RetentionPolicy.SOURCE)
     public @interface CarrierRestrictionStatus {
     }
 
@@ -17581,9 +17637,8 @@ public class TelephonyManager {
      * {@link CarrierConfigManager
      * #KEY_PREMIUM_CAPABILITY_NOTIFICATION_BACKOFF_HYSTERESIS_TIME_MILLIS_LONG}
      * and return {@link #PURCHASE_PREMIUM_CAPABILITY_RESULT_THROTTLED}.
-     *
-     * @hide
      */
+    @FlaggedApi(Flags.FLAG_SLICING_ADDITIONAL_ERROR_CODES)
     public static final int PURCHASE_PREMIUM_CAPABILITY_RESULT_USER_DISABLED = 16;
 
     /**
@@ -18059,6 +18114,64 @@ public class TelephonyManager {
             ex.rethrowFromSystemServer();
         }
         return true;
+    }
+
+    /**
+     * Enable or disable notifications sent for cellular identifier disclosure events.
+     *
+     * Disclosure events are defined as instances where a device has sent a cellular identifier
+     * on the Non-access stratum (NAS) before a security context is established. As a result the
+     * identifier is sent in the clear, which has privacy implications for the user.
+     *
+     * @param enable if notifications about disclosure events should be enabled
+     * @throws IllegalStateException if the Telephony process is not currently available
+     * @throws SecurityException if the caller does not have the required privileges
+     * @throws UnsupportedOperationException if the modem does not support this feature.
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_ENABLE_IDENTIFIER_DISCLOSURE_TRANSPARENCY)
+    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    @SystemApi
+    public void setEnableCellularIdentifierDisclosureNotifications(boolean enable) {
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                telephony.setEnableCellularIdentifierDisclosureNotifications(enable);
+            } else {
+                throw new IllegalStateException("telephony service is null.");
+            }
+        } catch (RemoteException ex) {
+            Rlog.e(TAG, "setEnableCellularIdentifierDisclosureNotifications RemoteException", ex);
+            ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Get whether or not cellular identifier disclosure notifications are enabled.
+     *
+     * @throws IllegalStateException if the Telephony process is not currently available
+     * @throws SecurityException if the caller does not have the required privileges
+     * @throws UnsupportedOperationException if the modem does not support this feature.
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_ENABLE_IDENTIFIER_DISCLOSURE_TRANSPARENCY)
+    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
+    @SystemApi
+    public boolean isCellularIdentifierDisclosureNotificationsEnabled() {
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                return telephony.isCellularIdentifierDisclosureNotificationsEnabled();
+            } else {
+                throw new IllegalStateException("telephony service is null.");
+            }
+        } catch (RemoteException ex) {
+            Rlog.e(TAG, "isCellularIdentifierDisclosureNotificationsEnabled RemoteException", ex);
+            ex.rethrowFromSystemServer();
+        }
+        return false;
     }
 
     /**

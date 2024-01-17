@@ -59,6 +59,7 @@ import com.android.wm.shell.dagger.pip.PipModule;
 import com.android.wm.shell.desktopmode.DesktopModeStatus;
 import com.android.wm.shell.desktopmode.DesktopModeTaskRepository;
 import com.android.wm.shell.desktopmode.DesktopTasksController;
+import com.android.wm.shell.desktopmode.DragToDesktopTransitionHandler;
 import com.android.wm.shell.desktopmode.EnterDesktopTaskTransitionHandler;
 import com.android.wm.shell.desktopmode.ExitDesktopTaskTransitionHandler;
 import com.android.wm.shell.desktopmode.ToggleResizeDesktopTaskTransitionHandler;
@@ -78,6 +79,7 @@ import com.android.wm.shell.sysui.ShellController;
 import com.android.wm.shell.sysui.ShellInit;
 import com.android.wm.shell.taskview.TaskViewTransitions;
 import com.android.wm.shell.transition.DefaultMixedHandler;
+import com.android.wm.shell.transition.HomeTransitionObserver;
 import com.android.wm.shell.transition.Transitions;
 import com.android.wm.shell.unfold.ShellUnfoldProgressProvider;
 import com.android.wm.shell.unfold.UnfoldAnimationController;
@@ -380,9 +382,10 @@ public abstract class WMShellModule {
     static RecentsTransitionHandler provideRecentsTransitionHandler(
             ShellInit shellInit,
             Transitions transitions,
-            Optional<RecentTasksController> recentTasksController) {
+            Optional<RecentTasksController> recentTasksController,
+            HomeTransitionObserver homeTransitionObserver) {
         return new RecentsTransitionHandler(shellInit, transitions,
-                recentTasksController.orElse(null));
+                recentTasksController.orElse(null), homeTransitionObserver);
     }
 
     //
@@ -496,6 +499,7 @@ public abstract class WMShellModule {
             EnterDesktopTaskTransitionHandler enterDesktopTransitionHandler,
             ExitDesktopTaskTransitionHandler exitDesktopTransitionHandler,
             ToggleResizeDesktopTaskTransitionHandler toggleResizeDesktopTaskTransitionHandler,
+            DragToDesktopTransitionHandler dragToDesktopTransitionHandler,
             @DynamicOverride DesktopModeTaskRepository desktopModeTaskRepository,
             LaunchAdjacentController launchAdjacentController,
             RecentsTransitionHandler recentsTransitionHandler,
@@ -504,8 +508,19 @@ public abstract class WMShellModule {
         return new DesktopTasksController(context, shellInit, shellCommandHandler, shellController,
                 displayController, shellTaskOrganizer, syncQueue, rootTaskDisplayAreaOrganizer,
                 transitions, enterDesktopTransitionHandler, exitDesktopTransitionHandler,
-                toggleResizeDesktopTaskTransitionHandler, desktopModeTaskRepository,
-                launchAdjacentController, recentsTransitionHandler, mainExecutor);
+                toggleResizeDesktopTaskTransitionHandler, dragToDesktopTransitionHandler,
+                desktopModeTaskRepository, launchAdjacentController, recentsTransitionHandler,
+                mainExecutor);
+    }
+
+    @WMSingleton
+    @Provides
+    static DragToDesktopTransitionHandler provideDragToDesktopTransitionHandler(
+            Context context,
+            Transitions transitions,
+            RootTaskDisplayAreaOrganizer rootTaskDisplayAreaOrganizer) {
+        return new DragToDesktopTransitionHandler(context, transitions,
+                rootTaskDisplayAreaOrganizer);
     }
 
     @WMSingleton

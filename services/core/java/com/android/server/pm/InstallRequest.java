@@ -16,6 +16,7 @@
 
 package com.android.server.pm;
 
+import static android.content.pm.Flags.improveInstallFreeze;
 import static android.content.pm.PackageInstaller.SessionParams.USER_ACTION_UNSPECIFIED;
 import static android.content.pm.PackageManager.INSTALL_REASON_UNKNOWN;
 import static android.content.pm.PackageManager.INSTALL_SCENARIO_DEFAULT;
@@ -49,13 +50,13 @@ import android.util.ArrayMap;
 import android.util.ExceptionUtils;
 import android.util.Slog;
 
+import com.android.internal.pm.parsing.pkg.ParsedPackage;
+import com.android.internal.pm.pkg.parsing.ParsingPackageUtils;
 import com.android.internal.util.ArrayUtils;
 import com.android.server.art.model.DexoptResult;
-import com.android.server.pm.parsing.pkg.ParsedPackage;
 import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.pkg.PackageStateInternal;
-import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -152,7 +153,7 @@ final class InstallRequest {
     private int[] mUpdateBroadcastInstantUserIds = EMPTY_INT_ARRAY;
 
     @NonNull
-    private ArrayList<String> mWarnings = new ArrayList<>();
+    private final ArrayList<String> mWarnings = new ArrayList<>();
 
     // New install
     InstallRequest(InstallingSession params) {
@@ -293,13 +294,13 @@ final class InstallRequest {
     @Nullable
     public File getOldCodeFile() {
         return (mRemovedInfo != null && mRemovedInfo.mArgs != null)
-                ? mRemovedInfo.mArgs.mCodeFile : null;
+                ? mRemovedInfo.mArgs.getCodeFile() : null;
     }
 
     @Nullable
     public String[] getOldInstructionSet() {
         return (mRemovedInfo != null && mRemovedInfo.mArgs != null)
-                ? mRemovedInfo.mArgs.mInstructionSets : null;
+                ? mRemovedInfo.mArgs.getInstructionSets() : null;
     }
 
     public UserHandle getUser() {
@@ -535,6 +536,12 @@ final class InstallRequest {
     public PackageSetting getScanRequestPackageSetting() {
         assertScanResultExists();
         return mScanResult.mRequest.mPkgSetting;
+    }
+
+    @Nullable
+    public PackageSetting getScanRequestDisabledPackageSetting() {
+        assertScanResultExists();
+        return mScanResult.mRequest.mDisabledPkgSetting;
     }
 
     @Nullable
@@ -811,7 +818,8 @@ final class InstallRequest {
 
     public void setRemovedAppId(int appId) {
         if (mRemovedInfo != null) {
-            mRemovedInfo.mRemovedAppId = appId;
+            mRemovedInfo.mUid = appId;
+            mRemovedInfo.mIsAppIdRemoved = true;
         }
     }
 
@@ -962,13 +970,13 @@ final class InstallRequest {
     }
 
     public void onFreezeStarted() {
-        if (mPackageMetrics != null) {
+        if (mPackageMetrics != null && improveInstallFreeze()) {
             mPackageMetrics.onStepStarted(PackageMetrics.STEP_FREEZE_INSTALL);
         }
     }
 
     public void onFreezeCompleted() {
-        if (mPackageMetrics != null) {
+        if (mPackageMetrics != null && improveInstallFreeze()) {
             mPackageMetrics.onStepFinished(PackageMetrics.STEP_FREEZE_INSTALL);
         }
     }

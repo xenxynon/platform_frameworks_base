@@ -17,6 +17,7 @@
 package com.android.wm.shell.transition;
 
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
+import static android.window.TransitionInfo.FLAG_BACK_GESTURE_ANIMATED;
 
 import static com.android.wm.shell.transition.Transitions.TransitionObserver;
 
@@ -38,24 +39,15 @@ import com.android.wm.shell.util.TransitionUtil;
  */
 public class HomeTransitionObserver implements TransitionObserver,
         RemoteCallable<HomeTransitionObserver> {
-    private final SingleInstanceRemoteListener<HomeTransitionObserver, IHomeTransitionListener>
+    private SingleInstanceRemoteListener<HomeTransitionObserver, IHomeTransitionListener>
             mListener;
 
     private @NonNull final Context mContext;
     private @NonNull final ShellExecutor mMainExecutor;
-    private @NonNull final Transitions mTransitions;
-
     public HomeTransitionObserver(@NonNull Context context,
-            @NonNull ShellExecutor mainExecutor,
-            @NonNull Transitions transitions) {
+            @NonNull ShellExecutor mainExecutor) {
         mContext = context;
         mMainExecutor = mainExecutor;
-        mTransitions = transitions;
-
-        mListener = new SingleInstanceRemoteListener<>(this,
-                c -> mTransitions.registerObserver(this),
-                c -> mTransitions.unregisterObserver(this));
-
     }
 
     @Override
@@ -65,14 +57,17 @@ public class HomeTransitionObserver implements TransitionObserver,
             @NonNull SurfaceControl.Transaction finishTransaction) {
         for (TransitionInfo.Change change : info.getChanges()) {
             final ActivityManager.RunningTaskInfo taskInfo = change.getTaskInfo();
-            if (taskInfo == null || taskInfo.taskId == -1) {
+            if (taskInfo == null
+                    || taskInfo.taskId == -1
+                    || !taskInfo.isRunning) {
                 continue;
             }
 
             final int mode = change.getMode();
+            final boolean isBackGesture = change.hasFlags(FLAG_BACK_GESTURE_ANIMATED);
             if (taskInfo.getActivityType() == ACTIVITY_TYPE_HOME
-                    && TransitionUtil.isOpenOrCloseMode(mode)) {
-                mListener.call(l -> l.onHomeVisibilityChanged(TransitionUtil.isOpeningType(mode)));
+                    && (TransitionUtil.isOpenOrCloseMode(mode) || isBackGesture)) {
+                notifyHomeVisibilityChanged(TransitionUtil.isOpeningType(mode) || isBackGesture);
             }
         }
     }
@@ -92,11 +87,28 @@ public class HomeTransitionObserver implements TransitionObserver,
      * Sets the home transition listener that receives any transitions resulting in a change of
      *
      */
-    public void setHomeTransitionListener(IHomeTransitionListener listener) {
+    public void setHomeTransitionListener(Transitions transitions,
+            IHomeTransitionListener listener) {
+        if (mListener == null) {
+            mListener = new SingleInstanceRemoteListener<>(this,
+                    c -> transitions.registerObserver(this),
+                    c -> transitions.unregisterObserver(this));
+        }
+
         if (listener != null) {
             mListener.register(listener);
         } else {
             mListener.unregister();
+        }
+    }
+
+    /**
+     * Notifies the listener that the home visibility has changed.
+     * @param isVisible true when home activity is visible, false otherwise.
+     */
+    public void notifyHomeVisibilityChanged(boolean isVisible) {
+        if (mListener != null) {
+            mListener.call(l -> l.onHomeVisibilityChanged(isVisible));
         }
     }
 
@@ -113,7 +125,7 @@ public class HomeTransitionObserver implements TransitionObserver,
     /**
      * Invalidates this controller, preventing future calls to send updates.
      */
-    public void invalidate() {
-        mTransitions.unregisterObserver(this);
+    public void invalidate(Transitions transitions) {
+        transitions.unregisterObserver(this);
     }
 }

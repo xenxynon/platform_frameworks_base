@@ -4,7 +4,7 @@ flag {
   name: "ranking_update_ashmem"
   namespace: "systemui"
   description: "This flag controls moving ranking update contents into ashmem"
-  bug: "284297289"
+  bug: "249848655"
 }
 
 flag {
@@ -15,3 +15,9 @@ flag {
     bug: "299448097"
 }
 
+flag {
+  name: "redact_sensitive_notifications_from_untrusted_listeners"
+  namespace: "systemui"
+  description: "This flag controls the redacting of sensitive notifications from untrusted NotificationListenerServices"
+  bug: "306271190"
+}

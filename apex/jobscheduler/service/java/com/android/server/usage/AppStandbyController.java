@@ -2258,7 +2258,8 @@ public class AppStandbyController
             }
             synchronized (mSystemExemptionAppOpMode) {
                 if (Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
-                    mSystemExemptionAppOpMode.delete(UserHandle.getUid(userId, getAppId(pkgName)));
+                    final int uid = intent.getIntExtra(Intent.EXTRA_UID, Process.INVALID_UID);
+                    mSystemExemptionAppOpMode.delete(uid);
                 }
             }
 
@@ -2534,6 +2535,38 @@ public class AppStandbyController
                 pw.print("  ");
                 pw.print(mSystemPackagesAppIds.get(i));
                 if (i != 0) pw.println(",");
+            }
+        }
+        pw.println("]");
+        pw.println();
+
+        pw.println("mActiveAdminApps=[");
+        synchronized (mActiveAdminApps) {
+            final int size = mActiveAdminApps.size();
+            for (int i = 0; i < size; ++i) {
+                final int userId = mActiveAdminApps.keyAt(i);
+                pw.print(" ");
+                pw.print(userId);
+                pw.print(": ");
+                pw.print(mActiveAdminApps.valueAt(i));
+                if (i != size - 1) pw.print(",");
+                pw.println();
+            }
+        }
+        pw.println("]");
+        pw.println();
+
+        pw.println("mAdminProtectedPackages=[");
+        synchronized (mAdminProtectedPackages) {
+            final int size = mAdminProtectedPackages.size();
+            for (int i = 0; i < size; ++i) {
+                final int userId = mAdminProtectedPackages.keyAt(i);
+                pw.print(" ");
+                pw.print(userId);
+                pw.print(": ");
+                pw.print(mAdminProtectedPackages.valueAt(i));
+                if (i != size - 1) pw.print(",");
+                pw.println();
             }
         }
         pw.println("]");

@@ -2364,7 +2364,7 @@ class PackageManagerShellCommand extends ShellCommand {
         private boolean mSuccess = false;
         private int mErrCode = -1;
         private ParcelFileDescriptor mProfileReadFd = null;
-        private CountDownLatch mDoneSignal = new CountDownLatch(1);
+        private final CountDownLatch mDoneSignal = new CountDownLatch(1);
 
         @Override
         public void onSuccess(ParcelFileDescriptor profileReadFd) {
@@ -2827,7 +2827,7 @@ class PackageManagerShellCommand extends ShellCommand {
             mInterface.setPackagesSuspendedAsUser(packageNames.toArray(new String[] {}),
                     suspendedState, ((appExtras.size() > 0) ? appExtras : null),
                     ((launcherExtras.size() > 0) ? launcherExtras : null),
-                    info, flags, callingPackage, translatedUserId);
+                    info, flags, callingPackage, UserHandle.USER_SYSTEM, translatedUserId);
             for (int i = 0; i < packageNames.size(); i++) {
                 final String packageName = packageNames.get(i);
                 pw.println("Package " + packageName + " new suspended state: "
@@ -2872,16 +2872,16 @@ class PackageManagerShellCommand extends ShellCommand {
                 UserHandle.USER_NULL, "runGrantRevokePermission"));
 
         List<PackageInfo> packageInfos;
+        PackageManager pm = mContext.createContextAsUser(translatedUser, 0).getPackageManager();
         if (pkg == null) {
-            packageInfos = mContext.getPackageManager().getInstalledPackages(
-                    PackageManager.GET_PERMISSIONS);
+            packageInfos = pm.getInstalledPackages(PackageManager.GET_PERMISSIONS);
         } else {
             try {
-                packageInfos = Collections.singletonList(
-                        mContext.getPackageManager().getPackageInfo(pkg,
-                                PackageManager.GET_PERMISSIONS));
+                packageInfos = Collections.singletonList(pm.getPackageInfo(pkg,
+                        PackageManager.GET_PERMISSIONS));
             } catch (NameNotFoundException e) {
                 getErrPrintWriter().println("Error: package not found");
+                getOutPrintWriter().println("Failure [package not found]");
                 return 1;
             }
         }
@@ -3702,6 +3702,9 @@ class PackageManagerShellCommand extends ShellCommand {
                 case "--bypass-low-target-sdk-block":
                     sessionParams.installFlags |=
                             PackageManager.INSTALL_BYPASS_LOW_TARGET_SDK_BLOCK;
+                    break;
+                case "--ignore-dexopt-profile":
+                    sessionParams.installFlags |= PackageManager.INSTALL_IGNORE_DEXOPT_PROFILE;
                     break;
                 default:
                     throw new IllegalArgumentException("Unknown option " + opt);
@@ -4636,7 +4639,7 @@ class PackageManagerShellCommand extends ShellCommand {
         try {
             mInterface.getPackageInstaller().requestArchive(packageName,
                     /* callerPackageName= */ "", receiver.getIntentSender(),
-                    new UserHandle(translatedUserId));
+                    new UserHandle(translatedUserId), 0);
         } catch (Exception e) {
             pw.println("Failure [" + e.getMessage() + "]");
             return 1;
@@ -4686,10 +4689,12 @@ class PackageManagerShellCommand extends ShellCommand {
 
         final int translatedUserId =
                 translateUserId(userId, UserHandle.USER_SYSTEM, "runArchive");
+        final LocalIntentReceiver receiver = new LocalIntentReceiver();
 
         try {
             mInterface.getPackageInstaller().requestUnarchive(packageName,
-                    /* callerPackageName= */ "", new UserHandle(translatedUserId));
+                    mContext.getPackageName(), receiver.getIntentSender(),
+                    new UserHandle(translatedUserId));
         } catch (Exception e) {
             pw.println("Failure [" + e.getMessage() + "]");
             return 1;
@@ -4799,7 +4804,7 @@ class PackageManagerShellCommand extends ShellCommand {
         pw.println("       [--enable-rollback]");
         pw.println("       [--force-uuid internal|UUID] [--pkg PACKAGE] [-S BYTES]");
         pw.println("       [--apex] [--non-staged] [--force-non-staged]");
-        pw.println("       [--staged-ready-timeout TIMEOUT]");
+        pw.println("       [--staged-ready-timeout TIMEOUT] [--ignore-dexopt-profile]");
         pw.println("       [PATH [SPLIT...]|-]");
         pw.println("    Install an application.  Must provide the apk data to install, either as");
         pw.println("    file path(s) or '-' to read from stdin.  Options are:");
@@ -4839,6 +4844,13 @@ class PackageManagerShellCommand extends ShellCommand {
         pw.println("          milliseconds for pre-reboot verification to complete when");
         pw.println("          performing staged install. This flag is used to alter the waiting");
         pw.println("          time. You can skip the waiting time by specifying a TIMEOUT of '0'");
+        pw.println("      --ignore-dexopt-profile: If set, all profiles are ignored by dexopt");
+        pw.println("          during the installation, including the profile in the DM file and");
+        pw.println("          the profile embedded in the APK file. If an invalid profile is");
+        pw.println("          provided during installation, no warning will be reported by `adb");
+        pw.println("          install`.");
+        pw.println("          This option does not affect later dexopt operations (e.g.,");
+        pw.println("          background dexopt and manual `pm compile` invocations).");
         pw.println("");
         pw.println("  install-existing [--user USER_ID|all|current]");
         pw.println("       [--instant] [--full] [--wait] [--restrict-permissions] PACKAGE");
@@ -5176,7 +5188,7 @@ class PackageManagerShellCommand extends ShellCommand {
     private static class LocalIntentReceiver {
         private final LinkedBlockingQueue<Intent> mResult = new LinkedBlockingQueue<>();
 
-        private IIntentSender.Stub mLocalSender = new IIntentSender.Stub() {
+        private final IIntentSender.Stub mLocalSender = new IIntentSender.Stub() {
             @Override
             public void send(int code, Intent intent, String resolvedType, IBinder whitelistToken,
                     IIntentReceiver finishedReceiver, String requiredPermission, Bundle options) {

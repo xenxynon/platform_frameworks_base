@@ -21,12 +21,8 @@ import static android.view.View.VISIBLE;
 import static android.view.WindowInsets.Type.displayCutout;
 import static android.view.WindowInsets.Type.ime;
 import static android.view.WindowInsets.Type.systemBars;
-
 import static com.android.systemui.accessibility.floatingmenu.MenuViewLayer.LayerIndex;
-import static com.android.systemui.accessibility.utils.FlagUtils.setFlagDefaults;
-
 import static com.google.common.truth.Truth.assertThat;
-
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -42,10 +38,8 @@ import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.UserHandle;
-import android.platform.test.annotations.RequiresFlagsDisabled;
-import android.platform.test.annotations.RequiresFlagsEnabled;
-import android.platform.test.flag.junit.CheckFlagsRule;
-import android.platform.test.flag.junit.DeviceFlagsValueProvider;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.provider.Settings;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -104,10 +98,6 @@ public class MenuViewLayerTest extends SysuiTestCase {
     @Rule
     public MockitoRule mockito = MockitoJUnit.rule();
 
-    @Rule
-    public final CheckFlagsRule mCheckFlagsRule =
-            DeviceFlagsValueProvider.createCheckFlagsRule();
-
     @Mock
     private IAccessibilityFloatingMenu mFloatingMenu;
 
@@ -122,7 +112,6 @@ public class MenuViewLayerTest extends SysuiTestCase {
 
     @Before
     public void setUp() throws Exception {
-        setFlagDefaults(mSetFlagsRule);
         final Rect mDisplayBounds = new Rect();
         mDisplayBounds.set(/* left= */ 0, /* top= */ 0, DISPLAY_WINDOW_WIDTH,
                 DISPLAY_WINDOW_HEIGHT);
@@ -232,7 +221,7 @@ public class MenuViewLayerTest extends SysuiTestCase {
     }
 
     @Test
-    @RequiresFlagsDisabled(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
+    @DisableFlags(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
     public void showingImeInsetsChange_overlapOnIme_menuShownAboveIme_old() {
         mMenuAnimationController.moveAndPersistPosition(new PointF(0, IME_TOP + 100));
         final PointF beforePosition = mMenuView.getMenuPosition();
@@ -245,7 +234,7 @@ public class MenuViewLayerTest extends SysuiTestCase {
     }
 
     @Test
-    @RequiresFlagsEnabled(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
+    @EnableFlags(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
     public void showingImeInsetsChange_overlapOnIme_menuShownAboveIme() {
         mMenuAnimationController.moveAndPersistPosition(new PointF(0, IME_TOP + 100));
         final PointF beforePosition = mMenuView.getMenuPosition();
@@ -261,7 +250,7 @@ public class MenuViewLayerTest extends SysuiTestCase {
     }
 
     @Test
-    @RequiresFlagsDisabled(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
+    @DisableFlags(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
     public void hidingImeInsetsChange_overlapOnIme_menuBackToOriginalPosition_old() {
         mMenuAnimationController.moveAndPersistPosition(new PointF(0, IME_TOP + 200));
         final PointF beforePosition = mMenuView.getMenuPosition();
@@ -273,7 +262,7 @@ public class MenuViewLayerTest extends SysuiTestCase {
     }
 
     @Test
-    @RequiresFlagsEnabled(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
+    @EnableFlags(Flags.FLAG_FLOATING_MENU_IME_DISPLACEMENT_ANIMATION)
     public void hidingImeInsetsChange_overlapOnIme_menuBackToOriginalPosition() {
         mMenuAnimationController.moveAndPersistPosition(new PointF(0, IME_TOP + 200));
         final PointF beforePosition = mMenuView.getMenuPosition();

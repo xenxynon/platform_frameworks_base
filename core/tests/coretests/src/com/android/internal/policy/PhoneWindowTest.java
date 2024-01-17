@@ -63,8 +63,13 @@ public final class PhoneWindowTest {
         createPhoneWindowWithTheme(R.style.LayoutInDisplayCutoutModeUnset);
         installDecor();
 
-        assertThat(mPhoneWindow.getAttributes().layoutInDisplayCutoutMode,
-                is(LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT));
+        if (mPhoneWindow.mEdgeToEdgeEnforced && !mPhoneWindow.isFloating()) {
+            assertThat(mPhoneWindow.getAttributes().layoutInDisplayCutoutMode,
+                    is(LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS));
+        } else {
+            assertThat(mPhoneWindow.getAttributes().layoutInDisplayCutoutMode,
+                    is(LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT));
+        }
     }
 
     @Test

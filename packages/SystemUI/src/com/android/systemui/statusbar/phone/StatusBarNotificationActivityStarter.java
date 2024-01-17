@@ -56,12 +56,12 @@ import com.android.systemui.animation.ActivityLaunchAnimator;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.DisplayId;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.ShadeController;
 import com.android.systemui.shade.ShadeViewController;
+import com.android.systemui.shade.domain.interactor.ShadeAnimationInteractor;
 import com.android.systemui.statusbar.NotificationClickNotifier;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationPresenter;
@@ -72,7 +72,6 @@ import com.android.systemui.statusbar.notification.NotificationLaunchAnimatorCon
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
 import com.android.systemui.statusbar.notification.collection.provider.LaunchFullScreenIntentProvider;
 import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
-import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProvider;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRowDragController;
 import com.android.systemui.statusbar.notification.row.OnUserInteractionCallback;
@@ -115,11 +114,10 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
     private final NotificationLockscreenUserManager mLockscreenUserManager;
     private final com.android.systemui.shade.ShadeController mShadeController;
     private final KeyguardStateController mKeyguardStateController;
-    private final NotificationInterruptStateProvider mNotificationInterruptStateProvider;
     private final LockPatternUtils mLockPatternUtils;
     private final StatusBarRemoteInputCallback mStatusBarRemoteInputCallback;
     private final ActivityIntentHelper mActivityIntentHelper;
-    private final FeatureFlags mFeatureFlags;
+    private final ShadeAnimationInteractor mShadeAnimationInteractor;
 
     private final MetricsLogger mMetricsLogger;
     private final StatusBarNotificationActivityStarterLogger mLogger;
@@ -154,7 +152,6 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             NotificationLockscreenUserManager lockscreenUserManager,
             ShadeController shadeController,
             KeyguardStateController keyguardStateController,
-            NotificationInterruptStateProvider notificationInterruptStateProvider,
             LockPatternUtils lockPatternUtils,
             StatusBarRemoteInputCallback remoteInputCallback,
             ActivityIntentHelper activityIntentHelper,
@@ -165,10 +162,10 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
             ShadeViewController shadeViewController,
             NotificationShadeWindowController notificationShadeWindowController,
             ActivityLaunchAnimator activityLaunchAnimator,
+            ShadeAnimationInteractor shadeAnimationInteractor,
             NotificationLaunchAnimatorControllerProvider notificationAnimationProvider,
             LaunchFullScreenIntentProvider launchFullScreenIntentProvider,
             PowerInteractor powerInteractor,
-            FeatureFlags featureFlags,
             UserTracker userTracker) {
         mContext = context;
         mDisplayId = displayId;
@@ -187,12 +184,11 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
         mLockscreenUserManager = lockscreenUserManager;
         mShadeController = shadeController;
         mKeyguardStateController = keyguardStateController;
-        mNotificationInterruptStateProvider = notificationInterruptStateProvider;
         mLockPatternUtils = lockPatternUtils;
         mStatusBarRemoteInputCallback = remoteInputCallback;
         mActivityIntentHelper = activityIntentHelper;
         mNotificationShadeWindowController = notificationShadeWindowController;
-        mFeatureFlags = featureFlags;
+        mShadeAnimationInteractor = shadeAnimationInteractor;
         mMetricsLogger = metricsLogger;
         mLogger = logger;
         mOnUserInteractionCallback = onUserInteractionCallback;
@@ -448,6 +444,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                     new StatusBarLaunchAnimatorController(
                             mNotificationAnimationProvider.getAnimatorController(row, null),
                             mShadeViewController,
+                            mShadeAnimationInteractor,
                             mShadeController,
                             mNotificationShadeWindowController,
                             isActivityIntent);
@@ -489,6 +486,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                             new StatusBarLaunchAnimatorController(
                                     mNotificationAnimationProvider.getAnimatorController(row),
                                     mShadeViewController,
+                                    mShadeAnimationInteractor,
                                     mShadeController,
                                     mNotificationShadeWindowController,
                                     true /* isActivityIntent */);
@@ -539,6 +537,7 @@ public class StatusBarNotificationActivityStarter implements NotificationActivit
                                 : new StatusBarLaunchAnimatorController(
                                         viewController,
                                         mShadeViewController,
+                                        mShadeAnimationInteractor,
                                         mShadeController,
                                         mNotificationShadeWindowController,
                                         true /* isActivityIntent */);

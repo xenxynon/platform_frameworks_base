@@ -273,7 +273,6 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         assertFalse(win.mHasSurface);
         assertNull(win.mWinAnimator.mSurfaceController);
 
-        doReturn(mSystemServicesTestRule.mTransaction).when(SurfaceControl::getGlobalTransaction);
         // Invisible requested activity should not get the last config even if its view is visible.
         mWm.relayoutWindow(win.mSession, win.mClient, win.mAttrs, w, h, View.VISIBLE, 0, 0, 0,
                 outFrames, outConfig, outSurfaceControl, outInsetsState, outControls, outBundle);
@@ -500,11 +499,16 @@ public class WindowManagerServiceTests extends WindowTestsBase {
     public void testAddWindowWithSubWindowTypeByWindowContext() {
         spyOn(mWm.mWindowContextListenerController);
 
-        final WindowToken windowToken = createTestWindowToken(TYPE_INPUT_METHOD, mDefaultDisplay);
-        final Session session = getTestSession();
+        final WindowState parentWin = createWindow(null, TYPE_INPUT_METHOD, "ime");
+        final IBinder parentToken = parentWin.mToken.token;
+        parentWin.mAttrs.token = parentToken;
+        mWm.mWindowMap.put(parentToken, parentWin);
+        final Session session = parentWin.mSession;
+        session.onWindowAdded(parentWin);
         final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 TYPE_APPLICATION_ATTACHED_DIALOG);
-        params.token = windowToken.token;
+        params.token = parentToken;
+        params.setTitle("attached-dialog");
         final IBinder windowContextToken = new Binder();
         params.setWindowContextToken(windowContextToken);
         doReturn(true).when(mWm.mWindowContextListenerController)
@@ -518,6 +522,12 @@ public class WindowManagerServiceTests extends WindowTestsBase {
 
         verify(mWm.mWindowContextListenerController, never()).registerWindowContainerListener(any(),
                 any(), any(), anyInt(), any(), anyBoolean());
+
+        assertTrue(parentWin.hasChild());
+        assertTrue(parentWin.isAttached());
+        session.binderDied();
+        assertFalse(parentWin.hasChild());
+        assertFalse(parentWin.isAttached());
     }
 
     @Test
@@ -859,9 +869,7 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         final int callingUid = Process.FIRST_APPLICATION_UID;
         final int callingPid = 1234;
         final SurfaceControl surfaceControl = mock(SurfaceControl.class);
-        final IWindow window = mock(IWindow.class);
-        final IBinder windowToken = mock(IBinder.class);
-        when(window.asBinder()).thenReturn(windowToken);
+        final IBinder window = new Binder();
         final IBinder focusGrantToken = mock(IBinder.class);
 
         final InputChannel inputChannel = new InputChannel();
@@ -879,9 +887,7 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         final int callingUid = Process.SYSTEM_UID;
         final int callingPid = 1234;
         final SurfaceControl surfaceControl = mock(SurfaceControl.class);
-        final IWindow window = mock(IWindow.class);
-        final IBinder windowToken = mock(IBinder.class);
-        when(window.asBinder()).thenReturn(windowToken);
+        final IBinder window = new Binder();
         final IBinder focusGrantToken = mock(IBinder.class);
 
         final InputChannel inputChannel = new InputChannel();
@@ -901,9 +907,7 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         final int callingUid = Process.FIRST_APPLICATION_UID;
         final int callingPid = 1234;
         final SurfaceControl surfaceControl = mock(SurfaceControl.class);
-        final IWindow window = mock(IWindow.class);
-        final IBinder windowToken = mock(IBinder.class);
-        when(window.asBinder()).thenReturn(windowToken);
+        final IBinder window = new Binder();
         final IBinder focusGrantToken = mock(IBinder.class);
 
         final InputChannel inputChannel = new InputChannel();
@@ -927,9 +931,7 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         final int callingUid = Process.SYSTEM_UID;
         final int callingPid = 1234;
         final SurfaceControl surfaceControl = mock(SurfaceControl.class);
-        final IWindow window = mock(IWindow.class);
-        final IBinder windowToken = mock(IBinder.class);
-        when(window.asBinder()).thenReturn(windowToken);
+        final IBinder window = new Binder();
         final IBinder focusGrantToken = mock(IBinder.class);
 
         final InputChannel inputChannel = new InputChannel();

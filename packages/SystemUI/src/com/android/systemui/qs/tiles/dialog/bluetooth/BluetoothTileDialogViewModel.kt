@@ -18,15 +18,18 @@ package com.android.systemui.qs.tiles.dialog.bluetooth
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.View
-import androidx.annotation.VisibleForTesting
+import android.view.ViewGroup
 import com.android.internal.jank.InteractionJankMonitor
 import com.android.internal.logging.UiEventLogger
+import com.android.systemui.Prefs
 import com.android.systemui.animation.DialogCuj
 import com.android.systemui.animation.DialogLaunchAnimator
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.qs.tiles.dialog.bluetooth.BluetoothTileDialog.Companion.ACTION_BLUETOOTH_DEVICE_DETAILS
@@ -40,11 +43,13 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.produce
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** ViewModel for Bluetooth Dialog after clicking on the Bluetooth QS tile. */
 @SysUISingleton
@@ -60,11 +65,11 @@ constructor(
     private val logger: BluetoothTileDialogLogger,
     @Application private val coroutineScope: CoroutineScope,
     @Main private val mainDispatcher: CoroutineDispatcher,
+    @Background private val backgroundDispatcher: CoroutineDispatcher,
+    @Main private val sharedPreferences: SharedPreferences,
 ) : BluetoothTileDialogCallback {
 
     private var job: Job? = null
-
-    @VisibleForTesting internal var dialog: BluetoothTileDialog? = null
 
     /**
      * Shows the dialog.
@@ -72,17 +77,19 @@ constructor(
      * @param context The context in which the dialog is displayed.
      * @param view The view from which the dialog is shown.
      */
+    @kotlinx.coroutines.ExperimentalCoroutinesApi
     fun showDialog(context: Context, view: View?) {
-        dismissDialog()
-
-        var updateDeviceItemJob: Job? = null
+        cancelJob()
 
         job =
             coroutineScope.launch(mainDispatcher) {
-                dialog = createBluetoothTileDialog(context)
+                var updateDeviceItemJob: Job?
+                var updateDialogUiJob: Job? = null
+                val dialog = createBluetoothTileDialog(context)
+
                 view?.let {
                     dialogLaunchAnimator.showFromView(
-                        dialog!!,
+                        dialog,
                         it,
                         animateBackgroundBoundsChange = true,
                         cuj =
@@ -92,18 +99,16 @@ constructor(
                             )
                     )
                 }
-                    ?: dialog!!.show()
-                updateDeviceItemJob?.cancel()
+                    ?: dialog.show()
+
                 updateDeviceItemJob = launch {
-                    // Add a slight delay for smoother dialog bounds change
-                    delay(FIRST_LOAD_DELAY_MS)
                     deviceItemInteractor.updateDeviceItems(context, DeviceFetchTrigger.FIRST_LOAD)
                 }
 
                 bluetoothStateInteractor.bluetoothStateUpdate
                     .filterNotNull()
                     .onEach {
-                        dialog!!.onBluetoothStateUpdated(it, getSubtitleResId(it))
+                        dialog.onBluetoothStateUpdated(it, getSubtitleResId(it))
                         updateDeviceItemJob?.cancel()
                         updateDeviceItemJob = launch {
                             deviceItemInteractor.updateDeviceItems(
@@ -128,37 +133,58 @@ constructor(
 
                 deviceItemInteractor.deviceItemUpdate
                     .onEach {
-                        dialog!!.onDeviceItemUpdated(
-                            it.take(MAX_DEVICE_ITEM_ENTRY),
-                            showSeeAll = it.size > MAX_DEVICE_ITEM_ENTRY,
-                            showPairNewDevice = bluetoothStateInteractor.isBluetoothEnabled
-                        )
+                        updateDialogUiJob?.cancel()
+                        updateDialogUiJob = launch {
+                            dialog.onDeviceItemUpdated(
+                                it.take(MAX_DEVICE_ITEM_ENTRY),
+                                showSeeAll = it.size > MAX_DEVICE_ITEM_ENTRY,
+                                showPairNewDevice = bluetoothStateInteractor.isBluetoothEnabled
+                            )
+                        }
                     }
                     .launchIn(this)
 
-                dialog!!
-                    .bluetoothStateToggle
+                dialog.bluetoothStateToggle
                     .onEach { bluetoothStateInteractor.isBluetoothEnabled = it }
                     .launchIn(this)
 
-                dialog!!
-                    .deviceItemClick
+                dialog.deviceItemClick
                     .onEach { deviceItemInteractor.updateDeviceItemOnClick(it) }
                     .launchIn(this)
+
+                dialog.contentHeight
+                    .onEach {
+                        withContext(backgroundDispatcher) {
+                            sharedPreferences.edit().putInt(CONTENT_HEIGHT_PREF_KEY, it).apply()
+                        }
+                    }
+                    .launchIn(this)
+
+                produce<Unit> { awaitClose { dialog.cancel() } }
             }
     }
 
-    private fun createBluetoothTileDialog(context: Context): BluetoothTileDialog {
+    private suspend fun createBluetoothTileDialog(context: Context): BluetoothTileDialog {
+        val cachedContentHeight =
+            withContext(backgroundDispatcher) {
+                sharedPreferences.getInt(
+                    CONTENT_HEIGHT_PREF_KEY,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+
         return BluetoothTileDialog(
                 bluetoothStateInteractor.isBluetoothEnabled,
                 getSubtitleResId(bluetoothStateInteractor.isBluetoothEnabled),
+                cachedContentHeight,
                 this@BluetoothTileDialogViewModel,
+                mainDispatcher,
                 systemClock,
                 uiEventLogger,
                 logger,
                 context
             )
-            .apply { SystemUIDialog.registerDismissListener(this) { dismissDialog() } }
+            .apply { SystemUIDialog.registerDismissListener(this) { cancelJob() } }
     }
 
     override fun onDeviceItemGearClicked(deviceItem: DeviceItem, view: View) {
@@ -185,15 +211,13 @@ constructor(
         startSettingsActivity(Intent(ACTION_PAIR_NEW_DEVICE), view)
     }
 
-    private fun dismissDialog() {
+    private fun cancelJob() {
         job?.cancel()
         job = null
-        dialog?.dismiss()
-        dialog = null
     }
 
     private fun startSettingsActivity(intent: Intent, view: View) {
-        dialog?.run {
+        if (job?.isActive == true) {
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             activityStarter.postStartActivityDismissingKeyguard(
                 intent,
@@ -205,7 +229,7 @@ constructor(
 
     companion object {
         private const val INTERACTION_JANK_TAG = "bluetooth_tile_dialog"
-        private const val FIRST_LOAD_DELAY_MS = 500L
+        private const val CONTENT_HEIGHT_PREF_KEY = Prefs.Key.BLUETOOTH_TILE_DIALOG_CONTENT_HEIGHT
         private fun getSubtitleResId(isBluetoothEnabled: Boolean) =
             if (isBluetoothEnabled) R.string.quick_settings_bluetooth_tile_subtitle
             else R.string.bt_is_off

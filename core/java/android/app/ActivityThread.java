@@ -56,7 +56,7 @@ import android.app.backup.BackupAnnotations.BackupDestination;
 import android.app.backup.BackupAnnotations.OperationType;
 import android.app.compat.CompatChanges;
 import android.app.sdksandbox.sandboxactivity.ActivityContextInfo;
-import android.app.sdksandbox.sandboxactivity.ActivityContextInfoProvider;
+import android.app.sdksandbox.sandboxactivity.SdkSandboxActivityAuthority;
 import android.app.servertransaction.ActivityLifecycleItem;
 import android.app.servertransaction.ActivityLifecycleItem.LifecycleState;
 import android.app.servertransaction.ActivityRelaunchItem;
@@ -135,6 +135,7 @@ import android.os.GraphicsEnvironment;
 import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.IBinder;
+import android.os.IBinderCallback;
 import android.os.ICancellationSignal;
 import android.os.LocaleList;
 import android.os.Looper;
@@ -232,6 +233,7 @@ import com.android.internal.util.Preconditions;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.org.conscrypt.TrustedCertificateStore;
 import com.android.server.am.MemInfoDumpProto;
+import com.android.window.flags.Flags;
 
 import dalvik.annotation.optimization.NeverCompile;
 import dalvik.system.AppSpecializationHooks;
@@ -378,6 +380,15 @@ public final class ActivityThread extends ClientTransactionHandler
     /** Maps from activity token to the pending override configuration. */
     @GuardedBy("mPendingOverrideConfigs")
     private final ArrayMap<IBinder, Configuration> mPendingOverrideConfigs = new ArrayMap<>();
+
+    /**
+     * A queue of pending ApplicationInfo updates. In case when we get a concurrent update
+     * this queue allows us to only apply the latest object, and it can be applied on demand
+     * instead of waiting for the handler thread to reach the scheduled callback.
+     */
+    @GuardedBy("mResourcesManager")
+    private final ArrayMap<String, ApplicationInfo> mPendingAppInfoUpdates = new ArrayMap<>();
+
     /** The activities to be truly destroyed (not include relaunch). */
     final Map<IBinder, DestroyActivityItem> mActivitiesToBeDestroyed =
             Collections.synchronizedMap(new ArrayMap<>());
@@ -1326,9 +1337,19 @@ public final class ActivityThread extends ClientTransactionHandler
         }
 
         public void scheduleApplicationInfoChanged(ApplicationInfo ai) {
+            synchronized (mResourcesManager) {
+                var oldAi = mPendingAppInfoUpdates.put(ai.packageName, ai);
+                if (oldAi != null && oldAi.createTimestamp > ai.createTimestamp) {
+                    Slog.w(TAG, "Skipping application info changed for obsolete AI with TS "
+                            + ai.createTimestamp + " < already pending TS "
+                            + oldAi.createTimestamp);
+                    mPendingAppInfoUpdates.put(ai.packageName, oldAi);
+                    return;
+                }
+            }
             mResourcesManager.appendPendingAppInfoUpdate(new String[]{ai.sourceDir}, ai);
-            mH.removeMessages(H.APPLICATION_INFO_CHANGED, ai);
-            sendMessage(H.APPLICATION_INFO_CHANGED, ai);
+            mH.removeMessages(H.APPLICATION_INFO_CHANGED, ai.packageName);
+            sendMessage(H.APPLICATION_INFO_CHANGED, ai.packageName);
         }
 
         public void updateTimeZone() {
@@ -1524,11 +1545,12 @@ public final class ActivityThread extends ClientTransactionHandler
         @Override
         public void dumpMemInfo(ParcelFileDescriptor pfd, Debug.MemoryInfo mem, boolean checkin,
                 boolean dumpFullInfo, boolean dumpDalvik, boolean dumpSummaryOnly,
-                boolean dumpUnreachable, String[] args) {
+                boolean dumpUnreachable, boolean dumpAllocatorStats, String[] args) {
             FileOutputStream fout = new FileOutputStream(pfd.getFileDescriptor());
             PrintWriter pw = new FastPrintWriter(fout);
             try {
-                dumpMemInfo(pw, mem, checkin, dumpFullInfo, dumpDalvik, dumpSummaryOnly, dumpUnreachable);
+                dumpMemInfo(pw, mem, checkin, dumpFullInfo, dumpDalvik, dumpSummaryOnly,
+                            dumpUnreachable, dumpAllocatorStats);
             } finally {
                 pw.flush();
                 IoUtils.closeQuietly(pfd);
@@ -1537,7 +1559,8 @@ public final class ActivityThread extends ClientTransactionHandler
 
         @NeverCompile
         private void dumpMemInfo(PrintWriter pw, Debug.MemoryInfo memInfo, boolean checkin,
-                boolean dumpFullInfo, boolean dumpDalvik, boolean dumpSummaryOnly, boolean dumpUnreachable) {
+                boolean dumpFullInfo, boolean dumpDalvik, boolean dumpSummaryOnly,
+                boolean dumpUnreachable, boolean dumpAllocatorStats) {
             long nativeMax = Debug.getNativeHeapSize() / 1024;
             long nativeAllocated = Debug.getNativeHeapAllocatedSize() / 1024;
             long nativeFree = Debug.getNativeHeapFreeSize() / 1024;
@@ -1689,6 +1712,9 @@ public final class ActivityThread extends ClientTransactionHandler
                 pw.println(" ");
                 pw.println(" Unreachable memory");
                 pw.print(Debug.getUnreachableMemory(100, showContents));
+            }
+            if (dumpAllocatorStats) {
+                Debug.logAllocatorStats();
             }
         }
 
@@ -2272,7 +2298,8 @@ public final class ActivityThread extends ClientTransactionHandler
                     case DUMP_HEAP: return "DUMP_HEAP";
                     case DUMP_ACTIVITY: return "DUMP_ACTIVITY";
                     case SET_CORE_SETTINGS: return "SET_CORE_SETTINGS";
-                    case UPDATE_PACKAGE_COMPATIBILITY_INFO: return "UPDATE_PACKAGE_COMPATIBILITY_INFO";
+                    case UPDATE_PACKAGE_COMPATIBILITY_INFO:
+                        return "UPDATE_PACKAGE_COMPATIBILITY_INFO";
                     case DUMP_PROVIDER: return "DUMP_PROVIDER";
                     case UNSTABLE_PROVIDER_DIED: return "UNSTABLE_PROVIDER_DIED";
                     case REQUEST_ASSIST_CONTEXT_EXTRAS: return "REQUEST_ASSIST_CONTEXT_EXTRAS";
@@ -2507,7 +2534,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     break;
                 }
                 case APPLICATION_INFO_CHANGED:
-                    handleApplicationInfoChanged((ApplicationInfo) msg.obj);
+                    applyPendingApplicationInfoChanges((String) msg.obj);
                     break;
                 case RUN_ISOLATED_ENTRY_POINT:
                     handleRunIsolatedEntryPoint((String) ((SomeArgs) msg.obj).arg1,
@@ -3694,7 +3721,13 @@ public final class ActivityThread extends ClientTransactionHandler
         final ArrayList<ResultInfo> list = new ArrayList<>();
         list.add(new ResultInfo(id, requestCode, resultCode, data));
         final ClientTransaction clientTransaction = ClientTransaction.obtain(mAppThread);
-        clientTransaction.addCallback(ActivityResultItem.obtain(activityToken, list));
+        final ActivityResultItem activityResultItem = ActivityResultItem.obtain(
+                activityToken, list);
+        if (Flags.bundleClientTransactionFlag()) {
+            clientTransaction.addTransactionItem(activityResultItem);
+        } else {
+            clientTransaction.addCallback(activityResultItem);
+        }
         try {
             mAppThread.scheduleTransaction(clientTransaction);
         } catch (RemoteException e) {
@@ -3776,8 +3809,10 @@ public final class ActivityThread extends ClientTransactionHandler
                     r.activityInfo.targetActivity);
         }
 
-        boolean isSandboxActivityContext = sandboxActivitySdkBasedContext()
-                && r.intent.isSandboxActivity(mSystemContext);
+        boolean isSandboxActivityContext =
+                sandboxActivitySdkBasedContext()
+                        && SdkSandboxActivityAuthority.isSdkSandboxActivityIntent(
+                                mSystemContext, r.intent);
         boolean isSandboxedSdkContextUsed = false;
         ContextImpl activityBaseContext;
         if (isSandboxActivityContext) {
@@ -4022,11 +4057,12 @@ public final class ActivityThread extends ClientTransactionHandler
      */
     @Nullable
     private ContextImpl createBaseContextForSandboxActivity(@NonNull ActivityClientRecord r) {
-        ActivityContextInfoProvider contextInfoProvider = ActivityContextInfoProvider.getInstance();
+        SdkSandboxActivityAuthority sdkSandboxActivityAuthority =
+                SdkSandboxActivityAuthority.getInstance();
 
         ActivityContextInfo contextInfo;
         try {
-            contextInfo = contextInfoProvider.getActivityContextInfo(r.intent);
+            contextInfo = sdkSandboxActivityAuthority.getActivityContextInfo(r.intent);
         } catch (IllegalArgumentException e) {
             Log.e(TAG, "Passed intent does not match an expected sandbox activity", e);
             return null;
@@ -4042,7 +4078,7 @@ public final class ActivityThread extends ClientTransactionHandler
         final LoadedApk sdkApk = getPackageInfo(
                 contextInfo.getSdkApplicationInfo(),
                 r.packageInfo.getCompatibilityInfo(),
-                ActivityContextInfo.CONTEXT_FLAGS);
+                contextInfo.getContextFlags());
 
         final ContextImpl activityContext = ContextImpl.createActivityContext(
                 this, sdkApk, r.activityInfo, r.token, displayId, r.overrideConfig);
@@ -4070,7 +4106,8 @@ public final class ActivityThread extends ClientTransactionHandler
             mProfiler.startProfiling();
         }
 
-        // Make sure we are running with the most recent config.
+        // Make sure we are running with the most recent config and resource paths.
+        applyPendingApplicationInfoChanges(r.activityInfo.packageName);
         mConfigurationController.handleConfigurationChanged(null, null);
         updateDeviceIdForNonUIContexts(deviceId);
 
@@ -4469,16 +4506,26 @@ public final class ActivityThread extends ClientTransactionHandler
 
     private void schedulePauseWithUserLeavingHint(ActivityClientRecord r) {
         final ClientTransaction transaction = ClientTransaction.obtain(mAppThread);
-        transaction.setLifecycleStateRequest(PauseActivityItem.obtain(r.token,
+        final PauseActivityItem pauseActivityItem = PauseActivityItem.obtain(r.token,
                 r.activity.isFinishing(), /* userLeaving */ true, r.activity.mConfigChangeFlags,
-                /* dontReport */ false, /* autoEnteringPip */ false));
+                /* dontReport */ false, /* autoEnteringPip */ false);
+        if (Flags.bundleClientTransactionFlag()) {
+            transaction.addTransactionItem(pauseActivityItem);
+        } else {
+            transaction.setLifecycleStateRequest(pauseActivityItem);
+        }
         executeTransaction(transaction);
     }
 
     private void scheduleResume(ActivityClientRecord r) {
         final ClientTransaction transaction = ClientTransaction.obtain(mAppThread);
-        transaction.setLifecycleStateRequest(ResumeActivityItem.obtain(r.token,
-                /* isForward */ false, /* shouldSendCompatFakeFocus */ false));
+        final ResumeActivityItem resumeActivityItem = ResumeActivityItem.obtain(r.token,
+                /* isForward */ false, /* shouldSendCompatFakeFocus */ false);
+        if (Flags.bundleClientTransactionFlag()) {
+            transaction.addTransactionItem(resumeActivityItem);
+        } else {
+            transaction.setLifecycleStateRequest(resumeActivityItem);
+        }
         executeTransaction(transaction);
     }
 
@@ -6069,8 +6116,13 @@ public final class ActivityThread extends ClientTransactionHandler
                 TransactionExecutorHelper.getLifecycleRequestForCurrentState(r);
         // Schedule the transaction.
         final ClientTransaction transaction = ClientTransaction.obtain(mAppThread);
-        transaction.addCallback(activityRelaunchItem);
-        transaction.setLifecycleStateRequest(lifecycleRequest);
+        if (Flags.bundleClientTransactionFlag()) {
+            transaction.addTransactionItem(activityRelaunchItem);
+            transaction.addTransactionItem(lifecycleRequest);
+        } else {
+            transaction.addCallback(activityRelaunchItem);
+            transaction.setLifecycleStateRequest(lifecycleRequest);
+        }
         executeTransaction(transaction);
     }
 
@@ -6438,6 +6490,17 @@ public final class ActivityThread extends ClientTransactionHandler
         r.mLastReportedWindowingMode = newWindowingMode;
     }
 
+    private void applyPendingApplicationInfoChanges(String packageName) {
+        final ApplicationInfo ai;
+        synchronized (mResourcesManager) {
+            ai = mPendingAppInfoUpdates.remove(packageName);
+        }
+        if (ai == null) {
+            return;
+        }
+        handleApplicationInfoChanged(ai);
+    }
+
     /**
      * Updates the application info.
      *
@@ -6463,6 +6526,16 @@ public final class ActivityThread extends ClientTransactionHandler
             apk = ref != null ? ref.get() : null;
             ref = mResourcePackages.get(ai.packageName);
             resApk = ref != null ? ref.get() : null;
+            for (ActivityClientRecord ar : mActivities.values()) {
+                if (ar.activityInfo.applicationInfo.packageName.equals(ai.packageName)) {
+                    ar.activityInfo.applicationInfo = ai;
+                    if (apk != null || resApk != null) {
+                        ar.packageInfo = apk != null ? apk : resApk;
+                    } else {
+                        apk = ar.packageInfo;
+                    }
+                }
+            }
         }
 
         if (apk != null) {
@@ -7320,6 +7393,18 @@ public final class ActivityThread extends ClientTransactionHandler
         } catch (RemoteException ex) {
             throw ex.rethrowFromSystemServer();
         }
+
+        // Set binder transaction callback after finishing bindApplication
+        Binder.setTransactionCallback(new IBinderCallback() {
+            @Override
+            public void onTransactionError(int pid, int code, int flags, int err) {
+                try {
+                    mgr.frozenBinderTransactionDetected(pid, code, flags, err);
+                } catch (RemoteException ex) {
+                    throw ex.rethrowFromSystemServer();
+                }
+            }
+        });
     }
 
     @UnsupportedAppUsage

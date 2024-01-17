@@ -191,9 +191,20 @@ public final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         launchDeviceDiscovery();
         startQueuedActions();
         if (!mDelayedMessageBuffer.isBuffered(Constants.MESSAGE_ACTIVE_SOURCE)) {
-            mService.sendCecCommand(
-                    HdmiCecMessageBuilder.buildRequestActiveSource(
-                            getDeviceInfo().getLogicalAddress()));
+            addAndStartAction(new RequestActiveSourceAction(this, new IHdmiControlCallback.Stub() {
+                @Override
+                public void onComplete(int result) {
+                    if (!mService.getLocalActiveSource().isValid()
+                            && result != HdmiControlManager.RESULT_SUCCESS) {
+                        mService.sendCecCommand(HdmiCecMessageBuilder.buildActiveSource(
+                                getDeviceInfo().getLogicalAddress(),
+                                getDeviceInfo().getPhysicalAddress()));
+                        updateActiveSource(getDeviceInfo().getLogicalAddress(),
+                                getDeviceInfo().getPhysicalAddress(),
+                                "RequestActiveSourceAction#finishWithCallback()");
+                    }
+                }
+            }));
         }
     }
 
@@ -250,6 +261,7 @@ public final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         if (isAlreadyActiveSource(targetDevice, targetAddress, callback)) {
             return;
         }
+        removeAction(RequestActiveSourceAction.class);
         if (targetAddress == Constants.ADDR_INTERNAL) {
             handleSelectInternalSource();
             // Switching to internal source is always successful even when CEC control is disabled.
@@ -1325,8 +1337,13 @@ public final class HdmiCecLocalDeviceTv extends HdmiCecLocalDevice {
         removeAction(TimerRecordingAction.class);
         removeAction(NewDeviceAction.class);
         removeAction(AbsoluteVolumeAudioStatusAction.class);
+        // Remove pending actions.
+        removeAction(RequestActiveSourceAction.class);
 
-        disableSystemAudioIfExist();
+        // Keep SAM enabled if eARC is enabled, unless we're going to Standby.
+        if (initiatedByCec || !mService.isEarcEnabled()){
+            disableSystemAudioIfExist();
+        }
         disableArcIfExist();
 
         super.disableDevice(initiatedByCec, callback);

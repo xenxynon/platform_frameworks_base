@@ -26,7 +26,6 @@ import static android.accessibilityservice.AccessibilityTrace.FLAGS_ACCESSIBILIT
 import static android.accessibilityservice.AccessibilityTrace.FLAGS_ACCESSIBILITY_SERVICE_CLIENT;
 import static android.accessibilityservice.AccessibilityTrace.FLAGS_ACCESSIBILITY_SERVICE_CONNECTION;
 import static android.accessibilityservice.AccessibilityTrace.FLAGS_WINDOW_MANAGER_INTERNAL;
-import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;
 import static android.view.accessibility.AccessibilityInteractionClient.CALL_STACK;
 import static android.view.accessibility.AccessibilityInteractionClient.IGNORE_CALL_STACK;
@@ -34,6 +33,8 @@ import static android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBIL
 import static android.view.accessibility.AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS;
 import static android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK;
 import static android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK;
+
+import static com.android.window.flags.Flags.deleteCaptureDisplay;
 
 import android.accessibilityservice.AccessibilityGestureEvent;
 import android.accessibilityservice.AccessibilityService;
@@ -69,7 +70,6 @@ import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
-import android.os.Trace;
 import android.provider.Settings;
 import android.util.Pair;
 import android.util.Slog;
@@ -93,7 +93,6 @@ import android.window.ScreenCapture.ScreenshotHardwareBuffer;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.compat.IPlatformCompat;
 import com.android.internal.inputmethod.IAccessibilityInputMethodSession;
-import com.android.internal.inputmethod.IAccessibilityInputMethodSessionCallback;
 import com.android.internal.inputmethod.IRemoteAccessibilityInputConnection;
 import com.android.internal.os.SomeArgs;
 import com.android.internal.util.DumpUtils;
@@ -101,7 +100,6 @@ import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.server.LocalServices;
 import com.android.server.accessibility.AccessibilityWindowManager.RemoteAccessibilityConnection;
 import com.android.server.accessibility.magnification.MagnificationProcessor;
-import com.android.server.inputmethod.InputMethodManagerInternal;
 import com.android.server.wm.WindowManagerInternal;
 
 import java.io.FileDescriptor;
@@ -120,6 +118,7 @@ import java.util.Set;
  * This class represents an accessibility client - either an AccessibilityService or a UiAutomation.
  * It is responsible for behavior common to both types of clients.
  */
+@SuppressWarnings("MissingPermissionAnnotation")
 abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServiceConnection.Stub
         implements ServiceConnection, IBinder.DeathRecipient, KeyEventDispatcher.KeyEventFilter,
         FingerprintGestureDispatcher.FingerprintGestureClient {
@@ -211,6 +210,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
     final ComponentName mComponentName;
 
     int mGenericMotionEventSources;
+    int mObservedMotionEventSources;
 
     // the events pending events to be dispatched to this service
     final SparseArray<AccessibilityEvent> mPendingEvents = new SparseArray<>();
@@ -223,6 +223,9 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
     public Handler mEventDispatchHandler;
 
     final SparseArray<IBinder> mOverlayWindowTokens = new SparseArray();
+
+    // All the embedded accessibility overlays that have been added by this service.
+    private List<SurfaceControl> mOverlays = new ArrayList<>();
 
     /** The timestamp of requesting to take screenshot in milliseconds */
     private long mRequestTakeScreenshotTimestampMs;
@@ -396,6 +399,19 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         mNotificationTimeout = info.notificationTimeout;
         mIsDefault = (info.flags & DEFAULT) != 0;
         mGenericMotionEventSources = info.getMotionEventSources();
+        if (android.view.accessibility.Flags.motionEventObserving()) {
+            if (mContext.checkCallingOrSelfPermission(
+                            android.Manifest.permission.ACCESSIBILITY_MOTION_EVENT_OBSERVING)
+                    == PackageManager.PERMISSION_GRANTED) {
+                mObservedMotionEventSources = info.getObservedMotionEventSources();
+            } else {
+                Slog.e(
+                        LOG_TAG,
+                        "Observing motion events requires"
+                            + " android.Manifest.permission.ACCESSIBILITY_MOTION_EVENT_OBSERVING.");
+                mObservedMotionEventSources = 0;
+            }
+        }
 
         if (supportsFlagForNotImportantViews(info)) {
             if ((info.flags & AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS) != 0) {
@@ -1441,42 +1457,86 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                     AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY, callback);
             return;
         }
-
         final long identity = Binder.clearCallingIdentity();
-        try {
-            mMainHandler.post(PooledLambda.obtainRunnable((nonArg) -> {
-                final ScreenshotHardwareBuffer screenshotBuffer = LocalServices
-                        .getService(DisplayManagerInternal.class).userScreenshot(displayId);
-                if (screenshotBuffer != null) {
-                    sendScreenshotSuccess(screenshotBuffer, callback);
-                } else {
-                    sendScreenshotFailure(
-                            AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY, callback);
-                }
-            }, null).recycleOnUse());
-        } finally {
-            Binder.restoreCallingIdentity(identity);
+        if (deleteCaptureDisplay()) {
+            try {
+                ScreenCapture.ScreenCaptureListener screenCaptureListener = new
+                        ScreenCapture.ScreenCaptureListener(
+                        (screenshotBuffer, result) -> {
+                            if (screenshotBuffer != null && result == 0) {
+                                sendScreenshotSuccess(screenshotBuffer, callback);
+                            } else {
+                                sendScreenshotFailure(
+                                        AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
+                                        callback);
+                            }
+                        }
+                );
+                mWindowManagerService.captureDisplay(displayId, null, screenCaptureListener);
+            } catch (Exception e) {
+                sendScreenshotFailure(AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
+                        callback);
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        } else {
+            try {
+                mMainHandler.post(PooledLambda.obtainRunnable((nonArg) -> {
+                    final ScreenshotHardwareBuffer screenshotBuffer = LocalServices
+                            .getService(DisplayManagerInternal.class).userScreenshot(displayId);
+                    if (screenshotBuffer != null) {
+                        sendScreenshotSuccess(screenshotBuffer, callback);
+                    } else {
+                        sendScreenshotFailure(
+                                AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY,
+                                callback);
+                    }
+                }, null).recycleOnUse());
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
         }
     }
 
     private void sendScreenshotSuccess(ScreenshotHardwareBuffer screenshotBuffer,
             RemoteCallback callback) {
-        final HardwareBuffer hardwareBuffer = screenshotBuffer.getHardwareBuffer();
-        final ParcelableColorSpace colorSpace =
-                new ParcelableColorSpace(screenshotBuffer.getColorSpace());
+        if (deleteCaptureDisplay()) {
+            mMainHandler.post(PooledLambda.obtainRunnable((nonArg) -> {
+                final HardwareBuffer hardwareBuffer = screenshotBuffer.getHardwareBuffer();
+                final ParcelableColorSpace colorSpace =
+                        new ParcelableColorSpace(screenshotBuffer.getColorSpace());
 
-        final Bundle payload = new Bundle();
-        payload.putInt(KEY_ACCESSIBILITY_SCREENSHOT_STATUS,
-                AccessibilityService.TAKE_SCREENSHOT_SUCCESS);
-        payload.putParcelable(KEY_ACCESSIBILITY_SCREENSHOT_HARDWAREBUFFER,
-                hardwareBuffer);
-        payload.putParcelable(KEY_ACCESSIBILITY_SCREENSHOT_COLORSPACE, colorSpace);
-        payload.putLong(KEY_ACCESSIBILITY_SCREENSHOT_TIMESTAMP,
-                SystemClock.uptimeMillis());
+                final Bundle payload = new Bundle();
+                payload.putInt(KEY_ACCESSIBILITY_SCREENSHOT_STATUS,
+                        AccessibilityService.TAKE_SCREENSHOT_SUCCESS);
+                payload.putParcelable(KEY_ACCESSIBILITY_SCREENSHOT_HARDWAREBUFFER,
+                        hardwareBuffer);
+                payload.putParcelable(KEY_ACCESSIBILITY_SCREENSHOT_COLORSPACE, colorSpace);
+                payload.putLong(KEY_ACCESSIBILITY_SCREENSHOT_TIMESTAMP,
+                        SystemClock.uptimeMillis());
 
-        // Send back the result.
-        callback.sendResult(payload);
-        hardwareBuffer.close();
+                // Send back the result.
+                callback.sendResult(payload);
+                hardwareBuffer.close();
+            }, null).recycleOnUse());
+        } else {
+            final HardwareBuffer hardwareBuffer = screenshotBuffer.getHardwareBuffer();
+            final ParcelableColorSpace colorSpace =
+                    new ParcelableColorSpace(screenshotBuffer.getColorSpace());
+
+            final Bundle payload = new Bundle();
+            payload.putInt(KEY_ACCESSIBILITY_SCREENSHOT_STATUS,
+                    AccessibilityService.TAKE_SCREENSHOT_SUCCESS);
+            payload.putParcelable(KEY_ACCESSIBILITY_SCREENSHOT_HARDWAREBUFFER,
+                    hardwareBuffer);
+            payload.putParcelable(KEY_ACCESSIBILITY_SCREENSHOT_COLORSPACE, colorSpace);
+            payload.putLong(KEY_ACCESSIBILITY_SCREENSHOT_TIMESTAMP,
+                    SystemClock.uptimeMillis());
+
+            // Send back the result.
+            callback.sendResult(payload);
+            hardwareBuffer.close();
+        }
     }
 
     private void sendScreenshotFailure(@AccessibilityService.ScreenshotErrorCode int errorCode,
@@ -1553,6 +1613,9 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         for (int i = 0; i < displays.length; i++) {
             final int displayId = displays[i].getDisplayId();
             onDisplayRemoved(displayId);
+        }
+        if (com.android.server.accessibility.Flags.cleanupA11yOverlays()) {
+            detachAllOverlays();
         }
     }
 
@@ -1800,8 +1863,14 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
     }
 
     public void notifyGesture(AccessibilityGestureEvent gestureEvent) {
-        mInvocationHandler.obtainMessage(InvocationHandler.MSG_ON_GESTURE,
-                gestureEvent).sendToTarget();
+        if (android.view.accessibility.Flags.copyEventsForGestureDetection()) {
+            // We will use this event async, so copy it because it contains MotionEvents.
+            mInvocationHandler.obtainMessage(InvocationHandler.MSG_ON_GESTURE,
+                    gestureEvent.copyForAsync()).sendToTarget();
+        } else {
+            mInvocationHandler.obtainMessage(InvocationHandler.MSG_ON_GESTURE,
+                    gestureEvent).sendToTarget();
+        }
     }
 
     public void notifySystemActionsChangedLocked() {
@@ -1864,6 +1933,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         final int eventSourceWithoutClass = event.getSource() & ~InputDevice.SOURCE_CLASS_MASK;
         return (mGenericMotionEventSources & eventSourceWithoutClass) != 0;
     }
+
 
     /**
      * Called by the invocation handler to notify the service that the
@@ -1987,20 +2057,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         }
     }
 
-    private void createImeSessionInternal() {
-        final IAccessibilityServiceClient listener = getServiceInterfaceSafely();
-        if (listener != null) {
-            try {
-                if (svcClientTracingEnabled()) {
-                    logTraceSvcClient("createImeSession", "");
-                }
-                AccessibilityCallback callback = new AccessibilityCallback();
-                listener.createImeSession(callback);
-            } catch (RemoteException re) {
-                Slog.e(LOG_TAG,
-                        "Error requesting IME session from " + mService, re);
-            }
-        }
+    protected void createImeSessionInternal() {
     }
 
     private void setImeSessionEnabledInternal(IAccessibilityInputMethodSession session,
@@ -2288,9 +2345,13 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
             final int type = message.what;
             switch (type) {
                 case MSG_ON_GESTURE: {
-                    notifyGestureInternal((AccessibilityGestureEvent) message.obj);
+                    if (message.obj instanceof AccessibilityGestureEvent gesture) {
+                        notifyGestureInternal(gesture);
+                        if (android.view.accessibility.Flags.copyEventsForGestureDetection()) {
+                            gesture.recycle();
+                        }
+                    }
                 } break;
-
                 case MSG_CLEAR_ACCESSIBILITY_CACHE: {
                     notifyClearAccessibilityCacheInternal();
                 } break;
@@ -2652,21 +2713,6 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         }
     }
 
-    private static final class AccessibilityCallback
-            extends IAccessibilityInputMethodSessionCallback.Stub {
-        @Override
-        public void sessionCreated(IAccessibilityInputMethodSession session, int id) {
-            Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "AACS.sessionCreated");
-            final long ident = Binder.clearCallingIdentity();
-            try {
-                InputMethodManagerInternal.get().onSessionForAccessibilityCreated(id, session);
-            } finally {
-                Binder.restoreCallingIdentity(ident);
-            }
-            Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
-        }
-    }
-
     @Override
     public void attachAccessibilityOverlayToDisplay(
             int interactionId,
@@ -2677,6 +2723,7 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
         try {
             mSystemSupport.attachAccessibilityOverlayToDisplay(
                     interactionId, displayId, sc, callback);
+            mOverlays.add(sc);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -2707,10 +2754,23 @@ abstract class AbstractAccessibilityServiceConnection extends IAccessibilityServ
                 connection
                         .getRemote()
                         .attachAccessibilityOverlayToWindow(sc, interactionId, callback);
+                mOverlays.add(sc);
             }
 
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    protected void detachAllOverlays() {
+        SurfaceControl.Transaction t = new SurfaceControl.Transaction();
+        for (SurfaceControl sc : mOverlays) {
+            if (sc.isValid()) {
+                t.reparent(sc, null);
+            }
+        }
+        t.apply();
+        t.close();
+        mOverlays.clear();
     }
 }

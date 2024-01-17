@@ -18,17 +18,17 @@ package com.android.server.wm;
 
 import static android.Manifest.permission.CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS;
 import static android.app.Activity.FULLSCREEN_MODE_REQUEST_ENTER;
+import static android.app.Activity.FULLSCREEN_MODE_REQUEST_EXIT;
 import static android.app.ActivityOptions.ANIM_SCENE_TRANSITION;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.ActivityTaskManager.INVALID_WINDOWING_MODE;
 import static android.app.FullscreenRequestHandler.REMOTE_CALLBACK_RESULT_KEY;
 import static android.app.FullscreenRequestHandler.RESULT_APPROVED;
-import static android.app.FullscreenRequestHandler.RESULT_FAILED_NOT_DEFAULT_FREEFORM;
-import static android.app.FullscreenRequestHandler.RESULT_FAILED_NOT_IN_FREEFORM;
 import static android.app.FullscreenRequestHandler.RESULT_FAILED_NOT_IN_FULLSCREEN_WITH_HISTORY;
 import static android.app.FullscreenRequestHandler.RESULT_FAILED_NOT_TOP_FOCUSED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.os.Process.INVALID_UID;
 import static android.os.Process.SYSTEM_UID;
@@ -55,6 +55,7 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLAS
 import static com.android.server.wm.ActivityTaskManagerService.RELAUNCH_REASON_NONE;
 import static com.android.server.wm.ActivityTaskManagerService.TAG_SWITCH;
 import static com.android.server.wm.ActivityTaskManagerService.enforceNotIsolatedCaller;
+import static com.android.window.flags.Flags.allowDisableActivityRecordInputSink;
 
 import android.Manifest;
 import android.annotation.ColorInt;
@@ -71,7 +72,6 @@ import android.app.RemoteTaskConstants;
 import android.app.PictureInPictureParams;
 import android.app.PictureInPictureUiState;
 import android.app.compat.CompatChanges;
-import android.app.servertransaction.ClientTransaction;
 import android.app.servertransaction.EnterPipRequestedItem;
 import android.app.servertransaction.PipStateTransactionItem;
 import android.compat.annotation.ChangeId;
@@ -1033,9 +1033,8 @@ class ActivityClientController extends IActivityClientController.Stub {
         }
 
         try {
-            final ClientTransaction transaction = ClientTransaction.obtain(r.app.getThread());
-            transaction.addCallback(EnterPipRequestedItem.obtain(r.token));
-            mService.getLifecycleManager().scheduleTransaction(transaction);
+            mService.getLifecycleManager().scheduleTransactionItem(r.app.getThread(),
+                    EnterPipRequestedItem.obtain(r.token));
             return true;
         } catch (Exception e) {
             Slog.w(TAG, "Failed to send enter pip requested item: "
@@ -1054,9 +1053,8 @@ class ActivityClientController extends IActivityClientController.Stub {
         }
 
         try {
-            final ClientTransaction transaction = ClientTransaction.obtain(r.app.getThread());
-            transaction.addCallback(PipStateTransactionItem.obtain(r.token, pipState));
-            mService.getLifecycleManager().scheduleTransaction(transaction);
+            mService.getLifecycleManager().scheduleTransactionItem(r.app.getThread(),
+                    PipStateTransactionItem.obtain(r.token, pipState));
         } catch (Exception e) {
             Slog.w(TAG, "Failed to send pip state transaction item: "
                     + r.intent.getComponent(), e);
@@ -1109,19 +1107,14 @@ class ActivityClientController extends IActivityClientController.Stub {
 
     private @FullscreenRequestHandler.RequestResult int validateMultiwindowFullscreenRequestLocked(
             Task topFocusedRootTask, int fullscreenRequest, ActivityRecord requesterActivity) {
-        // If the mode is not by default freeform, the freeform will be a user-driven event.
-        if (topFocusedRootTask.getParent().getWindowingMode() != WINDOWING_MODE_FREEFORM) {
-            return RESULT_FAILED_NOT_DEFAULT_FREEFORM;
+        if (requesterActivity.getWindowingMode() == WINDOWING_MODE_PINNED) {
+            return RESULT_APPROVED;
         }
         // If this is not coming from the currently top-most activity, reject the request.
         if (requesterActivity != topFocusedRootTask.getTopMostActivity()) {
             return RESULT_FAILED_NOT_TOP_FOCUSED;
         }
-        if (fullscreenRequest == FULLSCREEN_MODE_REQUEST_ENTER) {
-            if (topFocusedRootTask.getWindowingMode() != WINDOWING_MODE_FREEFORM) {
-                return RESULT_FAILED_NOT_IN_FREEFORM;
-            }
-        } else {
+        if (fullscreenRequest == FULLSCREEN_MODE_REQUEST_EXIT) {
             if (topFocusedRootTask.getWindowingMode() != WINDOWING_MODE_FULLSCREEN) {
                 return RESULT_FAILED_NOT_IN_FULLSCREEN_WITH_HISTORY;
             }
@@ -1600,7 +1593,7 @@ class ActivityClientController extends IActivityClientController.Stub {
      * the Activities in the Task should be finished when it finishes. Otherwise, return {@code
      * false}.
      */
-    private boolean isRelativeTaskRootActivity(ActivityRecord r, ActivityRecord taskRoot) {
+    private static boolean isRelativeTaskRootActivity(ActivityRecord r, ActivityRecord taskRoot) {
         // Not a relative root if the given Activity is not the root Activity of its TaskFragment.
         final TaskFragment taskFragment = r.getTaskFragment();
         if (r != taskFragment.getActivity(ar -> !ar.finishing || ar == r,
@@ -1613,7 +1606,7 @@ class ActivityClientController extends IActivityClientController.Stub {
         return taskRoot.getTaskFragment().getCompanionTaskFragment() == taskFragment;
     }
 
-    private boolean isTopActivityInTaskFragment(ActivityRecord activity) {
+    private static boolean isTopActivityInTaskFragment(ActivityRecord activity) {
         return activity.getTaskFragment().topRunningActivity() == activity;
     }
 
@@ -1629,9 +1622,6 @@ class ActivityClientController extends IActivityClientController.Stub {
     public void onBackPressed(IBinder token, IRequestFinishCallback callback) {
         final long origId = Binder.clearCallingIdentity();
         try {
-            final Intent baseActivityIntent;
-            final boolean launchedFromHome;
-            final boolean isLastRunningActivity;
             synchronized (mGlobalLock) {
                 final ActivityRecord r = ActivityRecord.isInRootTaskLocked(token);
                 if (r == null) return;
@@ -1639,39 +1629,16 @@ class ActivityClientController extends IActivityClientController.Stub {
                 final Task task = r.getTask();
                 final ActivityRecord root = task.getRootActivity(false /*ignoreRelinquishIdentity*/,
                         true /*setToBottomIfNone*/);
-                final boolean isTaskRoot = r == root;
-                if (isTaskRoot) {
-                    if (mService.mWindowOrganizerController.mTaskOrganizerController
+                if (r == root && mService.mWindowOrganizerController.mTaskOrganizerController
                         .handleInterceptBackPressedOnTaskRoot(r.getRootTask())) {
-                        // This task is handled by a task organizer that has requested the back
-                        // pressed callback.
-                        return;
-                    }
-                } else if (!isRelativeTaskRootActivity(r, root)) {
-                    // Finish the Activity if the activity is not the task root or relative root.
-                    requestCallbackFinish(callback);
+                    // This task is handled by a task organizer that has requested the back
+                    // pressed callback.
                     return;
                 }
-
-                isLastRunningActivity = isTopActivityInTaskFragment(isTaskRoot ? root : r);
-
-                final boolean isBaseActivity = root.mActivityComponent.equals(task.realActivity);
-                baseActivityIntent = isBaseActivity ? root.intent : null;
-
-                launchedFromHome = root.isLaunchSourceType(ActivityRecord.LAUNCH_SOURCE_TYPE_HOME);
-            }
-
-            // If the activity was launched directly from the home screen, then we should
-            // refrain from finishing the activity and instead move it to the back to keep it in
-            // memory. The requirements for this are:
-            //   1. The activity is the last running activity in the task.
-            //   2. The current activity is the base activity for the task.
-            //   3. The activity was launched by the home process, and is one of the main entry
-            //      points for the application.
-            if (baseActivityIntent != null && isLastRunningActivity
-                    && launchedFromHome && ActivityRecord.isMainIntent(baseActivityIntent)) {
-                moveActivityTaskToBack(token, true /* nonRoot */);
-                return;
+                if (shouldMoveTaskToBack(r, root)) {
+                    moveActivityTaskToBack(token, true /* nonRoot */);
+                    return;
+                }
             }
 
             // The default option for handling the back button is to finish the Activity.
@@ -1679,6 +1646,27 @@ class ActivityClientController extends IActivityClientController.Stub {
         } finally {
             Binder.restoreCallingIdentity(origId);
         }
+    }
+
+    static boolean shouldMoveTaskToBack(ActivityRecord r, ActivityRecord rootActivity) {
+        if (r != rootActivity && !isRelativeTaskRootActivity(r, rootActivity)) {
+            return false;
+        }
+        final boolean isBaseActivity = rootActivity.mActivityComponent.equals(
+                r.getTask().realActivity);
+        final Intent baseActivityIntent = isBaseActivity ? rootActivity.intent : null;
+
+        // If the activity was launched directly from the home screen, then we should
+        // refrain from finishing the activity and instead move it to the back to keep it in
+        // memory. The requirements for this are:
+        //   1. The activity is the last running activity in the task.
+        //   2. The current activity is the base activity for the task.
+        //   3. The activity was launched by the home process, and is one of the main entry
+        //      points for the application.
+        return baseActivityIntent != null
+                && isTopActivityInTaskFragment(r)
+                && rootActivity.isLaunchSourceType(ActivityRecord.LAUNCH_SOURCE_TYPE_HOME)
+                && ActivityRecord.isMainIntent(baseActivityIntent);
     }
 
     @Override
@@ -1709,6 +1697,22 @@ class ActivityClientController extends IActivityClientController.Stub {
             if (r == null) return false;
 
             return r.mRequestedLaunchingTaskFragmentToken == taskFragmentToken;
+        }
+    }
+
+    @Override
+    public void setActivityRecordInputSinkEnabled(IBinder activityToken, boolean enabled) {
+        if (!allowDisableActivityRecordInputSink()) {
+            return;
+        }
+
+        mService.mAmInternal.enforceCallingPermission(
+                Manifest.permission.INTERNAL_SYSTEM_WINDOW, "setActivityRecordInputSinkEnabled");
+        synchronized (mGlobalLock) {
+            final ActivityRecord r = ActivityRecord.forTokenLocked(activityToken);
+            if (r != null) {
+                r.mActivityRecordInputSinkEnabled = enabled;
+            }
         }
     }
 }

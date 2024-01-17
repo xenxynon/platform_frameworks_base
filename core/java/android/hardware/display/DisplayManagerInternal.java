@@ -715,14 +715,42 @@ public abstract class DisplayManagerInternal {
         boolean startOffload();
 
         void stopOffload();
+
+        /**
+         * Called when {@link DisplayOffloadSession} tries to block screen turning on.
+         *
+         * @param unblocker a {@link Runnable} executed upon all work required before screen turning
+         *                  on is done.
+         */
+        void onBlockingScreenOn(Runnable unblocker);
     }
 
     /** A session token that associates a internal display with a {@link DisplayOffloader}. */
     public interface DisplayOffloadSession {
         /** Provide the display state to use in place of state DOZE. */
         void setDozeStateOverride(int displayState);
-        /** Returns the associated DisplayOffloader. */
-        DisplayOffloader getDisplayOffloader();
+
+        /** Whether the session is active. */
+        boolean isActive();
+
+        /**
+         * Update the brightness from the offload chip.
+         * @param brightness The brightness value between {@link PowerManager.BRIGHTNESS_MIN} and
+         *                   {@link PowerManager.BRIGHTNESS_MAX}, or
+         *                   {@link PowerManager.BRIGHTNESS_INVALID_FLOAT} which removes
+         *                   the brightness from offload. Other values will be ignored.
+         */
+        void updateBrightness(float brightness);
+
+        /**
+         * Called while display is turning to state ON to leave a small period for displayoffload
+         * session to finish some work.
+         *
+         * @param unblocker a {@link Runnable} used by displayoffload session to notify
+         *                  {@link DisplayManager} that it can continue turning screen on.
+         */
+        boolean blockScreenOn(Runnable unblocker);
+
         /** Returns whether displayoffload supports the given display state. */
         static boolean isSupportedOffloadState(int displayState) {
             return Display.isSuspendedState(displayState);

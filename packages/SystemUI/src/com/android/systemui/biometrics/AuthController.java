@@ -70,6 +70,7 @@ import com.android.systemui.CoreStartable;
 import com.android.systemui.biometrics.domain.interactor.LogContextInteractor;
 import com.android.systemui.biometrics.domain.interactor.PromptCredentialInteractor;
 import com.android.systemui.biometrics.domain.interactor.PromptSelectorInteractor;
+import com.android.systemui.biometrics.shared.SideFpsControllerRefactor;
 import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams;
 import com.android.systemui.biometrics.ui.viewmodel.CredentialViewModel;
 import com.android.systemui.biometrics.ui.viewmodel.PromptViewModel;
@@ -78,13 +79,17 @@ import com.android.systemui.dagger.qualifiers.Application;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.doze.DozeReceiver;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.keyguard.data.repository.BiometricType;
+import com.android.systemui.log.core.LogLevel;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 import com.android.systemui.util.concurrency.Execution;
+
+import dagger.Lazy;
+
+import kotlin.Unit;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -98,8 +103,6 @@ import java.util.Set;
 
 import javax.inject.Inject;
 import javax.inject.Provider;
-
-import kotlin.Unit;
 
 import kotlinx.coroutines.CoroutineScope;
 
@@ -120,7 +123,6 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
 
     private final Handler mHandler;
     private final Context mContext;
-    private final FeatureFlags mFeatureFlags;
     private final Execution mExecution;
     private final CommandQueue mCommandQueue;
     private final ActivityTaskManager mActivityTaskManager;
@@ -135,7 +137,7 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
     @NonNull private final Provider<PromptSelectorInteractor> mPromptSelectorInteractor;
     @NonNull private final Provider<CredentialViewModel> mCredentialViewModelProvider;
     @NonNull private final Provider<PromptViewModel> mPromptViewModelProvider;
-    @NonNull private final LogContextInteractor mLogContextInteractor;
+    @NonNull private final Lazy<LogContextInteractor> mLogContextInteractor;
 
     private final Display mDisplay;
     private float mScaleFactor = 1f;
@@ -158,7 +160,7 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
     @Nullable private UdfpsOverlayParams mUdfpsOverlayParams;
     @Nullable private IUdfpsRefreshRateRequestCallback mUdfpsRefreshRateRequestCallback;
     @Nullable private SideFpsController mSideFpsController;
-    @Nullable private UdfpsLogger mUdfpsLogger;
+    @NonNull private Lazy<UdfpsLogger> mUdfpsLogger;
     @VisibleForTesting IBiometricSysuiReceiver mReceiver;
     @VisibleForTesting @NonNull final BiometricDisplayListener mOrientationListener;
     @Nullable private final List<FaceSensorPropertiesInternal> mFaceProps;
@@ -311,13 +313,15 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
             });
             mUdfpsController.setAuthControllerUpdateUdfpsLocation(this::updateUdfpsLocation);
             mUdfpsController.setUdfpsDisplayMode(new UdfpsDisplayMode(mContext, mExecution,
-                    this, mUdfpsLogger));
+                    this, mUdfpsLogger.get()));
             mUdfpsBounds = mUdfpsProps.get(0).getLocation().getRect();
         }
 
         mSidefpsProps = !sidefpsProps.isEmpty() ? sidefpsProps : null;
         if (mSidefpsProps != null) {
-            mSideFpsController = mSidefpsControllerFactory.get();
+            if (!SideFpsControllerRefactor.isEnabled()) {
+                mSideFpsController = mSidefpsControllerFactory.get();
+            }
         }
 
         mFingerprintManager.registerBiometricStateListener(new BiometricStateListener() {
@@ -743,7 +747,6 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
     }
     @Inject
     public AuthController(Context context,
-            @NonNull FeatureFlags featureFlags,
             @Application CoroutineScope applicationCoroutineScope,
             Execution execution,
             CommandQueue commandQueue,
@@ -758,8 +761,8 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
             @NonNull AuthDialogPanelInteractionDetector panelInteractionDetector,
             @NonNull UserManager userManager,
             @NonNull LockPatternUtils lockPatternUtils,
-            @NonNull UdfpsLogger udfpsLogger,
-            @NonNull LogContextInteractor logContextInteractor,
+            @NonNull Lazy<UdfpsLogger> udfpsLogger,
+            @NonNull Lazy<LogContextInteractor> logContextInteractor,
             @NonNull Provider<PromptCredentialInteractor> promptCredentialInteractorProvider,
             @NonNull Provider<PromptSelectorInteractor> promptSelectorInteractorProvider,
             @NonNull Provider<CredentialViewModel> credentialViewModelProvider,
@@ -770,7 +773,6 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
             @NonNull UdfpsUtils udfpsUtils,
             @NonNull VibratorHelper vibratorHelper) {
         mContext = context;
-        mFeatureFlags = featureFlags;
         mExecution = execution;
         mUserManager = userManager;
         mLockPatternUtils = lockPatternUtils;
@@ -907,7 +909,7 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
 
     @Override
     public void setBiometricContextListener(IBiometricContextListener listener) {
-        mLogContextInteractor.addBiometricContextListener(listener);
+        mLogContextInteractor.get().addBiometricContextListener(listener);
     }
 
     /**
@@ -928,6 +930,23 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
      */
     @Nullable public IUdfpsRefreshRateRequestCallback getUdfpsRefreshRateCallback() {
         return mUdfpsRefreshRateRequestCallback;
+    }
+
+    /**
+     * Requests (or stops requesting) the max refresh rate. This can override user settings
+     * for the max refresh rate.
+     */
+    public void requestMaxRefreshRate(boolean request) throws RemoteException {
+        if (mUdfpsRefreshRateRequestCallback == null) {
+            mUdfpsLogger.get().log(
+                    "PreAuthRefreshRate",
+                    "skip request - refreshRateCallback is null",
+                    LogLevel.DEBUG
+            );
+            return;
+        }
+        mUdfpsLogger.get().requestMaxRefreshRate(request);
+        mUdfpsRefreshRateRequestCallback.onAuthenticationPossible(mContext.getDisplayId(), request);
     }
 
     @Override
@@ -1085,6 +1104,7 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
         // TODO(b/141025588): Create separate methods for handling hard and soft errors.
         final boolean isSoftError = (error == BiometricConstants.BIOMETRIC_PAUSED_REJECTED
                 || error == BiometricConstants.BIOMETRIC_ERROR_TIMEOUT
+                || error == BiometricConstants.BIOMETRIC_ERROR_RE_ENROLL
                 || isCameraPrivacyEnabled);
         if (mCurrentDialog != null) {
             if (mCurrentDialog.isAllowDeviceCredentials() && isLockout) {
@@ -1178,7 +1198,7 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
      * Whether the passed userId has enrolled SFPS.
      */
     public boolean isSfpsEnrolled(int userId) {
-        if (mSideFpsController == null) {
+        if (mSidefpsProps == null) {
             return false;
         }
 
@@ -1316,7 +1336,7 @@ public class AuthController implements CoreStartable, CommandQueue.Callbacks,
         config.mRequestId = requestId;
         config.mSensorIds = sensorIds;
         config.mScaleProvider = this::getScaleFactor;
-        return new AuthContainerView(config, mFeatureFlags, mApplicationCoroutineScope, mFpProps, mFaceProps,
+        return new AuthContainerView(config, mApplicationCoroutineScope, mFpProps, mFaceProps,
                 wakefulnessLifecycle, panelInteractionDetector, userManager, lockPatternUtils,
                 mInteractionJankMonitor, mPromptCredentialInteractor, mPromptSelectorInteractor,
                 viewModel, mCredentialViewModelProvider, bgExecutor, mVibratorHelper);

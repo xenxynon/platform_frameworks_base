@@ -70,6 +70,7 @@ import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.IActivityManager;
 import android.app.admin.DevicePolicyManagerInternal;
+import android.companion.virtual.VirtualDeviceManager;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
 import android.content.Context;
@@ -119,6 +120,11 @@ import com.android.internal.compat.IPlatformCompat;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto;
 import com.android.internal.os.RoSystemProperties;
+import com.android.internal.pm.permission.CompatibilityPermissionInfo;
+import com.android.internal.pm.pkg.component.ComponentMutateUtils;
+import com.android.internal.pm.pkg.component.ParsedPermission;
+import com.android.internal.pm.pkg.component.ParsedPermissionGroup;
+import com.android.internal.pm.pkg.component.ParsedPermissionUtils;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.IntPair;
@@ -141,10 +147,6 @@ import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageState;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.SharedUserApi;
-import com.android.server.pm.pkg.component.ComponentMutateUtils;
-import com.android.server.pm.pkg.component.ParsedPermission;
-import com.android.server.pm.pkg.component.ParsedPermissionGroup;
-import com.android.server.pm.pkg.component.ParsedPermissionUtils;
 import com.android.server.policy.PermissionPolicyInternal;
 import com.android.server.policy.SoftRestrictedPermissionPolicy;
 
@@ -3289,7 +3291,7 @@ public class PermissionManagerServiceImpl implements PermissionManagerServiceInt
         final PermissionAllowlist permissionAllowlist =
                 SystemConfig.getInstance().getPermissionAllowlist();
         final String packageName = packageState.getPackageName();
-        if (packageState.isVendor()) {
+        if (packageState.isVendor() || packageState.isOdm()) {
             return permissionAllowlist.getVendorPrivilegedAppAllowlistState(packageName,
                     permissionName);
         } else if (packageState.isProduct()) {
@@ -3384,7 +3386,7 @@ public class PermissionManagerServiceImpl implements PermissionManagerServiceInt
             // the permission's protectionLevel does not have the extra 'vendorPrivileged'
             // flag.
             if (allowed && isPrivilegedPermission && !bp.isVendorPrivileged()
-                    && pkgSetting.isVendor()) {
+                    && (pkgSetting.isVendor() || pkgSetting.isOdm())) {
                 Slog.w(TAG, "Permission " + permissionName
                         + " cannot be granted to privileged vendor apk " + pkg.getPackageName()
                         + " because it isn't a 'vendorPrivileged' permission.");
@@ -5327,7 +5329,8 @@ public class PermissionManagerServiceImpl implements PermissionManagerServiceInt
                     IOnPermissionsChangeListener callback = mPermissionListeners
                             .getBroadcastItem(i);
                     try {
-                        callback.onPermissionsChanged(uid);
+                        callback.onPermissionsChanged(uid,
+                                VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT);
                     } catch (RemoteException e) {
                         Log.e(TAG, "Permission listener is dead", e);
                     }

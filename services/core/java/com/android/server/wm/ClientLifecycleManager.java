@@ -22,7 +22,13 @@ import android.app.servertransaction.ActivityLifecycleItem;
 import android.app.servertransaction.ClientTransaction;
 import android.app.servertransaction.ClientTransactionItem;
 import android.os.Binder;
+import android.os.IBinder;
 import android.os.RemoteException;
+import android.util.ArrayMap;
+import android.util.Slog;
+
+import com.android.internal.annotations.VisibleForTesting;
+import com.android.window.flags.Flags;
 
 /**
  * Class that is able to combine multiple client lifecycle transition requests and/or callbacks,
@@ -31,8 +37,18 @@ import android.os.RemoteException;
  * @see ClientTransaction
  */
 class ClientLifecycleManager {
-    // TODO(lifecycler): Implement building transactions or global transaction.
-    // TODO(lifecycler): Use object pools for transactions and transaction items.
+
+    private static final String TAG = "ClientLifecycleManager";
+
+    /** Mapping from client process binder to its pending transaction. */
+    @VisibleForTesting
+    final ArrayMap<IBinder, ClientTransaction> mPendingTransactions = new ArrayMap<>();
+
+    private WindowManagerService mWms;
+
+    void setWindowManager(@NonNull WindowManagerService wms) {
+        mWms = wms;
+    }
 
     /**
      * Schedules a transaction, which may consist of multiple callbacks and a lifecycle request.
@@ -40,35 +56,162 @@ class ClientLifecycleManager {
      * @throws RemoteException
      *
      * @see ClientTransaction
+     * @deprecated use {@link #scheduleTransactionItem(IApplicationThread, ClientTransactionItem)}.
      */
+    @Deprecated
     void scheduleTransaction(@NonNull ClientTransaction transaction) throws RemoteException {
         final IApplicationThread client = transaction.getClient();
-        transaction.schedule();
-        if (!(client instanceof Binder)) {
-            // If client is not an instance of Binder - it's a remote call and at this point it is
-            // safe to recycle the object. All objects used for local calls will be recycled after
-            // the transaction is executed on client in ActivityThread.
-            transaction.recycle();
+        try {
+            transaction.schedule();
+        } finally {
+            if (!(client instanceof Binder)) {
+                // If client is not an instance of Binder - it's a remote call and at this point it
+                // is safe to recycle the object. All objects used for local calls will be recycled
+                // after the transaction is executed on client in ActivityThread.
+                transaction.recycle();
+            }
         }
     }
 
     /**
-     * Schedules a single transaction item, either a callback or a lifecycle request, delivery to
-     * client application.
-     * @param client Target client.
-     * @param transactionItem A transaction item to deliver a message.
-     * @throws RemoteException
+     * Similar to {@link #scheduleTransactionItem}, but is called without WM lock.
      *
-     * @see ClientTransactionItem
+     * @see WindowProcessController#setReportedProcState(int)
      */
-    void scheduleTransaction(@NonNull IApplicationThread client,
+    void scheduleTransactionItemUnlocked(@NonNull IApplicationThread client,
             @NonNull ClientTransactionItem transactionItem) throws RemoteException {
+        // Immediately dispatching to client, and must not access WMS.
         final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
-        if (transactionItem instanceof ActivityLifecycleItem) {
+        if (transactionItem.isActivityLifecycleItem()) {
             clientTransaction.setLifecycleStateRequest((ActivityLifecycleItem) transactionItem);
         } else {
             clientTransaction.addCallback(transactionItem);
         }
         scheduleTransaction(clientTransaction);
+    }
+
+    /**
+     * Schedules a single transaction item, either a callback or a lifecycle request, delivery to
+     * client application.
+     * @throws RemoteException
+     * @see ClientTransactionItem
+     */
+    void scheduleTransactionItem(@NonNull IApplicationThread client,
+            @NonNull ClientTransactionItem transactionItem) throws RemoteException {
+        // The behavior is different depending on the flag.
+        // When flag is on, we wait until RootWindowContainer#performSurfacePlacementNoTrace to
+        // dispatch all pending transactions at once.
+        if (Flags.bundleClientTransactionFlag()) {
+            final ClientTransaction clientTransaction = getOrCreatePendingTransaction(client);
+            clientTransaction.addTransactionItem(transactionItem);
+
+            onClientTransactionItemScheduled(clientTransaction);
+        } else {
+            // TODO(b/260873529): cleanup after launch.
+            final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
+            if (transactionItem.isActivityLifecycleItem()) {
+                clientTransaction.setLifecycleStateRequest((ActivityLifecycleItem) transactionItem);
+            } else {
+                clientTransaction.addCallback(transactionItem);
+            }
+            scheduleTransaction(clientTransaction);
+        }
+    }
+
+    /**
+     * Schedules a single transaction item with a lifecycle request, delivery to client application.
+     * @throws RemoteException
+     * @see ClientTransactionItem
+     */
+    void scheduleTransactionAndLifecycleItems(@NonNull IApplicationThread client,
+            @NonNull ClientTransactionItem transactionItem,
+            @NonNull ActivityLifecycleItem lifecycleItem) throws RemoteException {
+        // The behavior is different depending on the flag.
+        // When flag is on, we wait until RootWindowContainer#performSurfacePlacementNoTrace to
+        // dispatch all pending transactions at once.
+        if (Flags.bundleClientTransactionFlag()) {
+            final ClientTransaction clientTransaction = getOrCreatePendingTransaction(client);
+            clientTransaction.addTransactionItem(transactionItem);
+            clientTransaction.addTransactionItem(lifecycleItem);
+
+            onClientTransactionItemScheduled(clientTransaction);
+        } else {
+            // TODO(b/260873529): cleanup after launch.
+            final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
+            clientTransaction.addCallback(transactionItem);
+            clientTransaction.setLifecycleStateRequest(lifecycleItem);
+            scheduleTransaction(clientTransaction);
+        }
+    }
+
+    /** Executes all the pending transactions. */
+    void dispatchPendingTransactions() {
+        if (!Flags.bundleClientTransactionFlag()) {
+            return;
+        }
+        final int size = mPendingTransactions.size();
+        for (int i = 0; i < size; i++) {
+            final ClientTransaction transaction = mPendingTransactions.valueAt(i);
+            try {
+                scheduleTransaction(transaction);
+            } catch (RemoteException e) {
+                Slog.e(TAG, "Failed to deliver transaction for " + transaction.getClient());
+            }
+        }
+        mPendingTransactions.clear();
+    }
+
+    /**
+     * Called to when {@link WindowSurfacePlacer#continueLayout}.
+     * Dispatches all pending transactions unless there is an ongoing/scheduled layout, in which
+     * case the pending transactions will be dispatched in
+     * {@link RootWindowContainer#performSurfacePlacementNoTrace}.
+     */
+    void onLayoutContinued() {
+        if (shouldDispatchPendingTransactionsImmediately()) {
+            // Dispatch the pending transactions immediately if there is no ongoing/scheduled layout
+            dispatchPendingTransactions();
+        }
+    }
+
+    /** Must only be called with WM lock. */
+    @NonNull
+    private ClientTransaction getOrCreatePendingTransaction(@NonNull IApplicationThread client) {
+        final IBinder clientBinder = client.asBinder();
+        final ClientTransaction pendingTransaction = mPendingTransactions.get(clientBinder);
+        if (pendingTransaction != null) {
+            return pendingTransaction;
+        }
+
+        // Create new transaction if there is no existing.
+        final ClientTransaction transaction = ClientTransaction.obtain(client);
+        mPendingTransactions.put(clientBinder, transaction);
+        return transaction;
+    }
+
+    /** Must only be called with WM lock. */
+    private void onClientTransactionItemScheduled(
+            @NonNull ClientTransaction clientTransaction) throws RemoteException {
+        if (shouldDispatchPendingTransactionsImmediately()) {
+            // Dispatch the pending transaction immediately.
+            mPendingTransactions.remove(clientTransaction.getClient().asBinder());
+            scheduleTransaction(clientTransaction);
+        }
+    }
+
+    /** Must only be called with WM lock. */
+    private boolean shouldDispatchPendingTransactionsImmediately() {
+        if (mWms == null) {
+            return true;
+        }
+        // Do not dispatch when
+        // 1. Layout deferred.
+        // 2. Layout requested.
+        // 3. Layout in process.
+        // The pending transactions will be dispatched during layout in
+        // RootWindowContainer#performSurfacePlacementNoTrace.
+        return !mWms.mWindowPlacerLocked.isLayoutDeferred()
+                && !mWms.mWindowPlacerLocked.isTraversalScheduled()
+                && !mWms.mWindowPlacerLocked.isInLayout();
     }
 }

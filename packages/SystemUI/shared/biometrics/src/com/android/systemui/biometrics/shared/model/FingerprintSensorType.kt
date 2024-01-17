@@ -25,7 +25,15 @@ enum class FingerprintSensorType {
     UDFPS_ULTRASONIC,
     UDFPS_OPTICAL,
     POWER_BUTTON,
-    HOME_BUTTON
+    HOME_BUTTON;
+
+    fun isUdfps(): Boolean {
+        return (this == UDFPS_OPTICAL) || (this == UDFPS_ULTRASONIC)
+    }
+
+    fun isPowerButton(): Boolean {
+        return this == POWER_BUTTON
+    }
 }
 
 /** Convert [this] to corresponding [FingerprintSensorType] */

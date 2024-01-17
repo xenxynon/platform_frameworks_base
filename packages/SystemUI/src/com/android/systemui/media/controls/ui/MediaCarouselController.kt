@@ -34,12 +34,13 @@ import android.widget.LinearLayout
 import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.android.app.tracing.traceSection
 import com.android.internal.logging.InstanceId
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.keyguard.KeyguardUpdateMonitorCallback
 import com.android.systemui.Dumpable
-import com.android.systemui.res.R
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
@@ -57,6 +58,7 @@ import com.android.systemui.media.controls.util.SmallHash
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.qs.PageIndicator
+import com.android.systemui.res.R
 import com.android.systemui.shared.system.SysUiStatsLog
 import com.android.systemui.shared.system.SysUiStatsLog.SMARTSPACE_CARD_REPORTED
 import com.android.systemui.shared.system.SysUiStatsLog.SMART_SPACE_CARD_REPORTED__CARD_TYPE__UNKNOWN_CARD
@@ -72,10 +74,10 @@ import com.android.systemui.util.animation.requiresRemeasuring
 import com.android.systemui.util.concurrency.DelayableExecutor
 import com.android.systemui.util.settings.GlobalSettings
 import com.android.systemui.util.time.SystemClock
-import com.android.systemui.util.traceSection
 import java.io.PrintWriter
 import java.util.Locale
 import java.util.TreeMap
+import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Provider
 import kotlinx.coroutines.CoroutineScope
@@ -102,6 +104,7 @@ constructor(
     private val activityStarter: ActivityStarter,
     private val systemClock: SystemClock,
     @Main executor: DelayableExecutor,
+    @Background private val bgExecutor: Executor,
     private val mediaManager: MediaDataManager,
     configurationController: ConfigurationController,
     falsingManager: FalsingManager,
@@ -270,6 +273,10 @@ constructor(
 
     private val isReorderingAllowed: Boolean
         get() = visualStabilityProvider.isReorderingAllowed
+
+    /** Size provided by the scene framework container */
+    private var widthInSceneContainerPx = 0
+    private var heightInSceneContainerPx = 0
 
     init {
         dumpManager.registerDumpable(TAG, this)
@@ -581,6 +588,15 @@ constructor(
         }
     }
 
+    fun setSceneContainerSize(width: Int, height: Int) {
+        if (width == widthInSceneContainerPx && height == heightInSceneContainerPx) {
+            return
+        }
+        widthInSceneContainerPx = width
+        heightInSceneContainerPx = height
+        updatePlayers(recreateMedia = true)
+    }
+
     private fun reorderAllPlayers(
         previousVisiblePlayerKey: MediaPlayerData.MediaSortKey?,
         key: String? = null
@@ -638,6 +654,11 @@ constructor(
                     .elementAtOrNull(mediaCarouselScrollHandler.visibleMediaIndex)
             if (existingPlayer == null) {
                 val newPlayer = mediaControlPanelFactory.get()
+                if (mediaFlags.isSceneContainerEnabled()) {
+                    newPlayer.mediaViewController.widthInSceneContainerPx = widthInSceneContainerPx
+                    newPlayer.mediaViewController.heightInSceneContainerPx =
+                        heightInSceneContainerPx
+                }
                 newPlayer.attachPlayer(
                     MediaViewHolder.create(LayoutInflater.from(context), mediaContent)
                 )
@@ -1012,7 +1033,7 @@ constructor(
             desiredHostState?.let {
                 if (this.desiredLocation != desiredLocation) {
                     // Only log an event when location changes
-                    logger.logCarouselPosition(desiredLocation)
+                    bgExecutor.execute { logger.logCarouselPosition(desiredLocation) }
                 }
 
                 // This is a hosting view, let's remeasure our players

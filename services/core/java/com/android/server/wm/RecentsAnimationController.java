@@ -967,7 +967,8 @@ public class RecentsAnimationController implements DeathRecipient {
         // Restore IME icon only when moving the original app task to front from recents, in case
         // IME icon may missing if the moving task has already been the current focused task.
         if (reorderMode == REORDER_MOVE_TO_ORIGINAL_POSITION && !mIsAddingTaskToTargets) {
-            InputMethodManagerInternal.get().updateImeWindowStatus(false /* disableImeIcon */);
+            InputMethodManagerInternal.get().updateImeWindowStatus(
+                    false /* disableImeIcon */, mDisplayId);
         }
 
         // Update the input windows after the animation is complete
@@ -1021,7 +1022,11 @@ public class RecentsAnimationController implements DeathRecipient {
         synchronized (mService.getWindowManagerLock()) {
             // Clear associated input consumers on runner death
             final InputMonitor inputMonitor = mDisplayContent.getInputMonitor();
-            inputMonitor.destroyInputConsumer(INPUT_CONSUMER_RECENTS_ANIMATION);
+            final InputConsumerImpl consumer = inputMonitor.getInputConsumer(
+                    INPUT_CONSUMER_RECENTS_ANIMATION);
+            if (consumer != null) {
+                inputMonitor.destroyInputConsumer(consumer.mToken);
+            }
         }
     }
 

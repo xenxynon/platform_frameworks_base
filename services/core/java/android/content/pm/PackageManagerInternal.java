@@ -43,10 +43,11 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.SparseArray;
 
+import com.android.internal.pm.pkg.component.ParsedMainComponent;
 import com.android.internal.util.function.pooled.PooledLambda;
-import com.android.permission.persistence.RuntimePermissionsState;
 import com.android.server.pm.Installer.LegacyDexoptDisabledException;
 import com.android.server.pm.KnownPackages;
+import com.android.server.pm.PackageArchiver;
 import com.android.server.pm.PackageList;
 import com.android.server.pm.PackageSetting;
 import com.android.server.pm.dex.DynamicCodeLogger;
@@ -54,7 +55,6 @@ import com.android.server.pm.permission.LegacyPermissionSettings;
 import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.SharedUserApi;
-import com.android.server.pm.pkg.component.ParsedMainComponent;
 import com.android.server.pm.pkg.mutate.PackageStateMutator;
 import com.android.server.pm.snapshot.PackageDataSnapshot;
 
@@ -222,6 +222,14 @@ public abstract class PackageManagerInternal {
             int callingUid);
 
     /**
+     * Like {@link #getInstalledApplications}, but allows the fetching of apps
+     * cross user.
+     */
+    public abstract List<ApplicationInfo> getInstalledApplicationsCrossUser(
+            @PackageManager.ApplicationInfoFlagsBits long flags, @UserIdInt int userId,
+            int callingUid);
+
+    /**
      * Retrieve launcher extras for a suspended package provided to the system in
      * {@link PackageManager#setPackagesSuspended(String[], boolean, PersistableBundle,
      * PersistableBundle, String)}.
@@ -281,11 +289,11 @@ public abstract class PackageManagerInternal {
      *
      * @param suspendedPackage The package that has been suspended.
      * @param userId The user for which to check.
-     * @return Name of the package that suspended the given package. Returns {@code null} if the
-     * given package is not currently suspended and the platform package name - i.e.
-     * {@code "android"} - if the package was suspended by a device admin.
+     * @return User id and package name of the package that suspended the given package. Returns
+     * {@code null} if the given package is not currently suspended and the platform package name
+     * - i.e. {@code "android"} - if the package was suspended by a device admin.
      */
-    public abstract String getSuspendingPackage(String suspendedPackage, int userId);
+    public abstract UserPackage getSuspendingPackage(String suspendedPackage, int userId);
 
     /**
      * Suspend or unsuspend packages upon admin request.
@@ -300,25 +308,17 @@ public abstract class PackageManagerInternal {
             @UserIdInt int userId, @NonNull String[] packageNames, boolean suspended);
 
     /**
-     * Suspend or unsuspend packages in a profile when quiet mode is toggled.
-     *
-     * @param userId The target user.
-     * @param suspended Whether the packages should be suspended or unsuspended.
-     */
-    public abstract void setPackagesSuspendedForQuietMode(@UserIdInt int userId, boolean suspended);
-
-    /**
      * Get the information describing the dialog to be shown to the user when they try to launch a
      * suspended application.
      *
      * @param suspendedPackage The package that has been suspended.
-     * @param suspendingPackage
+     * @param suspendingPackage The package responsible for suspension.
      * @param userId The user for which to check.
      * @return A {@link SuspendDialogInfo} object describing the dialog to be shown.
      */
     @Nullable
     public abstract SuspendDialogInfo getSuspendedDialogInfo(String suspendedPackage,
-            String suspendingPackage, int userId);
+            UserPackage suspendingPackage, int userId);
 
     /**
      * Gets any distraction flags set via
@@ -1111,7 +1111,9 @@ public abstract class PackageManagerInternal {
      * Read legacy permission states for permissions migration to new permission subsystem.
      * Note that this api is supposed to be used for permissions state migration only.
      */
-    public abstract RuntimePermissionsState getLegacyPermissionsState(@UserIdInt int userId);
+    // TODO: restore to com.android.permission.persistence.RuntimePermissionsState
+    // once Ravenwood includes Mainline stubs
+    public abstract Object getLegacyPermissionsState(@UserIdInt int userId);
 
     /**
      * @return permissions file version for the given user.
@@ -1166,14 +1168,14 @@ public abstract class PackageManagerInternal {
     public abstract void clearBlockUninstallForUser(@UserIdInt int userId);
 
     /**
-     * Unsuspends all packages suspended by the given package for the user.
+     * Unsuspends all packages suspended by an admin for the user.
      */
-    public abstract void unsuspendForSuspendingPackage(String suspendingPackage, int userId);
+    public abstract void unsuspendAdminSuspendedPackages(int userId);
 
     /**
-     * Returns {@code true} if the package is suspending any packages for the user.
+     * Returns {@code true} if an admin is suspending any packages for the user.
      */
-    public abstract boolean isSuspendingAnyPackages(String suspendingPackage, int userId);
+    public abstract boolean isAdminSuspendingAnyPackages(int userId);
 
     /**
      * Register to listen for loading progress of an installed package.
@@ -1424,12 +1426,22 @@ public abstract class PackageManagerInternal {
 
     /**
      * Checks if package is quarantined for a specific user.
+     *
+     * @throws PackageManager.NameNotFoundException if the package is not found
      */
-    public abstract boolean isPackageQuarantined(@NonNull String packageName,
-            @UserIdInt int userId);
+    public abstract boolean isPackageQuarantined(@NonNull String packageName, @UserIdInt int userId)
+            throws PackageManager.NameNotFoundException;
 
     /**
-     * Sends the PACKAGE_RESTARTED broadcast on the package manager handler thread.
+     * Checks if package is stopped for a specific user.
+     *
+     * @throws PackageManager.NameNotFoundException if the package is not found
+     */
+    public abstract boolean isPackageStopped(@NonNull String packageName, @UserIdInt int userId)
+            throws PackageManager.NameNotFoundException;
+
+    /**
+     * Sends the PACKAGE_RESTARTED broadcast.
      */
     public abstract void sendPackageRestartedBroadcast(@NonNull String packageName,
             int uid, @Intent.Flags int flags);
@@ -1439,4 +1451,16 @@ public abstract class PackageManagerInternal {
      */
     public abstract ParceledListSlice<PackageInstaller.SessionInfo> getHistoricalSessions(
             int userId);
+
+    /**
+     * Sends the ACTION_PACKAGE_DATA_CLEARED broadcast.
+     */
+    public abstract void sendPackageDataClearedBroadcast(@NonNull String packageName,
+            int uid, int userId, boolean isRestore, boolean isInstantApp);
+
+    /**
+     * Returns an instance of {@link PackageArchiver} to be used for archiving related operations.
+     */
+    @NonNull
+    public abstract PackageArchiver getPackageArchiver();
 }

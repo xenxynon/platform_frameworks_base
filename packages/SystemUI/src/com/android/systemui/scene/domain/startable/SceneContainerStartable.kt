@@ -20,7 +20,9 @@ package com.android.systemui.scene.domain.startable
 
 import com.android.systemui.CoreStartable
 import com.android.systemui.authentication.domain.interactor.AuthenticationInteractor
-import com.android.systemui.authentication.domain.model.AuthenticationMethodModel
+import com.android.systemui.authentication.shared.model.AuthenticationMethodModel
+import com.android.systemui.bouncer.domain.interactor.BouncerInteractor
+import com.android.systemui.bouncer.domain.interactor.SimBouncerInteractor
 import com.android.systemui.classifier.FalsingCollector
 import com.android.systemui.classifier.FalsingCollectorActual
 import com.android.systemui.dagger.SysUISingleton
@@ -42,9 +44,15 @@ import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICA
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICATION_PANEL_VISIBLE
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_QUICK_SETTINGS_EXPANDED
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING
+import com.android.systemui.statusbar.notification.stack.shared.flexiNotifsEnabled
+import com.android.systemui.util.asIndenting
+import com.android.systemui.util.printSection
+import com.android.systemui.util.println
+import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.emptyFlow
@@ -64,7 +72,7 @@ constructor(
     @Application private val applicationScope: CoroutineScope,
     private val sceneInteractor: SceneInteractor,
     private val deviceEntryInteractor: DeviceEntryInteractor,
-    private val authenticationInteractor: AuthenticationInteractor,
+    private val bouncerInteractor: BouncerInteractor,
     private val keyguardInteractor: KeyguardInteractor,
     private val flags: SceneContainerFlags,
     private val sysUiState: SysUiState,
@@ -72,6 +80,8 @@ constructor(
     private val sceneLogger: SceneLogger,
     @FalsingCollectorActual private val falsingCollector: FalsingCollector,
     private val powerInteractor: PowerInteractor,
+    private val simBouncerInteractor: SimBouncerInteractor,
+    private val authenticationInteractor: AuthenticationInteractor,
 ) : CoreStartable {
 
     override fun start() {
@@ -89,9 +99,19 @@ constructor(
         }
     }
 
+    override fun dump(pw: PrintWriter, args: Array<out String>) =
+        pw.asIndenting().run {
+            printSection("SceneContainerFlags") {
+                println("isEnabled", flags.isEnabled())
+                printSection("requirementDescription") { println(flags.requirementDescription()) }
+                println("flexiNotifsEnabled", flags.flexiNotifsEnabled())
+            }
+        }
+
     /** Updates the visibility of the scene container. */
     private fun hydrateVisibility() {
         applicationScope.launch {
+            // TODO(b/296114544): Combine with some global hun state to make it visible!
             sceneInteractor.transitionState
                 .mapNotNull { state ->
                     when (state) {
@@ -121,6 +141,46 @@ constructor(
     /** Switches between scenes based on ever-changing application state. */
     private fun automaticallySwitchScenes() {
         applicationScope.launch {
+            // TODO (b/308001302): Move this to a bouncer specific interactor.
+            bouncerInteractor.onImeHiddenByUser.collectLatest {
+                if (sceneInteractor.desiredScene.value.key == SceneKey.Bouncer) {
+                    sceneInteractor.changeScene(
+                        scene = SceneModel(SceneKey.Lockscreen),
+                        loggingReason = "IME hidden",
+                    )
+                }
+            }
+        }
+        applicationScope.launch {
+            simBouncerInteractor.isAnySimSecure.collect { isAnySimLocked ->
+                val canSwipeToEnter = deviceEntryInteractor.canSwipeToEnter.value
+                val isUnlocked = deviceEntryInteractor.isUnlocked.value
+
+                when {
+                    isAnySimLocked -> {
+                        switchToScene(
+                            targetSceneKey = SceneKey.Bouncer,
+                            loggingReason = "Need to authenticate locked SIM card."
+                        )
+                    }
+                    isUnlocked && canSwipeToEnter == false -> {
+                        switchToScene(
+                            targetSceneKey = SceneKey.Gone,
+                            loggingReason = "All SIM cards unlocked and device already" +
+                                " unlocked and lockscreen doesn't require a swipe to dismiss."
+                        )
+                    }
+                    else -> {
+                        switchToScene(
+                            targetSceneKey = SceneKey.Lockscreen,
+                            loggingReason = "All SIM cards unlocked and device still locked" +
+                                " or lockscreen still requires a swipe to dismiss."
+                        )
+                    }
+                }
+            }
+        }
+        applicationScope.launch {
             deviceEntryInteractor.isUnlocked
                 .mapNotNull { isUnlocked ->
                     val renderedScenes =
@@ -132,41 +192,47 @@ constructor(
                                     transitionState.toScene,
                                 )
                         }
+                    val isOnLockscreen = renderedScenes.contains(SceneKey.Lockscreen)
+                    val isOnBouncer = renderedScenes.contains(SceneKey.Bouncer)
+                    if (!isUnlocked) {
+                        return@mapNotNull if (isOnLockscreen || isOnBouncer) {
+                            // Already on lockscreen or bouncer, no need to change scenes.
+                            null
+                        } else {
+                            // The device locked while on a scene that's not Lockscreen or Bouncer,
+                            // go to Lockscreen.
+                            SceneKey.Lockscreen to
+                                "device locked in non-Lockscreen and non-Bouncer scene"
+                        }
+                    }
+
+                    val isBypassEnabled = deviceEntryInteractor.isBypassEnabled.value
+                    val canSwipeToEnter = deviceEntryInteractor.canSwipeToEnter.value
                     when {
-                        isUnlocked ->
+                        isOnBouncer ->
+                            // When the device becomes unlocked in Bouncer, go to Gone.
+                            SceneKey.Gone to "device was unlocked in Bouncer scene"
+                        isOnLockscreen ->
+                            // The lockscreen should be dismissed automatically in 2 scenarios:
+                            // 1. When face auth bypass is enabled and authentication happens while
+                            //    the user is on the lockscreen.
+                            // 2. Whenever the user authenticates using an active authentication
+                            //    mechanism like fingerprint auth. Since canSwipeToEnter is true
+                            //    when the user is passively authenticated, the false value here
+                            //    when the unlock state changes indicates this is an active
+                            //    authentication attempt.
                             when {
-                                // When the device becomes unlocked in Bouncer, go to Gone.
-                                renderedScenes.contains(SceneKey.Bouncer) ->
-                                    SceneKey.Gone to "device unlocked in Bouncer scene"
-
-                                // When the device becomes unlocked in Lockscreen, go to Gone if
-                                // bypass is enabled.
-                                renderedScenes.contains(SceneKey.Lockscreen) ->
-                                    if (deviceEntryInteractor.isBypassEnabled.value) {
-                                        SceneKey.Gone to
-                                            "device unlocked in Lockscreen scene with bypass"
-                                    } else {
-                                        null
-                                    }
-
-                                // We got unlocked while on a scene that's not Lockscreen or
-                                // Bouncer, no need to change scenes.
+                                isBypassEnabled ->
+                                    SceneKey.Gone to
+                                        "device has been unlocked on lockscreen with bypass" +
+                                            " enabled"
+                                canSwipeToEnter == false ->
+                                    SceneKey.Gone to
+                                        "device has been unlocked on lockscreen using an active" +
+                                            " authentication mechanism"
                                 else -> null
                             }
-
-                        // When the device becomes locked, to Lockscreen.
-                        !isUnlocked ->
-                            when {
-                                // Already on lockscreen or bouncer, no need to change scenes.
-                                renderedScenes.contains(SceneKey.Lockscreen) ||
-                                    renderedScenes.contains(SceneKey.Bouncer) -> null
-
-                                // We got locked while on a scene that's not Lockscreen or Bouncer,
-                                // go to Lockscreen.
-                                else ->
-                                    SceneKey.Lockscreen to
-                                        "device locked in non-Lockscreen and non-Bouncer scene"
-                            }
+                        // Not on lockscreen or bouncer, so remain in the current scene.
                         else -> null
                     }
                 }
@@ -186,24 +252,23 @@ constructor(
                         loggingReason = "device is starting to sleep",
                     )
                 } else {
-                    val authMethod = authenticationInteractor.getAuthenticationMethod()
+                    val canSwipeToEnter = deviceEntryInteractor.canSwipeToEnter.value
                     val isUnlocked = deviceEntryInteractor.isUnlocked.value
-                    when {
-                        authMethod == AuthenticationMethodModel.None -> {
-                            switchToScene(
-                                targetSceneKey = SceneKey.Gone,
-                                loggingReason =
-                                    "device is starting to wake up while auth method is" + " none",
-                            )
-                        }
-                        authMethod.isSecure && isUnlocked -> {
-                            switchToScene(
-                                targetSceneKey = SceneKey.Gone,
-                                loggingReason =
-                                    "device is starting to wake up while unlocked with a" +
-                                        " secure auth method",
-                            )
-                        }
+                    if (isUnlocked && canSwipeToEnter == false) {
+                        switchToScene(
+                            targetSceneKey = SceneKey.Gone,
+                            loggingReason =
+                                "device is waking up while unlocked without the ability" +
+                                    " to swipe up on lockscreen to enter.",
+                        )
+                    } else if (
+                        authenticationInteractor.getAuthenticationMethod() ==
+                            AuthenticationMethodModel.Sim
+                    ) {
+                        switchToScene(
+                            targetSceneKey = SceneKey.Bouncer,
+                            loggingReason = "device is starting to wake up with a locked sim"
+                        )
                     }
                 }
             }

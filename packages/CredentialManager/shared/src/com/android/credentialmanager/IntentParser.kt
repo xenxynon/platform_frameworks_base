@@ -16,38 +16,50 @@
 
 package com.android.credentialmanager
 
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.credentials.ui.RequestInfo
+import android.util.Log
+import com.android.credentialmanager.ktx.appLabel
+import com.android.credentialmanager.ktx.cancelUiRequest
 import com.android.credentialmanager.ktx.requestInfo
 import com.android.credentialmanager.mapper.toGet
-import com.android.credentialmanager.mapper.toRequestCancel
-import com.android.credentialmanager.mapper.toRequestClose
 import com.android.credentialmanager.model.Request
 
 fun Intent.parse(
-    packageManager: PackageManager,
-    previousIntent: Intent? = null,
+    context: Context,
 ): Request {
-    this.toRequestClose(previousIntent)?.let { closeRequest ->
-        return closeRequest
-    }
-
-    this.toRequestCancel(packageManager)?.let { cancelRequest ->
-        return cancelRequest
-    }
-
-    return when (requestInfo?.type) {
-        RequestInfo.TYPE_CREATE -> {
-            Request.Create
-        }
-
-        RequestInfo.TYPE_GET -> {
-            this.toGet()
-        }
-
-        else -> {
-            throw IllegalStateException("Unrecognized request type: ${requestInfo?.type}")
-        }
-    }
+    return parseCancelUiRequest(context.packageManager)
+        ?: parseRequestInfo(context)
 }
+
+fun Intent.parseCancelUiRequest(packageManager: PackageManager): Request? =
+    this.cancelUiRequest?.let { cancelUiRequest ->
+        val showCancel = cancelUiRequest.shouldShowCancellationUi().apply {
+            Log.d(TAG, "Received UI cancel request, shouldShowCancellationUi: $this")
+        }
+        if (showCancel) {
+            val appLabel = packageManager.appLabel(cancelUiRequest.appPackageName)
+            if (appLabel == null) {
+                Log.d(TAG, "Received UI cancel request with an invalid package name.")
+                null
+            } else {
+                Request.Cancel(appName = appLabel, token = cancelUiRequest.token)
+            }
+        } else {
+            Request.Close(cancelUiRequest.token)
+        }
+    }
+
+fun Intent.parseRequestInfo(context: Context): Request =
+    requestInfo.let{ info ->
+        when (info?.type) {
+            RequestInfo.TYPE_CREATE -> Request.Create(info.token)
+            RequestInfo.TYPE_GET -> toGet(context)
+            else -> {
+                throw IllegalStateException("Unrecognized request type: ${info?.type}")
+            }
+        }
+    }
+

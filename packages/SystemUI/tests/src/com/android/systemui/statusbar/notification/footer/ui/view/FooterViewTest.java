@@ -16,12 +16,11 @@
 
 package com.android.systemui.statusbar.notification.footer.ui.view;
 
+import static com.android.systemui.log.LogAssertKt.assertLogsWtf;
 import static com.google.common.truth.Truth.assertThat;
-
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertNotNull;
 import static junit.framework.Assert.assertTrue;
-
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
@@ -31,24 +30,40 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
 import android.content.Context;
-import android.testing.AndroidTestingRunner;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.flag.junit.FlagsParameterization;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.TextView;
 
 import androidx.test.filters.SmallTest;
 
-import com.android.systemui.Flags;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.res.R;
+import com.android.systemui.statusbar.notification.footer.shared.FooterViewRefactor;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import java.util.List;
+
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
+import platform.test.runner.parameterized.Parameters;
+
 @SmallTest
-@RunWith(AndroidTestingRunner.class)
+@RunWith(ParameterizedAndroidJunit4.class)
 public class FooterViewTest extends SysuiTestCase {
+
+    @Parameters(name = "{0}")
+    public static List<FlagsParameterization> getFlags() {
+        return FlagsParameterization.allCombinationsOf(FooterViewRefactor.FLAG_NAME);
+    }
+
+    public FooterViewTest(FlagsParameterization flags) {
+        mSetFlagsRule.setFlagsParameterization(flags);
+    }
 
     FooterView mView;
 
@@ -56,11 +71,9 @@ public class FooterViewTest extends SysuiTestCase {
 
     @Before
     public void setUp() {
-        mSetFlagsRule.enableFlags(Flags.FLAG_NOTIFICATIONS_FOOTER_VIEW_REFACTOR);
-
         mView = (FooterView) LayoutInflater.from(mSpyContext).inflate(
                 R.layout.status_bar_notification_footer, null, false);
-        mView.setDuration(0);
+        mView.setAnimationDuration(0);
     }
 
     @Test
@@ -107,16 +120,74 @@ public class FooterViewTest extends SysuiTestCase {
 
     @Test
     public void testPerformSecondaryVisibilityAnimation() {
-        mView.setSecondaryVisible(false /* visible */, false /* animate */);
-        assertFalse(mView.isSecondaryVisible());
+        mView.setClearAllButtonVisible(false /* visible */, false /* animate */);
+        assertFalse(mView.isClearAllButtonVisible());
 
-        mView.setSecondaryVisible(true /* visible */, true /* animate */);
+        mView.setClearAllButtonVisible(true /* visible */, true /* animate */);
     }
 
     @Test
+    @EnableFlags(FooterViewRefactor.FLAG_NAME)
+    public void testSetClearAllButtonText_resourceOnlyFetchedOnce() {
+        int resId = R.string.clear_all_notifications_text;
+        mView.setClearAllButtonText(resId);
+        verify(mSpyContext).getString(eq(resId));
+
+        clearInvocations(mSpyContext);
+
+        assertThat(((TextView) mView.findViewById(R.id.dismiss_text))
+                .getText().toString()).contains("Clear all");
+
+        // Set it a few more times, it shouldn't lead to the resource being fetched again
+        mView.setClearAllButtonText(resId);
+        mView.setClearAllButtonText(resId);
+
+        verify(mSpyContext, never()).getString(anyInt());
+    }
+
+    @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
+    public void testSetClearAllButtonText_expectsFlagEnabled() {
+        clearInvocations(mSpyContext);
+        int resId = R.string.clear_all_notifications_text;
+        assertLogsWtf(()-> mView.setClearAllButtonText(resId));
+        verify(mSpyContext, never()).getString(anyInt());
+    }
+
+    @Test
+    @EnableFlags(FooterViewRefactor.FLAG_NAME)
+    public void testSetClearAllButtonDescription_resourceOnlyFetchedOnce() {
+        int resId = R.string.accessibility_clear_all;
+        mView.setClearAllButtonDescription(resId);
+        verify(mSpyContext).getString(eq(resId));
+
+        clearInvocations(mSpyContext);
+
+        assertThat(((TextView) mView.findViewById(R.id.dismiss_text))
+                .getContentDescription().toString()).contains("Clear all notifications");
+
+        // Set it a few more times, it shouldn't lead to the resource being fetched again
+        mView.setClearAllButtonDescription(resId);
+        mView.setClearAllButtonDescription(resId);
+
+        verify(mSpyContext, never()).getString(anyInt());
+    }
+
+    @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
+    public void testSetClearAllButtonDescription_expectsFlagEnabled() {
+        clearInvocations(mSpyContext);
+        int resId = R.string.accessibility_clear_all;
+        assertLogsWtf(()-> mView.setClearAllButtonDescription(resId));
+        verify(mSpyContext, never()).getString(anyInt());
+    }
+
+    @Test
+    @EnableFlags(FooterViewRefactor.FLAG_NAME)
     public void testSetMessageString_resourceOnlyFetchedOnce() {
-        mView.setMessageString(R.string.unlock_to_see_notif_text);
-        verify(mSpyContext).getString(eq(R.string.unlock_to_see_notif_text));
+        int resId = R.string.unlock_to_see_notif_text;
+        mView.setMessageString(resId);
+        verify(mSpyContext).getString(eq(resId));
 
         clearInvocations(mSpyContext);
 
@@ -124,23 +195,43 @@ public class FooterViewTest extends SysuiTestCase {
                 .getText().toString()).contains("Unlock");
 
         // Set it a few more times, it shouldn't lead to the resource being fetched again
-        mView.setMessageString(R.string.unlock_to_see_notif_text);
-        mView.setMessageString(R.string.unlock_to_see_notif_text);
+        mView.setMessageString(resId);
+        mView.setMessageString(resId);
 
         verify(mSpyContext, never()).getString(anyInt());
     }
 
     @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
+    public void testSetMessageString_expectsFlagEnabled() {
+        clearInvocations(mSpyContext);
+        int resId = R.string.unlock_to_see_notif_text;
+        assertLogsWtf(()-> mView.setMessageString(resId));
+        verify(mSpyContext, never()).getString(anyInt());
+    }
+
+    @Test
+    @EnableFlags(FooterViewRefactor.FLAG_NAME)
     public void testSetMessageIcon_resourceOnlyFetchedOnce() {
-        mView.setMessageIcon(R.drawable.ic_friction_lock_closed);
-        verify(mSpyContext).getDrawable(eq(R.drawable.ic_friction_lock_closed));
+        int resId = R.drawable.ic_friction_lock_closed;
+        mView.setMessageIcon(resId);
+        verify(mSpyContext).getDrawable(eq(resId));
 
         clearInvocations(mSpyContext);
 
         // Set it a few more times, it shouldn't lead to the resource being fetched again
-        mView.setMessageIcon(R.drawable.ic_friction_lock_closed);
-        mView.setMessageIcon(R.drawable.ic_friction_lock_closed);
+        mView.setMessageIcon(resId);
+        mView.setMessageIcon(resId);
 
+        verify(mSpyContext, never()).getDrawable(anyInt());
+    }
+
+    @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
+    public void testSetMessageIcon_expectsFlagEnabled() {
+        clearInvocations(mSpyContext);
+        int resId = R.drawable.ic_friction_lock_closed;
+        assertLogsWtf(()-> mView.setMessageIcon(resId));
         verify(mSpyContext, never()).getDrawable(anyInt());
     }
 

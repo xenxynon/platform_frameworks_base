@@ -22,10 +22,8 @@ import static android.view.WindowManager.TRANSIT_CLOSE;
 import static android.view.WindowManager.TRANSIT_FLAG_IS_RECENTS;
 import static android.view.WindowManager.TRANSIT_NONE;
 import static android.view.WindowManager.TRANSIT_OPEN;
-import static android.window.SystemPerformanceHinter.HINT_SF;
 
 import static com.android.server.wm.ActivityTaskManagerService.POWER_MODE_REASON_CHANGE_DISPLAY;
-import static com.android.window.flags.Flags.explicitRefreshRateHints;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -41,18 +39,14 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.util.ArrayMap;
-import android.util.ArraySet;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
-import android.view.SurfaceControl;
 import android.view.WindowManager;
 import android.window.ITransitionMetricsReporter;
 import android.window.ITransitionPlayer;
 import android.window.RemoteTransition;
-import android.window.SystemPerformanceHinter;
-import android.window.SystemPerformanceHinter.HighPerfSession;
 import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
 import android.window.WindowContainerTransaction;
@@ -131,7 +125,6 @@ class TransitionController {
     SnapshotController mSnapshotController;
     TransitionTracer mTransitionTracer;
 
-    private SystemPerformanceHinter mSystemPerformanceHinter;
     private boolean mFullReadyTracking = false;
 
     private final ArrayList<WindowManagerInternal.AppTransitionListener> mLegacyListeners =
@@ -184,24 +177,6 @@ class TransitionController {
     final Lock mRunningLock = new Lock();
 
     private final IBinder.DeathRecipient mTransitionPlayerDeath;
-
-    /**
-     * Tracks active perf sessions that boost frame rate and hint sf to increase its
-     * estimated work duration.
-     */
-    private final ArraySet<HighPerfSession> mHighPerfSessions = new ArraySet<>();
-
-
-    /**
-     * Starts a perf hint session which will boost the refresh rate for the display and change
-     * sf duration to handle larger workloads.
-     */
-    void startPerfHintForDisplay(int displayId) {
-        if (explicitRefreshRateHints()) {
-            mHighPerfSessions.add(mSystemPerformanceHinter.startSession(HINT_SF, displayId,
-                    "Transition collected"));
-        }
-    }
 
     static class QueuedTransition {
         final Transition mTransition;
@@ -282,13 +257,7 @@ class TransitionController {
         mIsWaitingForDisplayEnabled = !wms.mDisplayEnabled;
         registerLegacyListener(wms.mActivityManagerAppTransitionNotifier);
         setSyncEngine(wms.mSyncEngine);
-        setSystemPerformanceHinter(wms.mSystemPerformanceHinter);
         mFullReadyTracking = Flags.transitReadyTracking();
-    }
-
-    @VisibleForTesting
-    void setSystemPerformanceHinter(SystemPerformanceHinter hinter) {
-        mSystemPerformanceHinter = hinter;
     }
 
     @VisibleForTesting
@@ -302,13 +271,14 @@ class TransitionController {
         if (mTransitionPlayer == null) return;
         // Immediately set to null so that nothing inadvertently starts/queues.
         mTransitionPlayer = null;
-        // Clean-up/finish any playing transitions.
-        for (int i = 0; i < mPlayingTransitions.size(); ++i) {
+        // Clean-up/finish any playing transitions. Backwards since they can remove themselves.
+        for (int i = mPlayingTransitions.size() - 1; i >= 0; --i) {
             mPlayingTransitions.get(i).cleanUpOnFailure();
         }
         mPlayingTransitions.clear();
         // Clean up waiting transitions first since they technically started first.
-        for (int i = 0; i < mWaitingTransitions.size(); ++i) {
+        // Backwards since they can remove themselves.
+        for (int i = mWaitingTransitions.size() - 1; i >= 0; --i) {
             mWaitingTransitions.get(i).abort();
         }
         mWaitingTransitions.clear();
@@ -508,7 +478,7 @@ class TransitionController {
         return false;
     }
 
-    /** @return {@code true} if wc is in a participant subtree */
+    /** Returns {@code true} if the display contains a running or pending transition. */
     boolean isTransitionOnDisplay(@NonNull DisplayContent dc) {
         if (mCollectingTransition != null && mCollectingTransition.isOnDisplay(dc)) {
             return true;
@@ -761,9 +731,9 @@ class TransitionController {
             }
 
             // set the pip task in the request if provided
-            if (mCollectingTransition.getPipActivity() != null) {
-                pipTaskInfo = mCollectingTransition.getPipActivity().getTask().getTaskInfo();
-                mCollectingTransition.setPipActivity(null);
+            if (transition.getPipActivity() != null) {
+                pipTaskInfo = transition.getPipActivity().getTask().getTaskInfo();
+                transition.setPipActivity(null);
             }
 
             final TransitionRequestInfo request = new TransitionRequestInfo(transition.mType,
@@ -820,6 +790,12 @@ class TransitionController {
     void recordTaskOrder(@NonNull WindowContainer wc) {
         if (mCollectingTransition == null) return;
         mCollectingTransition.recordTaskOrder(wc);
+    }
+
+    /** @see Transition#hasOrderChanges */
+    boolean hasOrderChanges() {
+        if (mCollectingTransition == null) return false;
+        return mCollectingTransition.hasOrderChanges();
     }
 
     /**
@@ -1022,11 +998,19 @@ class TransitionController {
     private void enforceSurfaceVisible(WindowContainer<?> wc) {
         if (wc.mSurfaceControl == null) return;
         wc.getSyncTransaction().show(wc.mSurfaceControl);
+        final ActivityRecord ar = wc.asActivityRecord();
+        if (ar != null) {
+            ar.mLastSurfaceShowing = true;
+        }
         // Force showing the parents because they may be hidden by previous transition.
         for (WindowContainer<?> p = wc.getParent(); p != null && p != wc.mDisplayContent;
                 p = p.getParent()) {
             if (p.mSurfaceControl != null) {
                 p.getSyncTransaction().show(p.mSurfaceControl);
+                final Task task = p.asTask();
+                if (task != null) {
+                    task.mLastSurfaceShowing = true;
+                }
             }
         }
         wc.scheduleAnimation();
@@ -1240,12 +1224,22 @@ class TransitionController {
         }
     }
 
-    void updateAnimatingState(SurfaceControl.Transaction t) {
+    /** Returns {@code true} if a transition is playing or the collecting transition is started. */
+    boolean isAnimating() {
+        return mAnimatingState;
+    }
+
+    void updateAnimatingState() {
         final boolean animatingState = !mPlayingTransitions.isEmpty()
                     || (mCollectingTransition != null && mCollectingTransition.isStarted());
         if (animatingState && !mAnimatingState) {
-            if (!explicitRefreshRateHints()) {
-                t.setEarlyWakeupStart();
+            // Note that Transition#start() can be called before adding participants, so the
+            // enableHighPerfTransition(true) is also called in Transition#recordDisplay.
+            for (int i = mAtm.mRootWindowContainer.getChildCount() - 1; i >= 0; i--) {
+                final DisplayContent dc = mAtm.mRootWindowContainer.getChildAt(i);
+                if (isTransitionOnDisplay(dc)) {
+                    dc.enableHighPerfTransition(true);
+                }
             }
             // Usually transitions put quite a load onto the system already (with all the things
             // happening in app), so pause task snapshot persisting to not increase the load.
@@ -1253,18 +1247,13 @@ class TransitionController {
             mAnimatingState = true;
             Transition.asyncTraceBegin("animating", 0x41bfaf1 /* hashcode of TAG */);
         } else if (!animatingState && mAnimatingState) {
-            if (!explicitRefreshRateHints()) {
-                t.setEarlyWakeupEnd();
+            for (int i = mAtm.mRootWindowContainer.getChildCount() - 1; i >= 0; i--) {
+                mAtm.mRootWindowContainer.getChildAt(i).enableHighPerfTransition(false);
             }
             mAtm.mWindowManager.scheduleAnimationLocked();
             mSnapshotController.setPause(false);
             mAnimatingState = false;
             Transition.asyncTraceEnd(0x41bfaf1 /* hashcode of TAG */);
-            // We close all perf sessions here when all transitions finish. The sessions are created
-            // when we collect transitions because we have access to the display id.
-            for (HighPerfSession perfSession : mHighPerfSessions) {
-                perfSession.close();
-            }
         }
     }
 
@@ -1276,13 +1265,7 @@ class TransitionController {
         } else if (mPlayingTransitions.isEmpty()) {
             mTransitionPlayerProc.setRunningRemoteAnimation(false);
             mRemotePlayer.clear();
-            return;
         }
-        final IApplicationThread appThread = transition.getRemoteAnimationApp();
-        if (appThread == null || appThread == mTransitionPlayerProc.getThread()) return;
-        final WindowProcessController delegate = mAtm.getProcessController(appThread);
-        if (delegate == null) return;
-        mRemotePlayer.update(delegate, isPlaying, true /* predict */);
     }
 
     /** Called when a transition is aborted. This should only be called by {@link Transition} */
@@ -1508,7 +1491,7 @@ class TransitionController {
      * {@link #mTransitionPlayerProc}.
      */
     static class RemotePlayer {
-        private static final long REPORT_RUNNING_GRACE_PERIOD_MS = 100;
+        private static final long REPORT_RUNNING_GRACE_PERIOD_MS = 200;
         @GuardedBy("itself")
         private final ArrayMap<IBinder, DelegateProcess> mDelegateProcesses = new ArrayMap<>();
         private final ActivityTaskManagerService mAtm;

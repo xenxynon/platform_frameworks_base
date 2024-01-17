@@ -29,6 +29,7 @@ import android.graphics.ColorFilter;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.drawable.Drawable;
+import android.hardware.usb.flags.Flags;
 import android.hardware.usb.UsbManager;
 import android.hardware.usb.UsbPort;
 import android.hardware.usb.UsbPortStatus;
@@ -682,6 +683,8 @@ public class Utils {
                     userType = UserIconInfo.TYPE_CLONED;
                 } else if (ui.isManagedProfile()) {
                     userType = UserIconInfo.TYPE_WORK;
+                } else if (ui.isPrivateProfile()) {
+                    userType = UserIconInfo.TYPE_PRIVATE;
                 }
             }
         } catch (Exception e) {
@@ -777,26 +780,27 @@ public class Utils {
                 continue;
             }
             for (int complianceWarningType : complianceWarnings) {
-                switch (complianceWarningType) {
-                    case UsbPortStatus.COMPLIANCE_WARNING_OTHER:
-                    case UsbPortStatus.COMPLIANCE_WARNING_DEBUG_ACCESSORY:
-                        return true;
-                    default:
-                        break;
+                if (Flags.enableUsbDataComplianceWarning()
+                        && Flags.enableInputPowerLimitedWarning()) {
+                    switch (complianceWarningType) {
+                        case UsbPortStatus.COMPLIANCE_WARNING_INPUT_POWER_LIMITED:
+                        case UsbPortStatus.COMPLIANCE_WARNING_DEBUG_ACCESSORY:
+                            return true;
+                        default:
+                            break;
+                    }
+                } else {
+                    switch (complianceWarningType) {
+                        case UsbPortStatus.COMPLIANCE_WARNING_OTHER:
+                        case UsbPortStatus.COMPLIANCE_WARNING_DEBUG_ACCESSORY:
+                            return true;
+                        default:
+                            break;
+                    }
                 }
             }
         }
         return false;
     }
 
-    /**
-     *  Convert a drawable to grayscale drawable
-     */
-    public static void convertToGrayscale(@NonNull Drawable drawable) {
-        ColorMatrix matrix = new ColorMatrix();
-        matrix.setSaturation(0.0f);
-
-        ColorMatrixColorFilter filter = new ColorMatrixColorFilter(matrix);
-        drawable.setColorFilter(filter);
-    }
 }

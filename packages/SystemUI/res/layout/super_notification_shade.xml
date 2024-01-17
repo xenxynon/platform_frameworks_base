@@ -26,11 +26,16 @@
     android:layout_height="match_parent"
     android:fitsSystemWindows="true">
 
+    <!-- Placeholder for the communal UI that will be replaced if the feature is enabled. -->
+    <ViewStub
+        android:id="@+id/communal_ui_stub"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <com.android.systemui.scrim.ScrimView
         android:id="@+id/scrim_behind"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:importantForAccessibility="no"
         sysui:ignoreRightInset="true"
     />
 
@@ -38,7 +43,6 @@
         android:id="@+id/scrim_notifications"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:importantForAccessibility="no"
         sysui:ignoreRightInset="true"
     />
 
@@ -72,19 +76,12 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Placeholder for the communal UI that will be replaced if the feature is enabled. -->
-    <ViewStub
-        android:id="@+id/communal_ui_stub"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
     <include layout="@layout/brightness_mirror_container" />
 
     <com.android.systemui.scrim.ScrimView
         android:id="@+id/scrim_in_front"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:importantForAccessibility="no"
         sysui:ignoreRightInset="true"
     />
 
@@ -127,8 +124,7 @@
 
     <include layout="@layout/alternate_bouncer"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="invisible" />
+        android:layout_height="match_parent" />
 
     <com.android.systemui.biometrics.AuthRippleView
         android:id="@+id/auth_ripple"

@@ -16,32 +16,14 @@
 
 package com.android.settingslib.spaprivileged.template.preference
 
-import android.content.Context
 import androidx.annotation.VisibleForTesting
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.toggleableState
-import androidx.compose.ui.state.ToggleableState
-import com.android.settingslib.spa.framework.compose.stateOf
 import com.android.settingslib.spa.widget.preference.SwitchPreference
 import com.android.settingslib.spa.widget.preference.SwitchPreferenceModel
-import com.android.settingslib.spaprivileged.framework.compose.getPlaceholder
-import com.android.settingslib.spaprivileged.model.enterprise.BaseUserRestricted
-import com.android.settingslib.spaprivileged.model.enterprise.BlockedByAdmin
-import com.android.settingslib.spaprivileged.model.enterprise.NoRestricted
-import com.android.settingslib.spaprivileged.model.enterprise.RestrictedMode
 import com.android.settingslib.spaprivileged.model.enterprise.Restrictions
 import com.android.settingslib.spaprivileged.model.enterprise.RestrictionsProviderFactory
 import com.android.settingslib.spaprivileged.model.enterprise.RestrictionsProviderImpl
-import com.android.settingslib.spaprivileged.model.enterprise.rememberRestrictedMode
+import com.android.settingslib.spaprivileged.template.preference.RestrictedSwitchPreferenceModel.Companion.RestrictedSwitchWrapper
 
 @Composable
 fun RestrictedSwitchPreference(
@@ -58,96 +40,11 @@ internal fun RestrictedSwitchPreference(
     restrictions: Restrictions,
     restrictionsProviderFactory: RestrictionsProviderFactory,
 ) {
-    if (restrictions.keys.isEmpty()) {
+    if (restrictions.isEmpty()) {
         SwitchPreference(model)
         return
     }
-    val context = LocalContext.current
-    val restrictedMode = restrictionsProviderFactory.rememberRestrictedMode(restrictions).value
-    val restrictedSwitchModel = remember(restrictedMode) {
-        RestrictedSwitchPreferenceModel(context, model, restrictedMode)
-    }
-    restrictedSwitchModel.RestrictionWrapper {
-        SwitchPreference(restrictedSwitchModel)
-    }
-}
-
-internal object RestrictedSwitchPreference {
-    fun getSummary(
-        context: Context,
-        restrictedMode: RestrictedMode?,
-        summaryIfNoRestricted: State<String>,
-        checked: State<Boolean?>,
-    ): State<String> = when (restrictedMode) {
-        is NoRestricted -> summaryIfNoRestricted
-        is BaseUserRestricted -> stateOf(
-            context.getString(com.android.settingslib.R.string.disabled)
-        )
-
-        is BlockedByAdmin -> derivedStateOf { restrictedMode.getSummary(checked.value) }
-        null -> stateOf(context.getPlaceholder())
-    }
-}
-
-private class RestrictedSwitchPreferenceModel(
-    context: Context,
-    model: SwitchPreferenceModel,
-    private val restrictedMode: RestrictedMode?,
-) : SwitchPreferenceModel {
-    override val title = model.title
-
-    override val summary = RestrictedSwitchPreference.getSummary(
-        context = context,
-        restrictedMode = restrictedMode,
-        summaryIfNoRestricted = model.summary,
-        checked = model.checked,
-    )
-
-    override val checked = when (restrictedMode) {
-        null -> stateOf(null)
-        is NoRestricted -> model.checked
-        is BaseUserRestricted -> stateOf(false)
-        is BlockedByAdmin -> model.checked
-    }
-
-    override val changeable = when (restrictedMode) {
-        null -> stateOf(false)
-        is NoRestricted -> model.changeable
-        is BaseUserRestricted -> stateOf(false)
-        is BlockedByAdmin -> stateOf(false)
-    }
-
-    override val onCheckedChange = when (restrictedMode) {
-        null -> null
-        is NoRestricted -> model.onCheckedChange
-        // Need to passthrough onCheckedChange for toggleable semantics, although since changeable
-        // is false so this will not be called.
-        is BaseUserRestricted -> model.onCheckedChange
-        // Pass null since semantics ToggleableState is provided in RestrictionWrapper.
-        is BlockedByAdmin -> null
-    }
-
-    @Composable
-    fun RestrictionWrapper(content: @Composable () -> Unit) {
-        if (restrictedMode !is BlockedByAdmin) {
-            content()
-            return
-        }
-        Box(
-            Modifier
-                .clickable(
-                    role = Role.Switch,
-                    onClick = { restrictedMode.sendShowAdminSupportDetailsIntent() },
-                )
-                .semantics {
-                    this.toggleableState = ToggleableState(checked.value)
-                },
-        ) { content() }
-    }
-
-    private fun ToggleableState(value: Boolean?) = when (value) {
-        true -> ToggleableState.On
-        false -> ToggleableState.Off
-        null -> ToggleableState.Indeterminate
+    restrictionsProviderFactory.RestrictedSwitchWrapper(model, restrictions) {
+        SwitchPreference(it)
     }
 }

@@ -119,8 +119,8 @@ public class LogicalDisplayMapperTest {
     @Mock IThermalService mIThermalServiceMock;
     @Spy DeviceStateToLayoutMap mDeviceStateToLayoutMapSpy =
             new DeviceStateToLayoutMap(mIdProducer, NON_EXISTING_FILE);
-    @Mock
-    DisplayManagerFlags mFlagsMock;
+    @Mock DisplayManagerFlags mFlagsMock;
+    @Mock DisplayAdapter mDisplayAdapterMock;
 
     @Captor ArgumentCaptor<LogicalDisplay> mDisplayCaptor;
     @Captor ArgumentCaptor<Integer> mDisplayEventCaptor;
@@ -346,14 +346,14 @@ public class LogicalDisplayMapperTest {
 
         // Disable device
         mLogicalDisplayMapper.setDisplayEnabledLocked(
-                displayAdded.getDisplayIdLocked(), /* isEnabled= */ false);
+                displayAdded, /* isEnabled= */ false);
         verify(mListenerMock).onLogicalDisplayEventLocked(mDisplayCaptor.capture(),
                 eq(LOGICAL_DISPLAY_EVENT_REMOVED));
         clearInvocations(mListenerMock);
 
         // Enable device
         mLogicalDisplayMapper.setDisplayEnabledLocked(
-                displayAdded.getDisplayIdLocked(), /* isEnabled= */ true);
+                displayAdded, /* isEnabled= */ true);
         verify(mListenerMock).onLogicalDisplayEventLocked(mDisplayCaptor.capture(),
                 eq(LOGICAL_DISPLAY_EVENT_ADDED));
     }
@@ -1075,7 +1075,8 @@ public class LogicalDisplayMapperTest {
         private int mState;
 
         TestDisplayDevice() {
-            super(null, null, "test_display_" + sUniqueTestDisplayId++, mContextMock);
+            super(mDisplayAdapterMock, /* displayToken= */ null,
+                    "test_display_" + sUniqueTestDisplayId++, mContextMock);
             mInfo = new DisplayDeviceInfo();
         }
 

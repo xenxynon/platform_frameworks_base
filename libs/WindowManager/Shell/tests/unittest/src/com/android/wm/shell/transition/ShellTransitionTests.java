@@ -40,6 +40,8 @@ import static android.window.TransitionInfo.FLAG_SYNC;
 import static android.window.TransitionInfo.FLAG_TRANSLUCENT;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
+import static com.android.wm.shell.transition.TransitionAnimationHelper.getTransitionTypeFromInfo;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -85,7 +87,6 @@ import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
 import android.window.WindowContainerToken;
 import android.window.WindowContainerTransaction;
-import android.window.WindowOrganizer;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -93,7 +94,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import com.android.internal.R;
+import com.android.internal.policy.TransitionAnimation;
 import com.android.wm.shell.RootTaskDisplayAreaOrganizer;
+import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.ShellTestCase;
 import com.android.wm.shell.TestShellExecutor;
 import com.android.wm.shell.common.DisplayController;
@@ -126,7 +130,7 @@ import java.util.function.Function;
 @RunWith(AndroidJUnit4.class)
 public class ShellTransitionTests extends ShellTestCase {
 
-    private final WindowOrganizer mOrganizer = mock(WindowOrganizer.class);
+    private final ShellTaskOrganizer mOrganizer = mock(ShellTaskOrganizer.class);
     private final TransactionPool mTransactionPool = mock(TransactionPool.class);
     private final Context mContext =
             InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -146,7 +150,7 @@ public class ShellTransitionTests extends ShellTestCase {
         ShellInit shellInit = mock(ShellInit.class);
         final Transitions t = new Transitions(mContext, shellInit, mock(ShellController.class),
                 mOrganizer, mTransactionPool, createTestDisplayController(), mMainExecutor,
-                mMainHandler, mAnimExecutor);
+                mMainHandler, mAnimExecutor, mock(HomeTransitionObserver.class));
         // One from Transitions, one from RootTaskDisplayAreaOrganizer
         verify(shellInit).addInitCallback(any(), eq(t));
         verify(shellInit).addInitCallback(any(), isA(RootTaskDisplayAreaOrganizer.class));
@@ -158,7 +162,7 @@ public class ShellTransitionTests extends ShellTestCase {
         ShellController shellController = mock(ShellController.class);
         final Transitions t = new Transitions(mContext, shellInit, shellController,
                 mOrganizer, mTransactionPool, createTestDisplayController(), mMainExecutor,
-                mMainHandler, mAnimExecutor);
+                mMainHandler, mAnimExecutor, mock(HomeTransitionObserver.class));
         shellInit.init();
         verify(shellController, times(1)).addExternalInterface(
                 eq(ShellSharedConstants.KEY_EXTRA_SHELL_SHELL_TRANSITIONS), any(), any());
@@ -1075,10 +1079,10 @@ public class ShellTransitionTests extends ShellTestCase {
         final Transitions transitions =
                 new Transitions(mContext, shellInit, mock(ShellController.class), mOrganizer,
                         mTransactionPool, createTestDisplayController(), mMainExecutor,
-                        mMainHandler, mAnimExecutor);
+                        mMainHandler, mAnimExecutor, mock(HomeTransitionObserver.class));
         final RecentsTransitionHandler recentsHandler =
                 new RecentsTransitionHandler(shellInit, transitions,
-                        mock(RecentTasksController.class));
+                        mock(RecentTasksController.class), mock(HomeTransitionObserver.class));
         transitions.replaceDefaultHandlerForTest(mDefaultHandler);
         shellInit.init();
 
@@ -1463,6 +1467,43 @@ public class ShellTransitionTests extends ShellTestCase {
         assertEquals(0, mDefaultHandler.activeCount());
     }
 
+    @Test
+    public void testCloseTransitAnimationWhenClosingChangesExists() {
+        Transitions transitions = createTestTransitions();
+        Transitions.TransitionObserver observer = mock(Transitions.TransitionObserver.class);
+        transitions.registerObserver(observer);
+        transitions.replaceDefaultHandlerForTest(mDefaultHandler);
+        final TransitionAnimation transitionAnimation = new TransitionAnimation(mContext, false,
+                Transitions.TAG);
+        spyOn(transitionAnimation);
+
+        // Creating a transition by the app hooking the back key event to start the
+        // previous activity with FLAG_ACTIVITY_CLEAR_TOP | FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+        // flags in order to clear the top activity and bring the exist previous activity to front.
+        // Expects the activity transition should playing the close animation instead the initiated
+        // open animation made by startActivity.
+        IBinder transitToken = new Binder();
+        transitions.requestStartTransition(transitToken,
+                new TransitionRequestInfo(TRANSIT_OPEN, null /* trigger */, null /* remote */));
+        TransitionInfo info = new TransitionInfoBuilder(TRANSIT_OPEN)
+                .addChange(TRANSIT_CLOSE).addChange(TRANSIT_TO_FRONT).build();
+        transitions.onTransitionReady(transitToken, info, new StubTransaction(),
+                new StubTransaction());
+
+        final int type = getTransitionTypeFromInfo(info);
+        assertEquals(TRANSIT_CLOSE, type);
+
+        TransitionAnimationHelper.loadAttributeAnimation(type, info, info.getChanges().get(0), 0,
+                transitionAnimation, false);
+        verify(transitionAnimation).loadDefaultAnimationAttr(
+                eq(R.styleable.WindowAnimation_activityCloseExitAnimation), anyBoolean());
+
+        TransitionAnimationHelper.loadAttributeAnimation(type, info, info.getChanges().get(1), 0,
+                transitionAnimation, false);
+        verify(transitionAnimation).loadDefaultAnimationAttr(
+                eq(R.styleable.WindowAnimation_activityCloseEnterAnimation), anyBoolean());
+    }
+
     class ChangeBuilder {
         final TransitionInfo.Change mChange;
 
@@ -1623,7 +1664,7 @@ public class ShellTransitionTests extends ShellTestCase {
         ShellInit shellInit = new ShellInit(mMainExecutor);
         final Transitions t = new Transitions(mContext, shellInit, mock(ShellController.class),
                 mOrganizer, mTransactionPool, createTestDisplayController(), mMainExecutor,
-                mMainHandler, mAnimExecutor);
+                mMainHandler, mAnimExecutor, mock(HomeTransitionObserver.class));
         shellInit.init();
         return t;
     }

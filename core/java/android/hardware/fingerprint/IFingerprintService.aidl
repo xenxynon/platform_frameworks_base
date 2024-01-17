@@ -15,6 +15,7 @@
  */
 package android.hardware.fingerprint;
 
+import android.hardware.biometrics.AuthenticationStateListener;
 import android.hardware.biometrics.IBiometricSensorReceiver;
 import android.hardware.biometrics.IBiometricServiceLockoutResetCallback;
 import android.hardware.biometrics.IBiometricStateListener;
@@ -30,6 +31,7 @@ import android.hardware.fingerprint.ISidefpsController;
 import android.hardware.fingerprint.Fingerprint;
 import android.hardware.fingerprint.FingerprintAuthenticateOptions;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
+import android.hardware.fingerprint.FingerprintSensorConfigurations;
 import java.util.List;
 
 /**
@@ -172,6 +174,10 @@ interface IFingerprintService {
     @EnforcePermission("MANAGE_FINGERPRINT")
     void removeClientActiveCallback(IFingerprintClientActiveCallback callback);
 
+    //Register all available fingerprint sensors.
+    @EnforcePermission("USE_BIOMETRIC_INTERNAL")
+    void registerAuthenticatorsLegacy(in FingerprintSensorConfigurations fingerprintSensorConfigurations);
+
     // Registers all HIDL and AIDL sensors. Only HIDL sensor properties need to be provided, because
     // AIDL sensor properties are retrieved directly from the available HALs. If no HIDL HALs exist,
     // hidlSensors must be non-null and empty. See AuthService.java
@@ -202,6 +208,14 @@ interface IFingerprintService {
     // Sets the controller for managing the SideFPS overlay.
     @EnforcePermission("USE_BIOMETRIC_INTERNAL")
     void setSidefpsController(in ISidefpsController controller);
+
+    // Registers AuthenticationStateListener.
+    @EnforcePermission("USE_BIOMETRIC_INTERNAL")
+    void registerAuthenticationStateListener(AuthenticationStateListener listener);
+
+    // Unregisters AuthenticationStateListener.
+    @EnforcePermission("USE_BIOMETRIC_INTERNAL")
+    void unregisterAuthenticationStateListener(AuthenticationStateListener listener);
 
     // Registers BiometricStateListener.
     @EnforcePermission("USE_BIOMETRIC_INTERNAL")

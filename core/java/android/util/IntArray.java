@@ -19,8 +19,6 @@ package android.util;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.Preconditions;
 
-import libcore.util.EmptyArray;
-
 import java.util.Arrays;
 
 /**
@@ -28,6 +26,7 @@ import java.util.Arrays;
  *
  * @hide
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class IntArray implements Cloneable {
     private static final int MIN_CAPACITY_INCREMENT = 12;
 

@@ -29,16 +29,19 @@ import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.keyguard.ui.view.KeyguardRootView
 import com.android.systemui.keyguard.ui.view.layout.sections.AodBurnInSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodNotificationIconsSection
-import com.android.systemui.keyguard.ui.view.layout.sections.DefaultAmbientIndicationAreaSection
-import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntryIconSection
+import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultNotificationStackScrollLayoutSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultSettingsPopupMenuSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultShortcutsSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusBarSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusViewSection
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultUdfpsAccessibilityOverlaySection
+import com.android.systemui.keyguard.ui.view.layout.sections.SmartspaceSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeGuidelines
 import com.android.systemui.util.mockito.whenever
+import java.util.Optional
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,10 +58,9 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
     private lateinit var underTest: DefaultKeyguardBlueprint
     private lateinit var rootView: KeyguardRootView
     @Mock private lateinit var defaultIndicationAreaSection: DefaultIndicationAreaSection
-    @Mock private lateinit var mDefaultDeviceEntryIconSection: DefaultDeviceEntryIconSection
+    @Mock private lateinit var mDefaultDeviceEntrySection: DefaultDeviceEntrySection
     @Mock private lateinit var defaultShortcutsSection: DefaultShortcutsSection
-    @Mock
-    private lateinit var defaultAmbientIndicationAreaSection: DefaultAmbientIndicationAreaSection
+    @Mock private lateinit var defaultAmbientIndicationAreaSection: Optional<KeyguardSection>
     @Mock private lateinit var defaultSettingsPopupMenuSection: DefaultSettingsPopupMenuSection
     @Mock private lateinit var defaultStatusViewSection: DefaultStatusViewSection
     @Mock private lateinit var defaultStatusBarViewSection: DefaultStatusBarSection
@@ -67,7 +69,10 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
     @Mock private lateinit var aodNotificationIconsSection: AodNotificationIconsSection
     @Mock private lateinit var aodBurnInSection: AodBurnInSection
     @Mock private lateinit var communalTutorialIndicatorSection: CommunalTutorialIndicatorSection
-
+    @Mock private lateinit var clockSection: ClockSection
+    @Mock private lateinit var smartspaceSection: SmartspaceSection
+    @Mock
+    private lateinit var udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection
     @Before
     fun setup() {
         MockitoAnnotations.initMocks(this)
@@ -75,17 +80,19 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
         underTest =
             DefaultKeyguardBlueprint(
                 defaultIndicationAreaSection,
-                mDefaultDeviceEntryIconSection,
+                mDefaultDeviceEntrySection,
                 defaultShortcutsSection,
                 defaultAmbientIndicationAreaSection,
                 defaultSettingsPopupMenuSection,
                 defaultStatusViewSection,
                 defaultStatusBarViewSection,
                 defaultNSSLSection,
-                splitShadeGuidelines,
                 aodNotificationIconsSection,
                 aodBurnInSection,
                 communalTutorialIndicatorSection,
+                clockSection,
+                smartspaceSection,
+                udfpsAccessibilityOverlaySection,
             )
     }
 
@@ -93,7 +100,7 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
     fun replaceViews() {
         val constraintLayout = ConstraintLayout(context, null)
         underTest.replaceViews(null, constraintLayout)
-        underTest.sections.forEach { verify(it).addViews(constraintLayout) }
+        underTest.sections.forEach { verify(it)?.addViews(constraintLayout) }
     }
 
     @Test
@@ -101,21 +108,28 @@ class DefaultKeyguardBlueprintTest : SysuiTestCase() {
         val prevBlueprint = mock(KeyguardBlueprint::class.java)
         val someSection = mock(KeyguardSection::class.java)
         whenever(prevBlueprint.sections)
-            .thenReturn(underTest.sections.minus(mDefaultDeviceEntryIconSection).plus(someSection))
+            .thenReturn(underTest.sections.minus(mDefaultDeviceEntrySection).plus(someSection))
         val constraintLayout = ConstraintLayout(context, null)
         underTest.replaceViews(prevBlueprint, constraintLayout)
-        underTest.sections.minus(mDefaultDeviceEntryIconSection).forEach {
-            verify(it, never()).addViews(constraintLayout)
+        underTest.sections.minus(mDefaultDeviceEntrySection).forEach {
+            verify(it, never())?.addViews(constraintLayout)
         }
 
-        verify(mDefaultDeviceEntryIconSection).addViews(constraintLayout)
+        verify(mDefaultDeviceEntrySection).addViews(constraintLayout)
         verify(someSection).removeViews(constraintLayout)
+    }
+
+    @Test
+    fun deviceEntryIconIsOnTop() {
+        val constraintLayout = ConstraintLayout(context, null)
+        underTest.replaceViews(null, constraintLayout)
+        underTest.sections.forEach { verify(it)?.addViews(constraintLayout) }
     }
 
     @Test
     fun applyConstraints() {
         val cs = ConstraintSet()
         underTest.applyConstraints(cs)
-        underTest.sections.forEach { verify(it).applyConstraints(cs) }
+        underTest.sections.forEach { verify(it)?.applyConstraints(cs) }
     }
 }

@@ -18,7 +18,7 @@ package com.android.systemui.bouncer.ui.viewmodel
 
 import android.annotation.StringRes
 import com.android.systemui.authentication.domain.interactor.AuthenticationResult
-import com.android.systemui.authentication.domain.model.AuthenticationMethodModel
+import com.android.systemui.authentication.shared.model.AuthenticationMethodModel
 import com.android.systemui.bouncer.domain.interactor.BouncerInteractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,22 +46,26 @@ sealed class AuthMethodBouncerViewModel(
      */
     val animateFailure: StateFlow<Boolean> = _animateFailure.asStateFlow()
 
-    /** Whether the input method editor (for example, the software keyboard) is visible. */
-    private var isImeVisible: Boolean = false
-
     /** The authentication method that corresponds to this view model. */
     abstract val authenticationMethod: AuthenticationMethodModel
 
     /**
-     * String resource ID of the failure message to be shown during throttling.
+     * String resource ID of the failure message to be shown during lockout.
      *
      * The message must include 2 number parameters: the first one indicating how many unsuccessful
-     * attempts were made, and the second one indicating in how many seconds throttling will expire.
+     * attempts were made, and the second one indicating in how many seconds lockout will expire.
      */
-    @get:StringRes abstract val throttlingMessageId: Int
+    @get:StringRes abstract val lockoutMessageId: Int
 
     /** Notifies that the UI has been shown to the user. */
     fun onShown() {
+        interactor.resetMessage()
+    }
+
+    /**
+     * Notifies that the UI has been hidden from the user (after any transitions have completed).
+     */
+    open fun onHidden() {
         clearInput()
         interactor.resetMessage()
     }
@@ -69,18 +73,6 @@ sealed class AuthMethodBouncerViewModel(
     /** Notifies that the user has placed down a pointer. */
     fun onDown() {
         interactor.onDown()
-    }
-
-    /**
-     * Notifies that the input method editor (for example, the software keyboard) has been shown or
-     * hidden.
-     */
-    fun onImeVisibilityChanged(isVisible: Boolean) {
-        if (isImeVisible && !isVisible) {
-            interactor.onImeHidden()
-        }
-
-        isImeVisible = isVisible
     }
 
     /**
@@ -113,8 +105,6 @@ sealed class AuthMethodBouncerViewModel(
             }
             _animateFailure.value = authenticationResult != AuthenticationResult.SUCCEEDED
 
-            // TODO(b/291528545): On success, this should only be cleared after the view is animated
-            //  away).
             clearInput()
         }
     }

@@ -96,9 +96,9 @@ JNIEnv* DeviceCallback::getJNIEnv() {
     return env;
 }
 
-std::unique_ptr<UinputDevice> UinputDevice::open(int32_t id, const char* name, int32_t vid,
-                                                 int32_t pid, uint16_t bus, uint32_t ffEffectsMax,
-                                                 const char* port,
+std::unique_ptr<UinputDevice> UinputDevice::open(int32_t id, const char* name, int32_t vendorId,
+                                                 int32_t productId, int32_t versionId, uint16_t bus,
+                                                 uint32_t ffEffectsMax, const char* port,
                                                  std::unique_ptr<DeviceCallback> callback) {
     android::base::unique_fd fd(::open(UINPUT_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC));
     if (!fd.ok()) {
@@ -118,8 +118,9 @@ std::unique_ptr<UinputDevice> UinputDevice::open(int32_t id, const char* name, i
     strlcpy(setupDescriptor.name, name, UINPUT_MAX_NAME_SIZE);
     setupDescriptor.id.version = 1;
     setupDescriptor.id.bustype = bus;
-    setupDescriptor.id.vendor = vid;
-    setupDescriptor.id.product = pid;
+    setupDescriptor.id.vendor = vendorId;
+    setupDescriptor.id.product = productId;
+    setupDescriptor.id.version = versionId;
     setupDescriptor.ff_effects_max = ffEffectsMax;
 
     // Request device configuration.
@@ -242,9 +243,9 @@ std::vector<int32_t> toVector(JNIEnv* env, jintArray javaArray) {
     return data;
 }
 
-static jlong openUinputDevice(JNIEnv* env, jclass /* clazz */, jstring rawName, jint id, jint vid,
-                              jint pid, jint bus, jint ffEffectsMax, jstring rawPort,
-                              jobject callback) {
+static jlong openUinputDevice(JNIEnv* env, jclass /* clazz */, jstring rawName, jint id,
+                              jint vendorId, jint productId, jint versionId, jint bus,
+                              jint ffEffectsMax, jstring rawPort, jobject callback) {
     ScopedUtfChars name(env, rawName);
     if (name.c_str() == nullptr) {
         return 0;
@@ -255,8 +256,8 @@ static jlong openUinputDevice(JNIEnv* env, jclass /* clazz */, jstring rawName, 
             std::make_unique<uinput::DeviceCallback>(env, callback);
 
     std::unique_ptr<uinput::UinputDevice> d =
-            uinput::UinputDevice::open(id, name.c_str(), vid, pid, bus, ffEffectsMax, port.c_str(),
-                                       std::move(cb));
+            uinput::UinputDevice::open(id, name.c_str(), vendorId, productId, versionId, bus,
+                                       ffEffectsMax, port.c_str(), std::move(cb));
     return reinterpret_cast<jlong>(d.release());
 }
 
@@ -283,7 +284,10 @@ static void configure(JNIEnv* env, jclass /* clazz */, jint handle, jint code,
     std::vector<int32_t> configs = toVector(env, rawConfigs);
     // Configure uinput device, with user specified code and value.
     for (auto& config : configs) {
-        ::ioctl(static_cast<int>(handle), _IOW(UINPUT_IOCTL_BASE, code, int), config);
+        if (::ioctl(static_cast<int>(handle), _IOW(UINPUT_IOCTL_BASE, code, int), config) < 0) {
+            ALOGE("Error configuring device (ioctl %d, value 0x%x): %s", code, config,
+                  strerror(errno));
+        }
     }
 }
 
@@ -323,7 +327,7 @@ static jint getEvdevInputPropByLabel(JNIEnv* env, jclass /* clazz */, jstring ra
 
 static JNINativeMethod sMethods[] = {
         {"nativeOpenUinputDevice",
-         "(Ljava/lang/String;IIIIILjava/lang/String;"
+         "(Ljava/lang/String;IIIIIILjava/lang/String;"
          "Lcom/android/commands/uinput/Device$DeviceCallback;)J",
          reinterpret_cast<void*>(openUinputDevice)},
         {"nativeInjectEvent", "(JIII)V", reinterpret_cast<void*>(injectEvent)},

@@ -20,9 +20,13 @@ import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
+import android.view.View.AccessibilityDelegate
 import android.view.View.GONE
 import android.view.View.VISIBLE
 import android.view.ViewGroup
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import android.widget.ImageView
 import android.widget.Switch
 import android.widget.TextView
@@ -32,13 +36,18 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.android.internal.logging.UiEventLogger
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.phone.SystemUIDialog
 import com.android.systemui.util.time.SystemClock
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
 /** Dialog for showing active, connected and saved bluetooth devices. */
 @SysUISingleton
@@ -46,7 +55,9 @@ internal class BluetoothTileDialog
 constructor(
     private val bluetoothToggleInitialValue: Boolean,
     private val subtitleResIdInitialValue: Int,
+    private val cachedContentHeight: Int,
     private val bluetoothTileDialogCallback: BluetoothTileDialogCallback,
+    @Main private val mainDispatcher: CoroutineDispatcher,
     private val systemClock: SystemClock,
     private val uiEventLogger: UiEventLogger,
     private val logger: BluetoothTileDialogLogger,
@@ -63,16 +74,24 @@ constructor(
     internal val deviceItemClick
         get() = mutableDeviceItemClick.asSharedFlow()
 
+    private val mutableContentHeight: MutableSharedFlow<Int> =
+        MutableSharedFlow(extraBufferCapacity = 1)
+    internal val contentHeight
+        get() = mutableContentHeight.asSharedFlow()
+
     private val deviceItemAdapter: Adapter = Adapter(bluetoothTileDialogCallback)
+
+    private var lastUiUpdateMs: Long = -1
+
+    private var lastItemRow: Int = -1
 
     private lateinit var toggleView: Switch
     private lateinit var subtitleTextView: TextView
     private lateinit var doneButton: View
-    private lateinit var seeAllViewGroup: View
-    private lateinit var pairNewDeviceViewGroup: View
-    private lateinit var seeAllText: View
-    private lateinit var pairNewDeviceText: View
+    private lateinit var seeAllButton: View
+    private lateinit var pairNewDeviceButton: View
     private lateinit var deviceListView: RecyclerView
+    private lateinit var scrollViewContent: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,10 +105,8 @@ constructor(
         toggleView = requireViewById(R.id.bluetooth_toggle)
         subtitleTextView = requireViewById(R.id.bluetooth_tile_dialog_subtitle) as TextView
         doneButton = requireViewById(R.id.done_button)
-        seeAllViewGroup = requireViewById(R.id.see_all_layout_group)
-        pairNewDeviceViewGroup = requireViewById(R.id.pair_new_device_layout_group)
-        seeAllText = requireViewById(R.id.see_all_text)
-        pairNewDeviceText = requireViewById(R.id.pair_new_device_text)
+        seeAllButton = requireViewById(R.id.see_all_button)
+        pairNewDeviceButton = requireViewById(R.id.pair_new_device_button)
         deviceListView = requireViewById<RecyclerView>(R.id.device_list)
 
         setupToggle()
@@ -97,22 +114,50 @@ constructor(
 
         subtitleTextView.text = context.getString(subtitleResIdInitialValue)
         doneButton.setOnClickListener { dismiss() }
-        seeAllText.setOnClickListener { bluetoothTileDialogCallback.onSeeAllClicked(it) }
-        pairNewDeviceText.setOnClickListener {
+        seeAllButton.setOnClickListener { bluetoothTileDialogCallback.onSeeAllClicked(it) }
+        pairNewDeviceButton.setOnClickListener {
             bluetoothTileDialogCallback.onPairNewDeviceClicked(it)
+        }
+        requireViewById<View>(R.id.scroll_view).apply {
+            scrollViewContent = this
+            layoutParams.height = cachedContentHeight
         }
     }
 
-    internal fun onDeviceItemUpdated(
+    override fun start() {
+        lastUiUpdateMs = systemClock.elapsedRealtime()
+    }
+
+    override fun dismiss() {
+        if (::scrollViewContent.isInitialized) {
+            mutableContentHeight.tryEmit(scrollViewContent.measuredHeight)
+        }
+        super.dismiss()
+    }
+
+    internal suspend fun onDeviceItemUpdated(
         deviceItem: List<DeviceItem>,
         showSeeAll: Boolean,
         showPairNewDevice: Boolean
     ) {
-        val start = systemClock.elapsedRealtime()
-        deviceItemAdapter.refreshDeviceItemList(deviceItem) {
-            seeAllViewGroup.visibility = if (showSeeAll) VISIBLE else GONE
-            pairNewDeviceViewGroup.visibility = if (showPairNewDevice) VISIBLE else GONE
-            logger.logDeviceUiUpdate(systemClock.elapsedRealtime() - start)
+        withContext(mainDispatcher) {
+            val start = systemClock.elapsedRealtime()
+            val itemRow = deviceItem.size + showSeeAll.toInt() + showPairNewDevice.toInt()
+            // If not the first load, add a slight delay for smoother dialog height change
+            if (itemRow != lastItemRow && lastItemRow != -1) {
+                delay(MIN_HEIGHT_CHANGE_INTERVAL_MS - (start - lastUiUpdateMs))
+            }
+            if (isActive) {
+                deviceItemAdapter.refreshDeviceItemList(deviceItem) {
+                    seeAllButton.visibility = if (showSeeAll) VISIBLE else GONE
+                    pairNewDeviceButton.visibility = if (showPairNewDevice) VISIBLE else GONE
+                    // Update the height after data is updated
+                    scrollViewContent.layoutParams.height = WRAP_CONTENT
+                    lastUiUpdateMs = systemClock.elapsedRealtime()
+                    lastItemRow = itemRow
+                    logger.logDeviceUiUpdate(lastUiUpdateMs - start)
+                }
+            }
         }
     }
 
@@ -169,7 +214,8 @@ constructor(
                         deviceItem1.iconWithDescription?.second ==
                             deviceItem2.iconWithDescription?.second &&
                         deviceItem1.background == deviceItem2.background &&
-                        deviceItem1.isEnabled == deviceItem2.isEnabled
+                        deviceItem1.isEnabled == deviceItem2.isEnabled &&
+                        deviceItem1.actionAccessibilityLabel == deviceItem2.actionAccessibilityLabel
                 }
             }
 
@@ -213,6 +259,21 @@ constructor(
                         mutableDeviceItemClick.tryEmit(item)
                         uiEventLogger.log(BluetoothTileDialogUiEvent.DEVICE_CLICKED)
                     }
+                    accessibilityDelegate =
+                        object : AccessibilityDelegate() {
+                            override fun onInitializeAccessibilityNodeInfo(
+                                host: View,
+                                info: AccessibilityNodeInfo
+                            ) {
+                                super.onInitializeAccessibilityNodeInfo(host, info)
+                                info.addAction(
+                                    AccessibilityAction(
+                                        AccessibilityAction.ACTION_CLICK.id,
+                                        item.actionAccessibilityLabel
+                                    )
+                                )
+                            }
+                        }
                 }
                 nameView.text = item.deviceName
                 summaryView.text = item.connectionSummary
@@ -230,6 +291,7 @@ constructor(
     }
 
     internal companion object {
+        const val MIN_HEIGHT_CHANGE_INTERVAL_MS = 800L
         const val MAX_DEVICE_ITEM_ENTRY = 3
         const val ACTION_BLUETOOTH_DEVICE_DETAILS =
             "com.android.settings.BLUETOOTH_DEVICE_DETAIL_SETTINGS"
@@ -238,5 +300,9 @@ constructor(
         const val ACTION_PAIR_NEW_DEVICE = "android.settings.BLUETOOTH_PAIRING_SETTINGS"
         const val DISABLED_ALPHA = 0.3f
         const val ENABLED_ALPHA = 1f
+
+        private fun Boolean.toInt(): Int {
+            return if (this) 1 else 0
+        }
     }
 }

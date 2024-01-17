@@ -27,10 +27,12 @@ import com.android.keyguard.LockIconView
 import com.android.keyguard.LockIconViewController
 import com.android.keyguard.dagger.KeyguardStatusViewComponent
 import com.android.systemui.CoreStartable
+import com.android.systemui.Flags.keyguardBottomAreaRefactor
+import com.android.systemui.common.ui.ConfigurationState
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryHapticsInteractor
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
+import com.android.systemui.deviceentry.shared.DeviceEntryUdfpsRefactor
+import com.android.systemui.flags.FeatureFlagsClassic
 import com.android.systemui.keyguard.ui.binder.KeyguardBlueprintViewBinder
 import com.android.systemui.keyguard.ui.binder.KeyguardIndicationAreaBinder
 import com.android.systemui.keyguard.ui.binder.KeyguardRootViewBinder
@@ -41,12 +43,13 @@ import com.android.systemui.keyguard.ui.viewmodel.KeyguardBlueprintViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardIndicationAreaViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.OccludingAppDeviceEntryMessageViewModel
+import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
 import com.android.systemui.shade.NotificationShadeWindowView
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.KeyguardIndicationController
 import com.android.systemui.statusbar.VibratorHelper
-import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.statusbar.phone.ScreenOffAnimationController
 import com.android.systemui.temporarydisplay.chipbar.ChipbarCoordinator
 import dagger.Lazy
 import javax.inject.Inject
@@ -63,14 +66,15 @@ constructor(
     private val keyguardRootViewModel: KeyguardRootViewModel,
     private val keyguardIndicationAreaViewModel: KeyguardIndicationAreaViewModel,
     private val notificationShadeWindowView: NotificationShadeWindowView,
-    private val featureFlags: FeatureFlags,
+    private val featureFlags: FeatureFlagsClassic,
     private val indicationController: KeyguardIndicationController,
-    private val keyguardStateController: KeyguardStateController,
+    private val screenOffAnimationController: ScreenOffAnimationController,
     private val occludingAppDeviceEntryMessageViewModel: OccludingAppDeviceEntryMessageViewModel,
     private val chipbarCoordinator: ChipbarCoordinator,
     private val keyguardBlueprintCommandListener: KeyguardBlueprintCommandListener,
     private val keyguardBlueprintViewModel: KeyguardBlueprintViewModel,
     private val keyguardStatusViewComponentFactory: KeyguardStatusViewComponent.Factory,
+    private val configuration: ConfigurationState,
     private val context: Context,
     private val keyguardIndicationController: KeyguardIndicationController,
     private val lockIconViewController: Lazy<LockIconViewController>,
@@ -78,6 +82,7 @@ constructor(
     private val interactionJankMonitor: InteractionJankMonitor,
     private val deviceEntryHapticsInteractor: DeviceEntryHapticsInteractor,
     private val vibratorHelper: VibratorHelper,
+    private val falsingManager: FalsingManager,
 ) : CoreStartable {
 
     private var rootViewHandle: DisposableHandle? = null
@@ -111,7 +116,7 @@ constructor(
     fun bindIndicationArea() {
         indicationAreaHandle?.dispose()
 
-        if (!featureFlags.isEnabled(Flags.MIGRATE_SPLIT_KEYGUARD_BOTTOM_AREA)) {
+        if (!keyguardBottomAreaRefactor()) {
             keyguardRootView.findViewById<View?>(R.id.keyguard_indication_area)?.let {
                 keyguardRootView.removeView(it)
             }
@@ -119,11 +124,10 @@ constructor(
 
         indicationAreaHandle =
             KeyguardIndicationAreaBinder.bind(
-                notificationShadeWindowView,
+                notificationShadeWindowView.requireViewById(R.id.keyguard_indication_area),
                 keyguardIndicationAreaViewModel,
                 keyguardRootViewModel,
                 indicationController,
-                featureFlags,
             )
     }
 
@@ -132,7 +136,7 @@ constructor(
         val indicationArea = KeyguardIndicationArea(context, null)
         keyguardIndicationController.setIndicationArea(indicationArea)
 
-        if (!featureFlags.isEnabled(Flags.REFACTOR_UDFPS_KEYGUARD_VIEWS)) {
+        if (!DeviceEntryUdfpsRefactor.isEnabled) {
             lockIconViewController.get().setLockIconView(LockIconView(context, null))
         }
     }
@@ -143,15 +147,17 @@ constructor(
             KeyguardRootViewBinder.bind(
                 keyguardRootView,
                 keyguardRootViewModel,
+                configuration,
                 featureFlags,
                 occludingAppDeviceEntryMessageViewModel,
                 chipbarCoordinator,
-                keyguardStateController,
+                screenOffAnimationController,
                 shadeInteractor,
                 { keyguardStatusViewController!!.getClockController() },
                 interactionJankMonitor,
                 deviceEntryHapticsInteractor,
                 vibratorHelper,
+                falsingManager,
             )
     }
 

@@ -614,7 +614,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         t.setForceTranslucent(taskFragment.mRemoteToken.toWindowContainerToken(), true);
         mWm.mAtmService.mWindowOrganizerController.applyTaskFragmentTransactionLocked(
                 t, TaskFragmentOrganizer.TASK_FRAGMENT_TRANSIT_CHANGE,
-                false /* shouldApplyIndependently */);
+                false /* shouldApplyIndependently */, null /* remoteTransition */);
 
         // Should be not visible and not focusable after the transaction.
         assertFalse(taskFragment.shouldBeVisible(null));
@@ -628,7 +628,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         t.setForceTranslucent(taskFragment.mRemoteToken.toWindowContainerToken(), false);
         mWm.mAtmService.mWindowOrganizerController.applyTaskFragmentTransactionLocked(
                 t, TaskFragmentOrganizer.TASK_FRAGMENT_TRANSIT_CHANGE,
-                false /* shouldApplyIndependently */);
+                false /* shouldApplyIndependently */, null /* remoteTransition */);
 
         // Should be visible and focusable after the transaction.
         assertTrue(taskFragment.shouldBeVisible(null));
@@ -680,7 +680,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         assertThrows(SecurityException.class, () ->
                 mWm.mAtmService.mWindowOrganizerController.applyTaskFragmentTransactionLocked(
                         t, TaskFragmentOrganizer.TASK_FRAGMENT_TRANSIT_CHANGE,
-                        false /* shouldApplyIndependently */)
+                        false /* shouldApplyIndependently */, null /* remoteTransition */)
         );
     }
 
@@ -1337,8 +1337,8 @@ public class WindowOrganizerTests extends WindowTestsBase {
 
         // Since we have a window we have to wait for it to draw to finish sync.
         verify(mockCallback, never()).onTransactionReady(anyInt(), any());
-        assertTrue(w1.useBLASTSync());
-        assertTrue(w2.useBLASTSync());
+        assertTrue(w1.syncNextBuffer());
+        assertTrue(w2.syncNextBuffer());
 
         // Make second (bottom) ready. If we started with the top, since activities fillsParent
         // by default, the sync would be considered finished.
@@ -1348,16 +1348,16 @@ public class WindowOrganizerTests extends WindowTestsBase {
 
         assertEquals(SYNC_STATE_READY, w2.mSyncState);
         // Even though one Window finished drawing, both windows should still be using blast sync
-        assertTrue(w1.useBLASTSync());
-        assertTrue(w2.useBLASTSync());
+        assertTrue(w1.syncNextBuffer());
+        assertTrue(w2.syncNextBuffer());
 
         // A drawn window can complete the sync state automatically.
         w1.mWinAnimator.mDrawState = WindowStateAnimator.HAS_DRAWN;
         makeLastConfigReportedToClient(w1, true /* visible */);
         mWm.mSyncEngine.onSurfacePlacement();
         verify(mockCallback).onTransactionReady(anyInt(), any());
-        assertFalse(w1.useBLASTSync());
-        assertFalse(w2.useBLASTSync());
+        assertFalse(w1.syncNextBuffer());
+        assertFalse(w2.syncNextBuffer());
     }
 
     @Test
@@ -1598,7 +1598,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         verify(organizer).onTaskInfoChanged(infoCaptor.capture());
         RunningTaskInfo info = infoCaptor.getValue();
         assertEquals(rootTask.mTaskId, info.taskId);
-        assertTrue(info.topActivityInSizeCompat);
+        assertTrue(info.appCompatTaskInfo.topActivityInSizeCompat);
 
         // Ensure task info show top activity that is not visible as not in size compat.
         clearInvocations(organizer);
@@ -1608,7 +1608,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         verify(organizer).onTaskInfoChanged(infoCaptor.capture());
         info = infoCaptor.getValue();
         assertEquals(rootTask.mTaskId, info.taskId);
-        assertFalse(info.topActivityInSizeCompat);
+        assertFalse(info.appCompatTaskInfo.topActivityInSizeCompat);
 
         // Ensure task info show non size compat top activity as not in size compat.
         clearInvocations(organizer);
@@ -1619,7 +1619,7 @@ public class WindowOrganizerTests extends WindowTestsBase {
         verify(organizer).onTaskInfoChanged(infoCaptor.capture());
         info = infoCaptor.getValue();
         assertEquals(rootTask.mTaskId, info.taskId);
-        assertFalse(info.topActivityInSizeCompat);
+        assertFalse(info.appCompatTaskInfo.topActivityInSizeCompat);
     }
 
     @Test

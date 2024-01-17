@@ -18,6 +18,8 @@ package com.android.compose.animation.scene
 
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,9 +40,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertPositionInRootIsEqualTo
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onChild
-import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.Dp
@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.android.compose.test.assertSizeIsEqualTo
 import com.android.compose.test.subjects.DpOffsetSubject
 import com.android.compose.test.subjects.assertThat
 import com.google.common.truth.Truth.assertThat
@@ -248,9 +249,9 @@ class SceneTransitionLayoutTest {
         // Advance to the middle of the animation.
         rule.mainClock.advanceTimeBy(TestTransitionDuration / 2)
 
-        // We need to use onAllNodesWithTag().onFirst() here given that shared elements are
-        // composed and laid out in both scenes (but drawn only in one).
-        sharedFoo = rule.onAllNodesWithTag(TestElements.Foo.testTag).onFirst()
+        // Foo is shared between Scene A and Scene B, and is therefore placed/drawn in Scene B given
+        // that B has a higher zIndex than A.
+        sharedFoo = rule.onNode(isElement(TestElements.Foo, TestScenes.SceneB))
 
         // In scene B, foo is at the top start (x = 0, y = 0) of the layout and has a size of
         // 100.dp. We pause at the middle of the transition, so it should now be 75.dp given that we
@@ -284,7 +285,7 @@ class SceneTransitionLayoutTest {
         val expectedLeft = 0.dp
         val expectedSize = 100.dp + (150.dp - 100.dp) * interpolatedProgress
 
-        sharedFoo = rule.onAllNodesWithTag(TestElements.Foo.testTag).onFirst()
+        sharedFoo = rule.onNode(isElement(TestElements.Foo, TestScenes.SceneC))
         assertThat((layoutState.transitionState as TransitionState.Transition).progress)
             .isEqualTo(interpolatedProgress)
         sharedFoo.assertWidthIsEqualTo(expectedSize)
@@ -305,6 +306,26 @@ class SceneTransitionLayoutTest {
         rule.mainClock.advanceTimeByFrame()
         assertThat(layoutState.transitionState).isInstanceOf(TransitionState.Idle::class.java)
         assertThat(layoutState.transitionState.currentScene).isEqualTo(TestScenes.SceneA)
+    }
+
+    @Test
+    fun layoutSizeIsAnimated() {
+        val layoutTag = "layout"
+        rule.testTransition(
+            fromSceneContent = { Box(Modifier.size(200.dp, 100.dp)) },
+            toSceneContent = { Box(Modifier.size(120.dp, 140.dp)) },
+            transition = {
+                // 4 frames of animation.
+                spec = tween(4 * 16, easing = LinearEasing)
+            },
+            layoutModifier = Modifier.testTag(layoutTag),
+        ) {
+            before { rule.onNodeWithTag(layoutTag).assertSizeIsEqualTo(200.dp, 100.dp) }
+            at(16) { rule.onNodeWithTag(layoutTag).assertSizeIsEqualTo(180.dp, 110.dp) }
+            at(32) { rule.onNodeWithTag(layoutTag).assertSizeIsEqualTo(160.dp, 120.dp) }
+            at(48) { rule.onNodeWithTag(layoutTag).assertSizeIsEqualTo(140.dp, 130.dp) }
+            after { rule.onNodeWithTag(layoutTag).assertSizeIsEqualTo(120.dp, 140.dp) }
+        }
     }
 
     private fun SemanticsNodeInteraction.offsetRelativeTo(

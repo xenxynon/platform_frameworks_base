@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -300,8 +301,10 @@ public class TileLifecycleManagerTest extends SysuiTestCase {
         mStateManager.onStartListening();
         mStateManager.executeSetBindService(true);
         mExecutor.runAllReady();
-        mStateManager.onServiceDisconnected(mTileServiceComponentName);
+        mStateManager.onBindingDied(mTileServiceComponentName);
+        mExecutor.runAllReady();
         mClock.advanceTime(5000);
+        mExecutor.runAllReady();
 
         // Two calls: one for the first bind, one for the restart.
         verifyBind(2);
@@ -318,17 +321,63 @@ public class TileLifecycleManagerTest extends SysuiTestCase {
         mStateManager.onStartListening();
         mStateManager.executeSetBindService(true);
         mExecutor.runAllReady();
-        mStateManager.onServiceDisconnected(mTileServiceComponentName);
+        verify(mMockTileService, times(1)).onStartListening();
+        mStateManager.onBindingDied(mTileServiceComponentName);
+        mExecutor.runAllReady();
 
         // Longer delay than a regular one
         mClock.advanceTime(5000);
-        verifyBind(1);
-        verify(mMockTileService, times(1)).onStartListening();
+        mExecutor.runAllReady();
+
+        assertFalse(mContext.isBound(mTileServiceComponentName));
 
         mClock.advanceTime(20000);
+        mExecutor.runAllReady();
         // Two calls: one for the first bind, one for the restart.
         verifyBind(2);
         verify(mMockTileService, times(2)).onStartListening();
+    }
+
+    @Test
+    public void testOnServiceDisconnectedDoesnUnbind_doesntForwardToBinder() throws Exception {
+        mStateManager.executeSetBindService(true);
+        mExecutor.runAllReady();
+
+        mStateManager.onStartListening();
+        verify(mMockTileService).onStartListening();
+
+        clearInvocations(mMockTileService);
+        mStateManager.onServiceDisconnected(mTileServiceComponentName);
+        mExecutor.runAllReady();
+
+        mStateManager.onStartListening();
+        verify(mMockTileService, never()).onStartListening();
+    }
+
+    @Test
+    public void testKillProcessLowMemory_unbound_doesntBindAgain() throws Exception {
+        doAnswer(invocation -> {
+            ActivityManager.MemoryInfo memoryInfo = invocation.getArgument(0);
+            memoryInfo.lowMemory = true;
+            return null;
+        }).when(mActivityManager).getMemoryInfo(any());
+        mStateManager.onStartListening();
+        mStateManager.executeSetBindService(true);
+        mExecutor.runAllReady();
+        verifyBind(1);
+        verify(mMockTileService, times(1)).onStartListening();
+
+        mStateManager.onBindingDied(mTileServiceComponentName);
+        mExecutor.runAllReady();
+
+        clearInvocations(mMockTileService);
+        mStateManager.executeSetBindService(false);
+        mExecutor.runAllReady();
+        mClock.advanceTime(30000);
+        mExecutor.runAllReady();
+
+        verifyBind(0);
+        verify(mMockTileService, never()).onStartListening();
     }
 
     @Test
@@ -401,6 +450,31 @@ public class TileLifecycleManagerTest extends SysuiTestCase {
                 | Context.BIND_WAIVE_PRIORITY;
 
         verify(falseContext).bindServiceAsUser(any(), any(), eq(flags), any());
+    }
+
+    @Test
+    public void testNullBindingCallsUnbind() {
+        Context mockContext = mock(Context.class);
+        // Binding has to succeed
+        when(mockContext.bindServiceAsUser(any(), any(), anyInt(), any())).thenReturn(true);
+        TileLifecycleManager manager = new TileLifecycleManager(mHandler, mockContext,
+                mock(IQSService.class),
+                mMockPackageManagerAdapter,
+                mMockBroadcastDispatcher,
+                mTileServiceIntent,
+                mUser,
+                mActivityManager,
+                mExecutor);
+
+        manager.executeSetBindService(true);
+        mExecutor.runAllReady();
+
+        ArgumentCaptor<ServiceConnection> captor = ArgumentCaptor.forClass(ServiceConnection.class);
+        verify(mockContext).bindServiceAsUser(any(), captor.capture(), anyInt(), any());
+
+        captor.getValue().onNullBinding(mTileServiceComponentName);
+        mExecutor.runAllReady();
+        verify(mockContext).unbindService(captor.getValue());
     }
 
     private void mockChangeEnabled(long changeId, boolean enabled) {

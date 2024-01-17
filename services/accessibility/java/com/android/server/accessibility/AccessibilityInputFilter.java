@@ -57,6 +57,7 @@ import java.util.StringJoiner;
  *
  * NOTE: This class has to be created and poked only from the main thread.
  */
+@SuppressWarnings("MissingPermissionAnnotation")
 class AccessibilityInputFilter extends InputFilter implements EventStreamTransformation {
 
     private static final String TAG = AccessibilityInputFilter.class.getSimpleName();
@@ -157,6 +158,7 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
                     | FLAG_FEATURE_AUTOCLICK
                     | FLAG_FEATURE_TOUCH_EXPLORATION
                     | FLAG_FEATURE_MAGNIFICATION_SINGLE_FINGER_TRIPLE_TAP
+                    | FLAG_FEATURE_MAGNIFICATION_TWO_FINGER_TRIPLE_TAP
                     | FLAG_FEATURE_TRIGGERED_SCREEN_MAGNIFIER
                     | FLAG_SERVICE_HANDLES_DOUBLE_TAP
                     | FLAG_REQUEST_MULTI_FINGER_GESTURES
@@ -197,6 +199,7 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
     // State tracking for generic MotionEvents is display-agnostic so we only need one.
     private GenericMotionEventStreamState mGenericMotionEventStreamState;
     private int mCombinedGenericMotionEventSources = 0;
+    private int mCombinedMotionEventObservedSources = 0;
 
     private EventStreamState mKeyboardStreamState;
 
@@ -524,31 +527,48 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
         }
 
         if ((mEnabledFeatures & FLAG_FEATURE_INTERCEPT_GENERIC_MOTION_EVENTS) != 0) {
-            addFirstEventHandler(displayId, new BaseEventStreamTransformation() {
-                @Override
-                public void onMotionEvent(MotionEvent event, MotionEvent rawEvent,
-                        int policyFlags) {
-                    if (!anyServiceWantsGenericMotionEvent(rawEvent)
-                            || !mAms.sendMotionEventToListeningServices(rawEvent)) {
-                        super.onMotionEvent(event, rawEvent, policyFlags);
-                    }
-                }
-            });
+            addFirstEventHandler(
+                    displayId,
+                    new BaseEventStreamTransformation() {
+                        @Override
+                        public void onMotionEvent(
+                                MotionEvent event, MotionEvent rawEvent, int policyFlags) {
+                            boolean passAlongEvent = true;
+                            if (anyServiceWantsGenericMotionEvent(event)) {
+                                // Some service wants this event, so try to deliver it to at least
+                                // one service.
+                                if (mAms.sendMotionEventToListeningServices(event)) {
+                                    // A service accepted this event, so prevent it from passing
+                                    // down the stream by default.
+                                    passAlongEvent = false;
+                                }
+                                // However, if a service is observing these events instead of
+                                // consuming them then ensure
+                                // it is always passed along to the next stage of the event stream.
+                                if (anyServiceWantsToObserveMotionEvent(event)) {
+                                    passAlongEvent = true;
+                                }
+                            }
+                            if (passAlongEvent) {
+                                super.onMotionEvent(event, rawEvent, policyFlags);
+                            }
+                        }
+                    });
         }
 
         if ((mEnabledFeatures & FLAG_FEATURE_CONTROL_SCREEN_MAGNIFIER) != 0
                 || ((mEnabledFeatures & FLAG_FEATURE_MAGNIFICATION_SINGLE_FINGER_TRIPLE_TAP) != 0)
+                || ((mEnabledFeatures & FLAG_FEATURE_MAGNIFICATION_TWO_FINGER_TRIPLE_TAP) != 0)
                 || ((mEnabledFeatures & FLAG_FEATURE_TRIGGERED_SCREEN_MAGNIFIER) != 0)) {
             final MagnificationGestureHandler magnificationGestureHandler =
-                    createMagnificationGestureHandler(displayId,
-                            displayContext);
+                    createMagnificationGestureHandler(displayId, displayContext);
             addFirstEventHandler(displayId, magnificationGestureHandler);
             mMagnificationGestureHandler.put(displayId, magnificationGestureHandler);
         }
 
         if ((mEnabledFeatures & FLAG_FEATURE_INJECT_MOTION_EVENTS) != 0) {
-            MotionEventInjector injector = new MotionEventInjector(
-                    mContext.getMainLooper(), mAms.getTraceManager());
+            MotionEventInjector injector =
+                    new MotionEventInjector(mContext.getMainLooper(), mAms.getTraceManager());
             addFirstEventHandler(displayId, injector);
             mMotionEventInjectors.put(displayId, injector);
         }
@@ -656,6 +676,8 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
             int displayId, Context displayContext) {
         final boolean detectControlGestures = (mEnabledFeatures
                 & FLAG_FEATURE_MAGNIFICATION_SINGLE_FINGER_TRIPLE_TAP) != 0;
+        final boolean detectTwoFingerTripleTap = (mEnabledFeatures
+                & FLAG_FEATURE_MAGNIFICATION_TWO_FINGER_TRIPLE_TAP) != 0;
         final boolean triggerable = (mEnabledFeatures
                 & FLAG_FEATURE_TRIGGERED_SCREEN_MAGNIFIER) != 0;
         MagnificationGestureHandler magnificationGestureHandler;
@@ -664,9 +686,11 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
             final Context uiContext = displayContext.createWindowContext(
                     TYPE_ACCESSIBILITY_MAGNIFICATION_OVERLAY, null /* options */);
             magnificationGestureHandler = new WindowMagnificationGestureHandler(uiContext,
-                    mAms.getWindowMagnificationMgr(), mAms.getTraceManager(),
-                    mAms.getMagnificationController(), detectControlGestures, triggerable,
-                    displayId);
+                    mAms.getMagnificationConnectionManager(), mAms.getTraceManager(),
+                    mAms.getMagnificationController(),
+                    detectControlGestures,
+                    detectTwoFingerTripleTap,
+                    triggerable, displayId);
         } else {
             final Context uiContext = displayContext.createWindowContext(
                     TYPE_MAGNIFICATION_OVERLAY, null /* options */);
@@ -675,7 +699,10 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
             magnificationGestureHandler = new FullScreenMagnificationGestureHandler(uiContext,
                     mAms.getMagnificationController().getFullScreenMagnificationController(),
                     mAms.getTraceManager(),
-                    mAms.getMagnificationController(), detectControlGestures, triggerable,
+                    mAms.getMagnificationController(),
+                    detectControlGestures,
+                    detectTwoFingerTripleTap,
+                    triggerable,
                     new WindowMagnificationPromptController(displayContext, mUserId), displayId,
                     fullScreenMagnificationVibrationHelper);
         }
@@ -914,6 +941,20 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
         }
     }
 
+    private boolean anyServiceWantsToObserveMotionEvent(MotionEvent event) {
+        // Disable SOURCE_TOUCHSCREEN generic event interception if any service is performing
+        // touch exploration.
+        if (event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)
+                && (mEnabledFeatures & FLAG_FEATURE_TOUCH_EXPLORATION) != 0) {
+            return false;
+        }
+        final int eventSourceWithoutClass = event.getSource() & ~InputDevice.SOURCE_CLASS_MASK;
+        return (mCombinedGenericMotionEventSources
+                        & mCombinedMotionEventObservedSources
+                        & eventSourceWithoutClass)
+                != 0;
+    }
+
     private boolean anyServiceWantsGenericMotionEvent(MotionEvent event) {
         // Disable SOURCE_TOUCHSCREEN generic event interception if any service is performing
         // touch exploration.
@@ -927,6 +968,10 @@ class AccessibilityInputFilter extends InputFilter implements EventStreamTransfo
 
     public void setCombinedGenericMotionEventSources(int sources) {
         mCombinedGenericMotionEventSources = sources;
+    }
+
+    public void setCombinedMotionEventObservedSources(int sources) {
+        mCombinedMotionEventObservedSources = sources;
     }
 
     /**

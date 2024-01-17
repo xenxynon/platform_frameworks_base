@@ -23,6 +23,8 @@ import static android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static kotlinx.coroutines.flow.FlowKt.emptyFlow;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,21 +53,24 @@ import com.android.keyguard.KeyguardSecurityModel;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.bouncer.data.repository.FakeKeyguardBouncerRepository;
-import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.common.ui.data.repository.FakeConfigurationRepository;
+import com.android.systemui.common.ui.domain.interactor.ConfigurationInteractor;
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntryUdfpsInteractor;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FakeFeatureFlagsClassic;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.keyguard.data.repository.FakeCommandQueue;
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository;
+import com.android.systemui.keyguard.data.repository.FakeKeyguardSurfaceBehindRepository;
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository;
+import com.android.systemui.keyguard.data.repository.InWindowLauncherUnlockAnimationRepository;
 import com.android.systemui.keyguard.domain.interactor.FromLockscreenTransitionInteractor;
 import com.android.systemui.keyguard.domain.interactor.FromPrimaryBouncerTransitionInteractor;
+import com.android.systemui.keyguard.domain.interactor.InWindowLauncherUnlockAnimationInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
-import com.android.systemui.power.data.repository.FakePowerRepository;
 import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.FakeWindowRootViewComponent;
@@ -73,9 +78,14 @@ import com.android.systemui.scene.SceneTestUtils;
 import com.android.systemui.scene.data.repository.SceneContainerRepository;
 import com.android.systemui.scene.domain.interactor.SceneInteractor;
 import com.android.systemui.scene.shared.flag.FakeSceneContainerFlags;
+import com.android.systemui.scene.shared.flag.SceneContainerFlags;
 import com.android.systemui.scene.shared.logger.SceneLogger;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.data.repository.FakeShadeRepository;
 import com.android.systemui.shade.domain.interactor.ShadeInteractor;
+import com.android.systemui.shade.domain.interactor.ShadeInteractorImpl;
+import com.android.systemui.shade.domain.interactor.ShadeInteractorLegacyImpl;
+import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.disableflags.data.repository.FakeDisableFlagsRepository;
@@ -123,20 +133,23 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
     @Mock private KeyguardViewMediator mKeyguardViewMediator;
     @Mock private KeyguardBypassController mKeyguardBypassController;
     @Mock private SysuiColorExtractor mColorExtractor;
-    @Mock ColorExtractor.GradientColors mGradientColors;
+    @Mock private ColorExtractor.GradientColors mGradientColors;
     @Mock private DumpManager mDumpManager;
     @Mock private KeyguardSecurityModel mKeyguardSecurityModel;
     @Mock private KeyguardStateController mKeyguardStateController;
     @Mock private ScreenOffAnimationController mScreenOffAnimationController;
     @Mock private AuthController mAuthController;
-    @Mock private ShadeExpansionStateManager mShadeExpansionStateManager;
     @Mock private ShadeWindowLogger mShadeWindowLogger;
     @Mock private SelectedUserInteractor mSelectedUserInteractor;
+    @Mock private UserTracker mUserTracker;
+    @Mock private SceneContainerFlags mSceneContainerFlags;
     @Captor private ArgumentCaptor<WindowManager.LayoutParams> mLayoutParameters;
     @Captor private ArgumentCaptor<StatusBarStateController.StateListener> mStateListener;
+
+    private final Executor mMainExecutor = MoreExecutors.directExecutor();
     private final Executor mBackgroundExecutor = MoreExecutors.directExecutor();
-    private SceneTestUtils mUtils = new SceneTestUtils(this);
-    private TestScope mTestScope = mUtils.getTestScope();
+    private final SceneTestUtils mUtils = new SceneTestUtils(this);
+    private final TestScope mTestScope = mUtils.getTestScope();
     private ShadeInteractor mShadeInteractor;
 
     private NotificationShadeWindowControllerImpl mNotificationShadeWindowController;
@@ -160,11 +173,10 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
         FakeKeyguardRepository keyguardRepository = new FakeKeyguardRepository();
         FakeFeatureFlagsClassic featureFlags = new FakeFeatureFlagsClassic();
         FakeShadeRepository shadeRepository = new FakeShadeRepository();
-        FakePowerRepository powerRepository = new FakePowerRepository();
 
-        PowerInteractor powerInteractor = new PowerInteractor(
-                powerRepository,
-                new FalsingCollectorFake(),
+        PowerInteractor powerInteractor = mUtils.powerInteractor(
+                mUtils.getPowerRepository(),
+                mUtils.falsingCollector(),
                 mScreenOffAnimationController,
                 mStatusBarStateController);
 
@@ -172,8 +184,8 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 mTestScope.getBackgroundScope(),
                 new SceneContainerRepository(
                         mTestScope.getBackgroundScope(),
-                        mUtils.fakeSceneContainerConfig(mUtils.fakeSceneKeys())),
-                powerRepository,
+                        mUtils.fakeSceneContainerConfig()),
+                powerInteractor,
                 mock(SceneLogger.class));
 
         FakeConfigurationRepository configurationRepository = new FakeConfigurationRepository();
@@ -182,10 +194,9 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 keyguardRepository,
                 new FakeCommandQueue(),
                 powerInteractor,
-                featureFlags,
                 sceneContainerFlags,
                 new FakeKeyguardBouncerRepository(),
-                configurationRepository,
+                new ConfigurationInteractor(configurationRepository),
                 shadeRepository,
                 () -> sceneInteractor);
 
@@ -207,7 +218,16 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 keyguardInteractor,
                 featureFlags,
                 shadeRepository,
-                powerInteractor);
+                powerInteractor,
+                () ->
+                        new InWindowLauncherUnlockAnimationInteractor(
+                                new InWindowLauncherUnlockAnimationRepository(),
+                                mTestScope.getBackgroundScope(),
+                                keyguardTransitionInteractor,
+                                () -> new FakeKeyguardSurfaceBehindRepository(),
+                                mock(ActivityManagerWrapper.class)
+                        )
+                );
 
         mFromPrimaryBouncerTransitionInteractor = new FromPrimaryBouncerTransitionInteractor(
                 keyguardTransitionRepository,
@@ -219,24 +239,32 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 mSelectedUserInteractor,
                 powerInteractor);
 
-        mShadeInteractor =
-                new ShadeInteractor(
+        DeviceEntryUdfpsInteractor deviceEntryUdfpsInteractor =
+                mock(DeviceEntryUdfpsInteractor.class);
+        when(deviceEntryUdfpsInteractor.isUdfpsSupported()).thenReturn(emptyFlow());
+
+        mShadeInteractor = new ShadeInteractorImpl(
+                mTestScope.getBackgroundScope(),
+                new FakeDeviceProvisioningRepository(),
+                new FakeDisableFlagsRepository(),
+                mock(DozeParameters.class),
+                keyguardRepository,
+                keyguardTransitionInteractor,
+                powerInteractor,
+                new FakeUserSetupRepository(),
+                mock(UserSwitcherInteractor.class),
+                new ShadeInteractorLegacyImpl(
                         mTestScope.getBackgroundScope(),
-                        new FakeDeviceProvisioningRepository(),
-                        new FakeDisableFlagsRepository(),
-                        mock(DozeParameters.class),
-                        sceneContainerFlags,
-                        () -> sceneInteractor,
                         keyguardRepository,
-                        keyguardTransitionInteractor,
-                        powerInteractor,
-                        new FakeUserSetupRepository(),
-                        mock(UserSwitcherInteractor.class),
                         new SharedNotificationContainerInteractor(
                                 configurationRepository,
                                 mContext,
-                                new ResourcesSplitShadeStateController()),
-                        shadeRepository);
+                                new ResourcesSplitShadeStateController(),
+                                keyguardInteractor,
+                                deviceEntryUdfpsInteractor),
+                        shadeRepository
+                )
+        );
 
         mNotificationShadeWindowController = new NotificationShadeWindowControllerImpl(
                 mContext,
@@ -248,16 +276,18 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 mConfigurationController,
                 mKeyguardViewMediator,
                 mKeyguardBypassController,
+                mMainExecutor,
                 mBackgroundExecutor,
                 mColorExtractor,
                 mDumpManager,
                 mKeyguardStateController,
                 mScreenOffAnimationController,
                 mAuthController,
-                mShadeExpansionStateManager,
                 () -> mShadeInteractor,
                 mShadeWindowLogger,
-                () -> mSelectedUserInteractor) {
+                () -> mSelectedUserInteractor,
+                mUserTracker,
+                mSceneContainerFlags) {
                     @Override
                     protected boolean isDebuggable() {
                         return false;

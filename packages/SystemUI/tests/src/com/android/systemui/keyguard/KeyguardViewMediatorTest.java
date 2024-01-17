@@ -26,6 +26,7 @@ import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STR
 import static com.android.systemui.keyguard.KeyguardViewMediator.DELAYED_KEYGUARD_ACTION;
 import static com.android.systemui.keyguard.KeyguardViewMediator.KEYGUARD_LOCK_AFTER_DELAY_DEFAULT;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN;
+import static com.android.systemui.Flags.FLAG_REFACTOR_GET_CURRENT_USER;
 import static com.android.systemui.keyguard.KeyguardViewMediator.DELAYED_KEYGUARD_ACTION;
 import static com.android.systemui.keyguard.KeyguardViewMediator.KEYGUARD_LOCK_AFTER_DELAY_DEFAULT;
 import static com.android.systemui.keyguard.KeyguardViewMediator.REBOOT_MAINLINE_UPDATE;
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
@@ -95,10 +97,12 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FakeFeatureFlags;
 import com.android.systemui.flags.Flags;
 import com.android.systemui.flags.SystemPropertiesHelper;
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.keyguard.ui.viewmodel.DreamingToLockscreenTransitionViewModel;
 import com.android.systemui.log.SessionTracker;
 import com.android.systemui.navigationbar.NavigationModeController;
 import com.android.systemui.scene.FakeWindowRootViewComponent;
+import com.android.systemui.scene.shared.flag.SceneContainerFlags;
 import com.android.systemui.scene.ui.view.WindowRootView;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.NotificationShadeWindowControllerImpl;
@@ -195,11 +199,13 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
     private @Mock ShadeInteractor mShadeInteractor;
     private @Mock ShadeWindowLogger mShadeWindowLogger;
     private @Mock SelectedUserInteractor mSelectedUserInteractor;
+    private @Mock KeyguardInteractor mKeyguardInteractor;
     private @Captor ArgumentCaptor<KeyguardStateController.Callback>
             mKeyguardStateControllerCallback;
     private @Captor ArgumentCaptor<KeyguardUpdateMonitorCallback>
             mKeyguardUpdateMonitorCallbackCaptor;
     private DeviceConfigProxy mDeviceConfig = new DeviceConfigProxyFake();
+    private FakeExecutor mUiMainExecutor = new FakeExecutor(new FakeSystemClock());
     private FakeExecutor mUiBgExecutor = new FakeExecutor(new FakeSystemClock());
 
     private FalsingCollectorFake mFalsingCollector;
@@ -219,6 +225,7 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
     private @Mock CoroutineDispatcher mDispatcher;
     private @Mock DreamingToLockscreenTransitionViewModel mDreamingToLockscreenTransitionViewModel;
     private @Mock SystemPropertiesHelper mSystemPropertiesHelper;
+    private @Mock SceneContainerFlags mSceneContainerFlags;
 
     private FakeFeatureFlags mFeatureFlags;
     private final int mDefaultUserId = 100;
@@ -253,19 +260,21 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
                 mConfigurationController,
                 mViewMediator,
                 mKeyguardBypassController,
+                mUiMainExecutor,
                 mUiBgExecutor,
                 mColorExtractor,
                 mDumpManager,
                 mKeyguardStateController,
                 mScreenOffAnimationController,
                 mAuthController,
-                mShadeExpansionStateManager,
                 () -> mShadeInteractor,
                 mShadeWindowLogger,
-                () -> mSelectedUserInteractor);
+                () -> mSelectedUserInteractor,
+                mUserTracker,
+                mSceneContainerFlags);
         mFeatureFlags = new FakeFeatureFlags();
         mFeatureFlags.set(Flags.KEYGUARD_WM_STATE_REFACTOR, false);
-        mFeatureFlags.set(Flags.REFACTOR_GETCURRENTUSER, true);
+        mSetFlagsRule.enableFlags(FLAG_REFACTOR_GET_CURRENT_USER);
 
         DejankUtils.setImmediate(true);
 
@@ -878,6 +887,20 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
         assertATMSAndKeyguardViewMediatorStatesMatch();
     }
 
+    @Test
+    @TestableLooper.RunWithLooper(setAsMainLooper = true)
+    public void testStartKeyguardExitAnimation_whenNotInteractive_doesShowAndUpdatesWM() {
+        // If the exit animation was triggered but the device became non-interactive, make sure
+        // relock happens
+        when(mPowerManager.isInteractive()).thenReturn(false);
+
+        startMockKeyguardExitAnimation();
+        cancelMockKeyguardExitAnimation();
+
+        verify(mStatusBarKeyguardViewManager, atLeast(1)).show(null);
+        assertATMSAndKeyguardViewMediatorStatesMatch();
+    }
+
     /**
      * Interactions with the ActivityTaskManagerService and others are posted to an executor that
      * doesn't use the testable looper. Use this method to ensure those are run as well.
@@ -1082,7 +1105,8 @@ public class KeyguardViewMediatorTest extends SysuiTestCase {
                 () -> mDreamingToLockscreenTransitionViewModel,
                 mSystemPropertiesHelper,
                 () -> mock(WindowManagerLockscreenVisibilityManager.class),
-                mSelectedUserInteractor);
+                mSelectedUserInteractor,
+                mKeyguardInteractor);
         mViewMediator.start();
 
         mViewMediator.registerCentralSurfaces(mCentralSurfaces, null, null, null, null, null);

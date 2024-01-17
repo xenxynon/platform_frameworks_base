@@ -28,6 +28,7 @@ import com.android.settingslib.spa.framework.theme.SettingsTheme
 import com.android.settingslib.spa.gallery.R
 import com.android.settingslib.spa.gallery.SettingsPageProviderEnum
 import com.android.settingslib.spa.gallery.button.ActionButtonPageProvider
+import com.android.settingslib.spa.gallery.card.CardPageProvider
 import com.android.settingslib.spa.gallery.chart.ChartPageProvider
 import com.android.settingslib.spa.gallery.dialog.AlertDialogPageProvider
 import com.android.settingslib.spa.gallery.editor.EditorMainPageProvider
@@ -42,7 +43,9 @@ import com.android.settingslib.spa.gallery.page.SettingsPagerPageProvider
 import com.android.settingslib.spa.gallery.page.SliderPageProvider
 import com.android.settingslib.spa.gallery.preference.PreferenceMainPageProvider
 import com.android.settingslib.spa.gallery.scaffold.SearchScaffoldPageProvider
+import com.android.settingslib.spa.gallery.scaffold.SuwScaffoldPageProvider
 import com.android.settingslib.spa.gallery.ui.CategoryPageProvider
+import com.android.settingslib.spa.gallery.ui.CopyablePageProvider
 import com.android.settingslib.spa.gallery.ui.SpinnerPageProvider
 import com.android.settingslib.spa.widget.scaffold.HomeScaffold
 
@@ -57,6 +60,7 @@ object HomePageProvider : SettingsPageProvider {
             OperateListPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
             ArgumentPageProvider.buildInjectEntry("foo")!!.setLink(fromPage = owner).build(),
             SearchScaffoldPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
+            SuwScaffoldPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
             SliderPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
             SpinnerPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
             SettingsPagerPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
@@ -69,6 +73,8 @@ object HomePageProvider : SettingsPageProvider {
             ChartPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
             AlertDialogPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
             EditorMainPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
+            CardPageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
+            CopyablePageProvider.buildInjectEntry().setLink(fromPage = owner).build(),
         )
     }
 

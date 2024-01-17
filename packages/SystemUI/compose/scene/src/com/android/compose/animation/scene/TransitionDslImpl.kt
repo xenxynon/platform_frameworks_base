@@ -21,14 +21,14 @@ import androidx.compose.animation.core.DurationBasedAnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
-import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import com.android.compose.animation.scene.transformation.AnchoredSize
 import com.android.compose.animation.scene.transformation.AnchoredTranslate
+import com.android.compose.animation.scene.transformation.DrawScale
 import com.android.compose.animation.scene.transformation.EdgeTranslate
 import com.android.compose.animation.scene.transformation.Fade
 import com.android.compose.animation.scene.transformation.PropertyTransformation
-import com.android.compose.animation.scene.transformation.PunchHole
 import com.android.compose.animation.scene.transformation.RangedPropertyTransformation
 import com.android.compose.animation.scene.transformation.ScaleSize
 import com.android.compose.animation.scene.transformation.SharedElementTransformation
@@ -44,7 +44,7 @@ internal fun transitionsImpl(
 }
 
 private class SceneTransitionsBuilderImpl : SceneTransitionsBuilder {
-    val transitionSpecs = mutableListOf<TransitionSpec>()
+    val transitionSpecs = mutableListOf<TransitionSpecImpl>()
 
     override fun to(to: SceneKey, builder: TransitionBuilder.() -> Unit): TransitionSpec {
         return transition(from = null, to = to, builder)
@@ -63,14 +63,15 @@ private class SceneTransitionsBuilderImpl : SceneTransitionsBuilder {
         to: SceneKey?,
         builder: TransitionBuilder.() -> Unit,
     ): TransitionSpec {
-        val impl = TransitionBuilderImpl().apply(builder)
-        val spec =
-            TransitionSpec(
-                from,
-                to,
-                impl.transformations,
-                impl.spec,
+        fun transformationSpec(): TransformationSpecImpl {
+            val impl = TransitionBuilderImpl().apply(builder)
+            return TransformationSpecImpl(
+                progressSpec = impl.spec,
+                transformations = impl.transformations,
             )
+        }
+
+        val spec = TransitionSpecImpl(from, to, ::transformationSpec)
         transitionSpecs.add(spec)
         return spec
     }
@@ -89,10 +90,6 @@ internal class TransitionBuilderImpl : TransitionBuilder {
         }
 
         spec.vectorize(Float.VectorConverter).durationMillis
-    }
-
-    override fun punchHole(matcher: ElementMatcher, bounds: ElementKey, shape: Shape) {
-        transformations.add(PunchHole(matcher, bounds, shape))
     }
 
     override fun reversed(builder: TransitionBuilder.() -> Unit) {
@@ -147,7 +144,7 @@ internal class TransitionBuilderImpl : TransitionBuilder {
 
         transformations.add(
             if (reversed) {
-                transformation.reverse()
+                transformation.reversed()
             } else {
                 transformation
             }
@@ -178,7 +175,16 @@ internal class TransitionBuilderImpl : TransitionBuilder {
         transformation(ScaleSize(matcher, width, height))
     }
 
-    override fun anchoredSize(matcher: ElementMatcher, anchor: ElementKey) {
-        transformation(AnchoredSize(matcher, anchor))
+    override fun scaleDraw(matcher: ElementMatcher, scaleX: Float, scaleY: Float, pivot: Offset) {
+        transformation(DrawScale(matcher, scaleX, scaleY, pivot))
+    }
+
+    override fun anchoredSize(
+        matcher: ElementMatcher,
+        anchor: ElementKey,
+        anchorWidth: Boolean,
+        anchorHeight: Boolean,
+    ) {
+        transformation(AnchoredSize(matcher, anchor, anchorWidth, anchorHeight))
     }
 }

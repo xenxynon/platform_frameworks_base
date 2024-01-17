@@ -240,7 +240,8 @@ class KeyguardController {
         // state when evaluating visibilities.
         updateKeyguardSleepToken();
         mRootWindowContainer.ensureActivitiesVisible(null, 0, !PRESERVE_WINDOWS);
-        InputMethodManagerInternal.get().updateImeWindowStatus(false /* disableImeIcon */);
+        InputMethodManagerInternal.get().updateImeWindowStatus(false /* disableImeIcon */,
+                displayId);
         setWakeTransitionReady();
         if (aodChanged) {
             // Ensure the new state takes effect.
@@ -665,12 +666,14 @@ class KeyguardController {
                     mTopTurnScreenOnActivity = top;
                 }
 
-                if (top.mDismissKeyguard && mKeyguardShowing) {
+                final boolean isKeyguardSecure = controller.mWindowManager.isKeyguardSecure(
+                        controller.mService.getCurrentUserId());
+                if (top.mDismissKeyguardIfInsecure && mKeyguardShowing && !isKeyguardSecure) {
                     mKeyguardGoingAway = true;
                 } else if (top.canShowWhenLocked()) {
                     mTopOccludesActivity = top;
                 }
-                top.mDismissKeyguard = false;
+                top.mDismissKeyguardIfInsecure = false;
 
                 // Only the top activity may control occluded, as we can't occlude the Keyguard
                 // if the top app doesn't want to occlude it.

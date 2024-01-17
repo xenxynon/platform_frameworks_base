@@ -206,10 +206,18 @@
     <string name="bluetooth_active_battery_level_untethered">Active, L: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g> battery, R: <xliff:g id="battery_level_as_percentage" example="25%">%2$s</xliff:g> battery</string>
     <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_battery_level"><xliff:g id="battery_level_as_percentage">%1$s</xliff:g> battery</string>
+    <!-- Connected devices settings. Message on TV when Bluetooth is connected but not in use, showing remote device battery level. [CHAR LIMIT=NONE] -->
+    <string name="tv_bluetooth_battery_level">Battery <xliff:g id="battery_level_as_percentage">%1$s</xliff:g></string>
     <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level for untethered headset. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_battery_level_untethered">L: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g> battery, R: <xliff:g id="battery_level_as_percentage" example="25%">%2$s</xliff:g> battery</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level for the left part of the untethered headset. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_battery_level_untethered_left">Left <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g></string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level for the right part of the untethered headset. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_battery_level_untethered_right">Right <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g></string>
     <!-- Connected devices settings. Message when Bluetooth is connected and active but no battery information, showing remote device status. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_active_no_battery_level">Active</string>
+    <!-- Connected devices settings. Message shown when bluetooth device is disconnected but is a known, previously connected device [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_saved_device">Saved</string>
 
     <!-- Connected device settings. Message when the left-side hearing aid device is active. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_hearing_aid_left_active">Active, left only</string>
@@ -1042,6 +1050,13 @@
     <!-- Settings item title to select whether to disable cache for transcoding. [CHAR LIMIT=85] -->
     <string name="transcode_disable_cache">Disable transcoding cache</string>
 
+    <!-- Developer settings title: widevine settings screen. [CHAR LIMIT=50] -->
+    <string name="widevine_settings_title">Widevine settings</string>
+     <!-- Developer settings title: select whether to enable Force L3 fallback. [CHAR LIMIT=50] -->
+    <string name="force_l3_fallback_title">Force L3 fallback</string>
+     <!-- Developer settings summary: select whether to enable Force L3 fallback.[CHAR LIMIT=NONE] -->
+    <string name="force_l3_fallback_summary">Select to force L3 fallback</string>
+
     <!-- Services settings screen, setting option name for the user to go to the screen to view running services -->
     <string name="runningservices_settings_title">Running services</string>
     <!-- Services settings screen, setting option summary for the user to go to the screen to view running services  -->
@@ -1342,6 +1357,8 @@
     <string name="media_transfer_this_device_name" product="default">This phone</string>
     <!-- Name of the tablet device. [CHAR LIMIT=30] -->
     <string name="media_transfer_this_device_name" product="tablet">This tablet</string>
+    <!-- Name of the default media output of the TV. [CHAR LIMIT=30] -->
+    <string name="media_transfer_this_device_name" product="tv">@string/tv_media_transfer_default</string>
     <!-- Name of the dock device. [CHAR LIMIT=30] -->
     <string name="media_transfer_dock_speaker_device_name">Dock speaker</string>
     <!-- Default name of the external device. [CHAR LIMIT=30] -->
@@ -1364,6 +1381,26 @@
     <string name="media_output_status_unauthorized">Device not approved to play</string>
     <!-- Sub status indicates the device does not support the current media track. [CHAR LIMIT=NONE] -->
     <string name="media_output_status_track_unsupported">Can\’t play this media here</string>
+
+    <!-- Media output switcher. Default subtitle for any output option that is connected if no more information is known [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_connected">Connected</string>
+
+    <!-- TV media output switcher. Title for devices connected through HDMI ARC if no device name is available. [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_arc_fallback_title">HDMI ARC</string>
+    <!-- TV media output switcher. Title for devices connected through HDMI EARC if no device name is available. [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_earc_fallback_title">HDMI eARC</string>
+
+    <!-- TV media output switcher. Subtitle for devices connected through HDMI ARC if a device name is available. [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_arc_subtitle">Connected via ARC</string>
+    <!-- Media output switcher. Subtitle for devices connected through HDMI EARC if a device name is available. [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_earc_subtitle">Connected via eARC</string>
+
+    <!-- TV media output switcher. Title for the default audio output of the device [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_default">TV default</string>
+    <!-- TV media output switcher. Subtitle for default audio output which is HDMI, e.g. TV dongle [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_hdmi">HDMI output</string>
+    <!-- TV media output switcher. Subtitle for default audio output which is internal speaker, i.e. panel VTs [CHAR LIMIT=NONE] -->
+    <string name="tv_media_transfer_internal_speakers">Internal speakers</string>
 
     <!-- Warning message to tell user is have problem during profile connect, it need to turn off device and back on. [CHAR_LIMIT=NONE] -->
     <string name="profile_connect_timeout_subtext">Problem connecting. Turn device off &amp; back on</string>

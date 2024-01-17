@@ -57,6 +57,7 @@ class BigPictureIconManagerTest : SysuiTestCase() {
     private val testScope = TestScope(testDispatcher)
     private val testableResources = context.orCreateTestableResources
     private val imageLoader: ImageLoader = ImageLoader(context, testDispatcher)
+    private val statsManager = BigPictureStatsManager(mock(), testDispatcher, mock())
     private var mockConsumer: NotificationDrawableConsumer = mock()
     private val drawableCaptor = argumentCaptor<Drawable>()
 
@@ -87,6 +88,7 @@ class BigPictureIconManagerTest : SysuiTestCase() {
             BigPictureIconManager(
                 context,
                 imageLoader,
+                statsManager,
                 scope = testScope,
                 mainDispatcher = testDispatcher,
                 bgDispatcher = testDispatcher
@@ -143,18 +145,44 @@ class BigPictureIconManagerTest : SysuiTestCase() {
         }
 
     @Test
-    fun onIconUpdated_consumerAlreadySet_nothingHappens() =
+    fun onIconUpdated_consumerAlreadySet_newConsumerIsUpdatedWithPlaceholder() =
         testScope.runTest {
             // GIVEN a consumer is set
-            val otherConsumer: NotificationDrawableConsumer = mock()
             iconManager.updateIcon(mockConsumer, supportedIcon).run()
             clearInvocations(mockConsumer)
 
             // WHEN a new consumer is set
-            iconManager.updateIcon(otherConsumer, unsupportedIcon).run()
+            val newConsumer: NotificationDrawableConsumer = mock()
+            iconManager.updateIcon(newConsumer, supportedIcon).run()
 
-            // THEN nothing happens
-            verifyZeroInteractions(mockConsumer, otherConsumer)
+            // THEN the new consumer is updated
+            verify(newConsumer).setImageDrawable(drawableCaptor.capture())
+            assertIsPlaceHolder(drawableCaptor.value)
+            assertSize(drawableCaptor.value)
+            // AND nothing happens on the old consumer
+            verifyZeroInteractions(mockConsumer)
+        }
+
+    @Test
+    fun onIconUpdated_consumerAlreadySet_newConsumerIsUpdatedWithFullImage() =
+        testScope.runTest {
+            // GIVEN a consumer is set
+            iconManager.updateIcon(mockConsumer, supportedIcon).run()
+            // AND an icon is loaded
+            iconManager.onViewShown(true)
+            runCurrent()
+            clearInvocations(mockConsumer)
+
+            // WHEN a new consumer is set
+            val newConsumer: NotificationDrawableConsumer = mock()
+            iconManager.updateIcon(newConsumer, supportedIcon).run()
+
+            // THEN the new consumer is updated
+            verify(newConsumer).setImageDrawable(drawableCaptor.capture())
+            assertIsFullImage(drawableCaptor.value)
+            assertSize(drawableCaptor.value)
+            // AND nothing happens on the old consumer
+            verifyZeroInteractions(mockConsumer)
         }
 
     @Test

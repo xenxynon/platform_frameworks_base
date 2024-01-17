@@ -618,7 +618,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
      * @see #isMgf1DigestsSpecified()
      */
     @NonNull
-    @FlaggedApi("MGF1_DIGEST_SETTER")
+    @FlaggedApi(android.security.Flags.FLAG_MGF1_DIGEST_SETTER)
     public @KeyProperties.DigestEnum Set<String> getMgf1Digests() {
         if (mMgf1Digests.isEmpty()) {
             throw new IllegalStateException("Mask generation function (MGF) not specified");
@@ -633,7 +633,7 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
      * @see #getMgf1Digests()
      */
     @NonNull
-    @FlaggedApi("MGF1_DIGEST_SETTER")
+    @FlaggedApi(android.security.Flags.FLAG_MGF1_DIGEST_SETTER)
     public boolean isMgf1DigestsSpecified() {
         return !mMgf1Digests.isEmpty();
     }
@@ -1282,15 +1282,18 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
          * function (MGF1) with a digest.
          * The default digest for MGF1 is {@code SHA-1}, which will be specified during key creation
          * time if no digests have been explicitly provided.
-         * When using the key, the caller may not specify any digests that were not provided during
-         * key creation time. The caller may specify the default digest, {@code SHA-1}, if no
+         * {@code null} may not be specified as a parameter to this method: It is not possible to
+         * disable MGF1 digest, a default must be present for when the caller tries to use it.
+         *
+         * <p>When using the key, the caller may not specify any digests that were not provided
+         * during key creation time. The caller may specify the default digest, {@code SHA-1}, if no
          * digests were explicitly provided during key creation (but it is not necessary to do so).
          *
          * <p>See {@link KeyProperties}.{@code DIGEST} constants.
          */
         @NonNull
-        @FlaggedApi("MGF1_DIGEST_SETTER")
-        public Builder setMgf1Digests(@Nullable @KeyProperties.DigestEnum String... mgf1Digests) {
+        @FlaggedApi(android.security.Flags.FLAG_MGF1_DIGEST_SETTER)
+        public Builder setMgf1Digests(@NonNull @KeyProperties.DigestEnum String... mgf1Digests) {
             mMgf1Digests = Set.of(mgf1Digests);
             return this;
         }
@@ -1596,6 +1599,8 @@ public final class KeyGenParameterSpec implements AlgorithmParameterSpec, UserAu
          * {@link #getAttestationChallenge()} returns non-null and the spec is used to generate a
          * symmetric (AES or HMAC) key, {@link javax.crypto.KeyGenerator#generateKey()} will throw
          * {@link java.security.InvalidAlgorithmParameterException}.
+         *
+         * <p>The challenge may be up to 128 bytes.
          */
         @NonNull
         public Builder setAttestationChallenge(byte[] attestationChallenge) {

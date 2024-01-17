@@ -223,6 +223,8 @@
     <item type="id" name="lock_icon_bg" />
     <item type="id" name="burn_in_layer" />
     <item type="id" name="communal_tutorial_indicator" />
+    <item type="id" name="nssl_placeholder_barrier_bottom" />
+    <item type="id" name="ambient_indication_container" />
 
     <!-- Privacy dialog -->
     <item type="id" name="privacy_dialog_close_app_button" />
@@ -230,7 +232,6 @@
 
     <!-- Communal mode -->
     <item type="id" name="communal_hub" />
-    <item type="id" name="communal_widget_wrapper" />
 
     <!-- Values assigned to the views in Biometrics Prompt -->
     <item type="id" name="pin_pad"/>
@@ -258,4 +259,11 @@
     <item type="id" name="device_entry_icon_view" />
     <item type="id" name="device_entry_icon_fg" />
     <item type="id" name="device_entry_icon_bg" />
+
+    <!--Id for the device-entry UDFPS icon that lives in the alternate bouncer. -->
+    <item type="id" name="alternate_bouncer_udfps_icon_view" />
+
+    <!-- Id for the udfps accessibility overlay -->
+    <item type="id" name="udfps_accessibility_overlay" />
+    <item type="id" name="udfps_accessibility_overlay_top_guideline" />
 </resources>

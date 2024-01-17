@@ -693,6 +693,16 @@
         -->
     </integer-array>
 
+    <!-- The device states (supplied by DeviceStateManager) that should be treated as concurrent
+    display state. Default is empty. -->
+    <integer-array name="config_concurrentDisplayDeviceStates">
+        <!-- Example:
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        -->
+    </integer-array>
+
     <!-- Indicates whether the window manager reacts to half-fold device states by overriding
      rotation. -->
     <bool name="config_windowManagerHalfFoldAutoRotateOverride">false</bool>
@@ -831,6 +841,13 @@
          This configuration will only apply when config_remoteInsetsControllerControlsSystemBars.
          is set to true. -->
     <bool name="config_remoteInsetsControllerSystemBarsCanBeShownByUserAction">false</bool>
+
+    <!-- To change the default behavior of how the insets get involved when calculating
+         configuration. This will no longer consider status bar and display cutout, and only
+         exclude navigation bars from the screen sizes. This is useful when the display is close to
+         square and the system bars may cause the orientation with non-preferred value.
+         -->
+    <bool name="config_decoupleStatusBarAndDisplayCutoutFromScreenSize">false</bool>
 
     <!-- HDMI behavior -->
 
@@ -1256,6 +1273,11 @@
     -->
     <bool name="config_shortPressEarlyOnPower">false</bool>
 
+    <!-- Whether a single short press on STEM_PRIMARY should be launched without multi-press delay.
+        This works similarly as config_shortPressEarlyOnPower but for STEM_PRIMARY.
+    -->
+    <bool name="config_shortPressEarlyOnStemPrimary">false</bool>
+
     <!-- Control the behavior of the search key.
             0 - Launch default search activity
             1 - Launch target activity defined by config_searchKeyTargetActivity
@@ -1381,6 +1403,9 @@
 
     <!-- Shutdown if the battery temperature exceeds (this value * 0.1) Celsius. -->
     <integer name="config_shutdownBatteryTemperature">680</integer>
+
+    <!-- Shutdown if battery is critically low and the device is not powered. -->
+    <bool name="config_shutdownIfNoPower">true</bool>
 
     <!-- Display low battery warning when battery level dips to this value -->
     <integer name="config_lowBatteryWarningLevel">20</integer>
@@ -1509,6 +1534,10 @@
     <!-- Note: This setting is deprecated, please use
     config_screenBrightnessSettingDefaultFloat instead -->
     <integer name="config_screenBrightnessSettingDefault">102</integer>
+
+    <!-- Maximum screen brightness setting when screen brightness capped in Wear Bedtime mode.
+    The value must be in the range [0, 255]. -->
+    <integer name="config_screenBrightnessCapForWearBedtimeMode">20</integer>
 
     <!-- Minimum screen brightness setting allowed by power manager.
          -2 is invalid so setting will resort to int value specified above.
@@ -2216,7 +2245,10 @@
     <bool name="config_single_volume">false</bool>
 
     <!-- Volume policy -->
+    <!-- Strongly consider keeping these 2 values in sync - otherwise vol up/vol down have confusing
+    asymmetric behavior, as in b/279645379 -->
     <bool name="config_volume_down_to_enter_silent">false</bool>
+    <bool name="config_volume_up_to_exit_silent">false</bool>
 
     <!-- The number of volume steps for the notification stream -->
     <integer name="config_audio_notif_vol_steps">7</integer>
@@ -2229,6 +2261,9 @@
 
     <!-- The default volume for the ring stream -->
     <integer name="config_audio_ring_vol_default">5</integer>
+
+    <!-- The default min volume for the alarm stream -->
+    <integer name="config_audio_alarm_min_vol">1</integer>
 
     <!-- The default value for whether head tracking for
          spatial audio is enabled for a newly connected audio device -->
@@ -2706,6 +2741,12 @@
     <!-- If true, the doze component is not started until after the screen has been
          turned off and the screen off animation has been performed. -->
     <bool name="config_dozeAfterScreenOffByDefault">false</bool>
+
+    <!-- If true, bright policy will be applied when we have entered dozing wakefulness but haven't
+         started doze component. This can be used to suppress the temporary dim state before
+         starting a dream service. This is typically used together with
+         config_maximumScreenDimDuration set to 0 to completely suppress dim effect. -->
+    <bool name="config_brightWhenDozing">false</bool>
 
     <!-- Doze: should the TYPE_PICK_UP_GESTURE sensor be used as a pulse signal. -->
     <bool name="config_dozePulsePickup">false</bool>
@@ -4180,6 +4221,10 @@
     <!-- Inactivity threshold (in milliseconds) used in JobScheduler. JobScheduler will consider
          the device to be "idle" after being inactive for this long. -->
     <integer name="config_jobSchedulerInactivityIdleThreshold">1860000</integer>
+    <!-- Inactivity threshold (in milliseconds) used in JobScheduler. JobScheduler will consider
+         the device to be "idle" after being inactive for this long if the device is on stable
+         power. Stable power is defined as "charging + battery not low". -->
+    <integer name="config_jobSchedulerInactivityIdleThresholdOnStablePower">1860000</integer>
     <!-- The alarm window (in milliseconds) that JobScheduler uses to enter the idle state -->
     <integer name="config_jobSchedulerIdleWindowSlop">300000</integer>
 
@@ -4215,6 +4260,9 @@
     <!-- Wallpaper will get top app scheduling priority if this is set to true.
     -->
     <bool name="config_wallpaperTopApp">false</bool>
+
+    <!-- True if the device supports dVRR  -->
+    <bool name="config_supportsDvrr">false</bool>
 
     <!-- True if the device supports at least one form of multi-window.
          E.g. freeform, split-screen, picture-in-picture. -->
@@ -4317,6 +4365,9 @@
     <!-- True if assistant app should be pinned via Pinner Service -->
     <bool name="config_pinnerAssistantApp">false</bool>
 
+    <!-- Bytes that the PinnerService will pin for WebView -->
+    <integer name="config_pinnerWebviewPinBytes">0</integer>
+
     <!-- Number of days preloaded file cache should be preserved on a device before it can be
          deleted -->
     <integer name="config_keepPreloadsMinDays">7</integer>
@@ -4374,6 +4425,15 @@
     <!-- Flag specifying whether user-switch operations have custom UI. When false, user-switch
          UI is handled by ActivityManagerService -->
     <bool name="config_customUserSwitchUi">false</bool>
+
+    <!-- Flag specifying whether the first account added can be removed or renamed. By default,
+    this ability is enabled. When false, user will not be able to remove the first account. -->
+    <bool name="config_canRemoveFirstAccount">true</bool>
+
+    <!-- Used together with config_canRemoveOrRenameFirstAccount when set to false. By default, this
+    is blank. Check if the first account is of this account type. If it is, then disable
+    remove/rename. -->
+    <string name="config_accountTypeToKeepFirstAccount"></string>
 
     <!-- A array of regex to treat a SMS as VVM SMS if the message body matches.
          Each item represents an entry, which consists of two parts:
@@ -4971,6 +5031,11 @@
     <!-- Component name for the default module metadata provider on this device -->
     <string name="config_defaultModuleMetadataProvider" translatable="false">com.android.modulemetadata</string>
 
+    <!-- Packages that contain a security state.
+         {@link SecurityStateManager#getGlobalSecurityState} will read and report the state/version
+          of these packages. -->
+    <string-array name="config_securityStatePackages" translatable="false" />
+
     <!-- Package name for the default Health Connect app.
          OEMs can set this with their own health app package name to define a default app with high
          priority for the app to store the health data. If set the app always has priority of 1
@@ -5450,6 +5515,7 @@
         <item>1,1,1.0,.15,15</item>
         <item>0,0,0.7,0,1</item>
         <item>0,0,0.83333,0,1</item>
+        <item>0,0,1.1667,0,1</item>
     </string-array>
 
     <!-- The integer index of the selected option in config_udfps_touch_detection_options -->
@@ -6796,12 +6862,19 @@
     <!-- Whether or not ActivityManager PSS profiling is disabled. -->
     <bool name="config_am_disablePssProfiling">false</bool>
 
+    <!-- The modifier used to adjust AM's PSS threshold for downgrading services to service B if
+         RSS is being collected instead. -->
+    <item name="config_am_pssToRssThresholdModifier" format="float" type="dimen">1.5</item>
+
     <!-- Whether unlocking and waking a device are sequenced -->
     <bool name="config_orderUnlockAndWake">false</bool>
 
     <!-- Floating windows can be fullscreen (i.e. windowIsFloating can still have fullscreen
      window that does not wrap content). -->
     <bool name="config_allowFloatingWindowsFillScreen">false</bool>
+
+    <!-- Whether to enable left-right split in portrait on this device -->
+    <bool name="config_leftRightSplitInPortrait">false</bool>
 
     <!-- Whether scroll haptic feedback is enabled for rotary encoder scrolls on
          {@link MotionEvent#AXIS_SCROLL} generated by {@link InputDevice#SOURCE_ROTARY_ENCODER}
@@ -6810,4 +6883,7 @@
     <!-- Whether the View-based scroll haptic feedback implementation is enabled for
          {@link InputDevice#SOURCE_ROTARY_ENCODER}s. -->
     <bool name="config_viewBasedRotaryEncoderHapticsEnabled">false</bool>
+
+    <!-- Whether the media player is shown on the quick settings -->
+    <bool name="config_quickSettingsShowMediaPlayer">true</bool>
 </resources>

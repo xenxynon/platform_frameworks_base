@@ -51,13 +51,12 @@ import com.android.keyguard.logging.KeyguardLogger;
 import com.android.systemui.Dumpable;
 import com.android.systemui.animation.ViewHierarchyAnimator;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.Flags;
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
+import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl;
 import com.android.systemui.keyguard.shared.model.TransitionState;
 import com.android.systemui.keyguard.shared.model.TransitionStep;
-import com.android.systemui.plugins.ClockController;
+import com.android.systemui.plugins.clocks.ClockController;
 import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.power.shared.model.ScreenPowerState;
 import com.android.systemui.res.R;
@@ -71,12 +70,12 @@ import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.util.ViewController;
 
+import kotlin.coroutines.CoroutineContext;
+import kotlin.coroutines.EmptyCoroutineContext;
+
 import java.io.PrintWriter;
 
 import javax.inject.Inject;
-
-import kotlin.coroutines.CoroutineContext;
-import kotlin.coroutines.EmptyCoroutineContext;
 
 /**
  * Injectable controller for {@link KeyguardStatusView}.
@@ -85,6 +84,7 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
         Dumpable {
     private static final boolean DEBUG = KeyguardConstants.DEBUG;
     @VisibleForTesting static final String TAG = "KeyguardStatusViewController";
+    private static final long STATUS_AREA_HEIGHT_ANIMATION_MILLIS = 133;
 
     /**
      * Duration to use for the animator when the keyguard status view alignment changes, and a
@@ -100,12 +100,15 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     private final ConfigurationController mConfigurationController;
     private final KeyguardVisibilityHelper mKeyguardVisibilityHelper;
-    private final FeatureFlags mFeatureFlags;
     private final InteractionJankMonitor mInteractionJankMonitor;
     private final Rect mClipBounds = new Rect();
     private final KeyguardInteractor mKeyguardInteractor;
     private final PowerInteractor mPowerInteractor;
     private final KeyguardTransitionInteractor mKeyguardTransitionInteractor;
+    private final DozeParameters mDozeParameters;
+
+    private View mStatusArea = null;
+    private ValueAnimator mStatusAreaHeightAnimator = null;
 
     private Boolean mSplitShadeEnabled = false;
     private Boolean mStatusViewCentered = true;
@@ -125,6 +128,46 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
                 }
             };
 
+    private final View.OnLayoutChangeListener mStatusAreaLayoutChangeListener =
+            new View.OnLayoutChangeListener() {
+                @Override
+                public void onLayoutChange(View v,
+                        int left, int top, int right, int bottom,
+                        int oldLeft, int oldTop, int oldRight, int oldBottom
+                ) {
+                    if (!mDozeParameters.getAlwaysOn()) {
+                        return;
+                    }
+
+                    int oldHeight = oldBottom - oldTop;
+                    int diff = v.getHeight() - oldHeight;
+                    if (diff == 0) {
+                        return;
+                    }
+
+                    int startValue = -1 * diff;
+                    long duration = STATUS_AREA_HEIGHT_ANIMATION_MILLIS;
+                    if (mStatusAreaHeightAnimator != null
+                            && mStatusAreaHeightAnimator.isRunning()) {
+                        duration += mStatusAreaHeightAnimator.getDuration()
+                                - mStatusAreaHeightAnimator.getCurrentPlayTime();
+                        startValue += (int) mStatusAreaHeightAnimator.getAnimatedValue();
+                        mStatusAreaHeightAnimator.cancel();
+                        mStatusAreaHeightAnimator = null;
+                    }
+
+                    mStatusAreaHeightAnimator = ValueAnimator.ofInt(startValue, 0);
+                    mStatusAreaHeightAnimator.setDuration(duration);
+                    final View nic = mKeyguardClockSwitchController.getAodNotifIconContainer();
+                    if (nic != null) {
+                        mStatusAreaHeightAnimator.addUpdateListener(anim -> {
+                            nic.setTranslationY((int) anim.getAnimatedValue());
+                        });
+                    }
+                    mStatusAreaHeightAnimator.start();
+                }
+            };
+
     @Inject
     public KeyguardStatusViewController(
             KeyguardStatusView keyguardStatusView,
@@ -136,7 +179,6 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
             DozeParameters dozeParameters,
             ScreenOffAnimationController screenOffAnimationController,
             KeyguardLogger logger,
-            FeatureFlags featureFlags,
             InteractionJankMonitor interactionJankMonitor,
             KeyguardInteractor keyguardInteractor,
             KeyguardTransitionInteractor keyguardTransitionInteractor,
@@ -147,11 +189,11 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
         mKeyguardClockSwitchController = keyguardClockSwitchController;
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mConfigurationController = configurationController;
+        mDozeParameters = dozeParameters;
         mKeyguardVisibilityHelper = new KeyguardVisibilityHelper(mView, keyguardStateController,
                 dozeParameters, screenOffAnimationController, /* animateYPos= */ true,
-                featureFlags, logger.getBuffer());
+                logger.getBuffer());
         mInteractionJankMonitor = interactionJankMonitor;
-        mFeatureFlags = featureFlags;
         mDumpManager = dumpManager;
         mKeyguardInteractor = keyguardInteractor;
         mPowerInteractor = powerInteractor;
@@ -188,7 +230,7 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
         }
 
         mDumpManager.registerDumpable(getInstanceName(), this);
-        if (mFeatureFlags.isEnabled(Flags.MIGRATE_KEYGUARD_STATUS_VIEW)) {
+        if (KeyguardShadeMigrationNssl.isEnabled()) {
             startCoroutines(EmptyCoroutineContext.INSTANCE);
         }
     }
@@ -222,12 +264,15 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
 
     @Override
     protected void onViewAttached() {
+        mStatusArea = mView.findViewById(R.id.keyguard_status_area);
+        mStatusArea.addOnLayoutChangeListener(mStatusAreaLayoutChangeListener);
         mKeyguardUpdateMonitor.registerCallback(mInfoCallback);
         mConfigurationController.addCallback(mConfigurationListener);
     }
 
     @Override
     protected void onViewDetached() {
+        mStatusArea.removeOnLayoutChangeListener(mStatusAreaLayoutChangeListener);
         mKeyguardUpdateMonitor.removeCallback(mInfoCallback);
         mConfigurationController.removeCallback(mConfigurationListener);
     }
@@ -297,9 +342,15 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
     /**
      * Get the height of the keyguard status view without the notification icon area, as that's
      * only visible on AOD.
+     *
+     * We internally animate height changes to the status area to prevent discontinuities in the
+     * doze animation introduced by the height suddenly changing due to smartpace.
      */
     public int getLockscreenHeight() {
-        return mView.getHeight() - mKeyguardClockSwitchController.getNotificationIconAreaHeight();
+        int heightAnimValue = mStatusAreaHeightAnimator == null ? 0 :
+                (int) mStatusAreaHeightAnimator.getAnimatedValue();
+        return mView.getHeight() + heightAnimValue
+                - mKeyguardClockSwitchController.getNotificationIconAreaHeight();
     }
 
     /**
@@ -454,7 +505,7 @@ public class KeyguardStatusViewController extends ViewController<KeyguardStatusV
         ConstraintSet constraintSet = new ConstraintSet();
         constraintSet.clone(layout);
         int guideline;
-        if (mFeatureFlags.isEnabled(Flags.MIGRATE_KEYGUARD_STATUS_VIEW)) {
+        if (KeyguardShadeMigrationNssl.isEnabled()) {
             guideline = R.id.split_shade_guideline;
         } else {
             guideline = R.id.qs_edge_guideline;

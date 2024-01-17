@@ -1,6 +1,13 @@
 {
-    // TODO: Change to presubmit.
-    "postsubmit": [
-        { "name": "tiny-framework-dump-test" }
-    ]
+  "presubmit": [
+    { "name": "tiny-framework-dump-test" },
+    { "name": "hoststubgentest" },
+    { "name": "hoststubgen-invoke-test" }
+  ],
+  "ravenwood-presubmit": [
+    {
+      "name": "CtsUtilTestCasesRavenwood",
+      "host": true
+    }
+  ]
 }

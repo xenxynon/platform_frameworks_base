@@ -35,8 +35,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import static kotlinx.coroutines.flow.FlowKt.emptyFlow;
+import static kotlinx.coroutines.test.TestCoroutineDispatchersKt.StandardTestDispatcher;
 
-import android.content.res.Resources;
 import android.metrics.LogMaker;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -53,7 +53,6 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor;
 import com.android.systemui.classifier.FalsingCollectorFake;
 import com.android.systemui.classifier.FalsingManagerFake;
-import com.android.systemui.common.ui.ConfigurationState;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FakeFeatureFlags;
 import com.android.systemui.flags.Flags;
@@ -74,7 +73,6 @@ import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.RemoteInputController;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
-import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.collection.NotifCollection;
 import com.android.systemui.statusbar.notification.collection.NotifPipeline;
 import com.android.systemui.statusbar.notification.collection.provider.NotificationDismissibilityProvider;
@@ -84,16 +82,15 @@ import com.android.systemui.statusbar.notification.collection.render.NotifStats;
 import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
 import com.android.systemui.statusbar.notification.collection.render.SectionHeaderController;
 import com.android.systemui.statusbar.notification.data.repository.ActiveNotificationListRepository;
+import com.android.systemui.statusbar.notification.domain.interactor.ActiveNotificationsInteractor;
 import com.android.systemui.statusbar.notification.domain.interactor.SeenNotificationsInteractor;
-import com.android.systemui.statusbar.notification.icon.ui.viewbinder.ShelfNotificationIconViewStore;
 import com.android.systemui.statusbar.notification.init.NotificationsController;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController.NotificationPanelEvent;
 import com.android.systemui.statusbar.notification.stack.NotificationSwipeHelper.NotificationCallback;
-import com.android.systemui.statusbar.notification.stack.ui.viewmodel.NotificationListViewModel;
+import com.android.systemui.statusbar.notification.stack.ui.viewbinder.NotificationListViewBinder;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
-import com.android.systemui.statusbar.phone.NotificationIconAreaController;
 import com.android.systemui.statusbar.phone.ScrimController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
@@ -112,8 +109,6 @@ import org.mockito.ArgumentMatcher;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-
-import java.util.Optional;
 
 /**
  * Tests for {@link NotificationStackScrollLayoutController}.
@@ -143,7 +138,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock private NotificationLockscreenUserManager mNotificationLockscreenUserManager;
     @Mock private MetricsLogger mMetricsLogger;
     @Mock private DumpManager mDumpManager;
-    @Mock private Resources mResources;
     @Mock(answer = Answers.RETURNS_SELF)
     private NotificationSwipeHelper.Builder mNotificationSwipeHelperBuilder;
     @Mock private NotificationSwipeHelper mNotificationSwipeHelper;
@@ -151,7 +145,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock private GroupExpansionManager mGroupExpansionManager;
     @Mock private SectionHeaderController mSilentHeaderController;
     @Mock private NotifPipeline mNotifPipeline;
-    @Mock private NotifPipelineFlags mNotifPipelineFlags;
     @Mock private NotifCollection mNotifCollection;
     @Mock private UiEventLogger mUiEventLogger;
     @Mock private LockscreenShadeTransitionController mLockscreenShadeTransitionController;
@@ -166,15 +159,22 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock private NotificationStackSizeCalculator mNotificationStackSizeCalculator;
     @Mock private NotificationTargetsHelper mNotificationTargetsHelper;
     @Mock private SecureSettings mSecureSettings;
-    @Mock private NotificationIconAreaController mIconAreaController;
     @Mock private ActivityStarter mActivityStarter;
     @Mock private KeyguardTransitionRepository mKeyguardTransitionRepo;
+    @Mock private NotificationListViewBinder mViewBinder;
 
     @Captor
     private ArgumentCaptor<StatusBarStateController.StateListener> mStateListenerArgumentCaptor;
 
+    private final ActiveNotificationListRepository mActiveNotificationsRepository =
+            new ActiveNotificationListRepository();
+
+    private final ActiveNotificationsInteractor mActiveNotificationsInteractor =
+            new ActiveNotificationsInteractor(mActiveNotificationsRepository,
+                    StandardTestDispatcher(/* scheduler = */ null, /* name = */ null));
+
     private final SeenNotificationsInteractor mSeenNotificationsInteractor =
-            new SeenNotificationsInteractor(new ActiveNotificationListRepository());
+            new SeenNotificationsInteractor(mActiveNotificationsRepository);
 
     private NotificationStackScrollLayoutController mController;
 
@@ -669,6 +669,7 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
         ViewTreeObserver viewTreeObserver = mock(ViewTreeObserver.class);
         when(mNotificationStackScrollLayout.getViewTreeObserver())
                 .thenReturn(viewTreeObserver);
+        when(mNotificationStackScrollLayout.getContext()).thenReturn(getContext());
         mController = new NotificationStackScrollLayoutController(
                 mNotificationStackScrollLayout,
                 true,
@@ -689,38 +690,34 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 mKeyguardTransitionRepo,
                 mZenModeController,
                 mNotificationLockscreenUserManager,
-                Optional.<NotificationListViewModel>empty(),
                 mMetricsLogger,
                 mDumpManager,
                 new FalsingCollectorFake(),
                 new FalsingManagerFake(),
-                mResources,
                 mNotificationSwipeHelperBuilder,
                 mScrimController,
                 mGroupExpansionManager,
                 mSilentHeaderController,
                 mNotifPipeline,
-                mNotifPipelineFlags,
                 mNotifCollection,
                 mLockscreenShadeTransitionController,
                 mUiEventLogger,
                 mRemoteInputManager,
                 mVisibilityLocationProviderDelegator,
+                mActiveNotificationsInteractor,
                 mSeenNotificationsInteractor,
+                mViewBinder,
                 mShadeController,
                 mJankMonitor,
                 mStackLogger,
                 mLogger,
                 mNotificationStackSizeCalculator,
-                mIconAreaController,
                 mFeatureFlags,
                 mNotificationTargetsHelper,
                 mSecureSettings,
                 mock(NotificationDismissibilityProvider.class),
                 mActivityStarter,
-                new ResourcesSplitShadeStateController(),
-                mock(ConfigurationState.class),
-                mock(ShelfNotificationIconViewStore.class));
+                new ResourcesSplitShadeStateController());
     }
 
     static class LogMatcher implements ArgumentMatcher<LogMaker> {

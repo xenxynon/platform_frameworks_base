@@ -172,6 +172,17 @@
     <integer name="config_satellite_nb_iot_inactivity_timeout_millis">180000</integer>
     <java-symbol type="integer" name="config_satellite_nb_iot_inactivity_timeout_millis" />
 
+    <!-- The timeout duration in milliseconds to determine whether to recommend Dialer to show the
+         emergency messaging option to users.
+
+         The timer is started when there is an ongoing emergency call, and the IMS is not
+         registered, and cellular service is not available. When the timer expires,
+         SatelliteSOSMessageRecommender will send the event EVENT_DISPLAY_EMERGENCY_MESSAGE to
+         Dialer, which will then prompt user to switch to using satellite emergency messaging.
+         -->
+    <integer name="config_emergency_call_wait_for_connection_timeout_millis">20000</integer>
+    <java-symbol type="integer" name="config_emergency_call_wait_for_connection_timeout_millis" />
+
     <!-- Telephony config for the PLMNs of all satellite providers. This is used by satellite modem
          to identify providers that should be ignored if the carrier config
          carrier_supported_satellite_services_per_provider_bundle does not support them.
@@ -184,6 +195,23 @@
     <string name="config_satellite_sim_identifier" translatable="false"></string>
     <java-symbol type="string" name="config_satellite_sim_identifier" />
 
+    <!-- The app to which the emergency call will be handed over for OEM-enabled satellite
+         messaging. The format of the config string is "package_name;class_name". -->
+    <string name="config_oem_enabled_satellite_sos_handover_app" translatable="false"></string>
+    <java-symbol type="string" name="config_oem_enabled_satellite_sos_handover_app" />
+
+    <!-- The action of the intent that Dialer sends to the app to which the emergency call will be
+         handed over for emergency messaging via satellite. -->
+    <string name="config_satellite_emergency_handover_intent_action" translatable="false"></string>
+    <java-symbol type="string" name="config_satellite_emergency_handover_intent_action" />
+
+    <!-- Whether outgoing satellite datagrams should be sent to modem in demo mode. When satellite
+         is enabled for demo mode, if this config is enabled, outgoing datagrams will be sent to
+         modem; otherwise, success results will be returned. If demo mode is disabled, outgoing
+         datagrams are always sent to modem. -->
+    <bool name="config_send_satellite_datagram_to_modem_in_demo_mode">false</bool>
+    <java-symbol type="bool" name="config_send_satellite_datagram_to_modem_in_demo_mode" />
+
     <!-- Whether enhanced IWLAN handover check is enabled. If enabled, telephony frameworks
          will not perform handover if the target transport is out of service, or VoPS not
          supported. The network will be torn down on the source transport, and will be
@@ -191,10 +219,6 @@
          new network. -->
     <bool name="config_enhanced_iwlan_handover_check">true</bool>
     <java-symbol type="bool" name="config_enhanced_iwlan_handover_check" />
-
-    <!-- Whether using the new SubscriptionManagerService or the old SubscriptionController -->
-    <bool name="config_using_subscription_manager_service">true</bool>
-    <java-symbol type="bool" name="config_using_subscription_manager_service" />
 
     <!-- Whether asynchronously update the subscription database or not. Async mode increases
          the performance, but sync mode reduces the chance of database/cache out-of-sync. -->
@@ -222,10 +246,6 @@
          data profile -->
     <bool name="allow_clear_initial_attach_data_profile">false</bool>
     <java-symbol type="bool" name="allow_clear_initial_attach_data_profile" />
-
-    <!-- Boolean indicating whether TelephonyAnalytics module is active or not. -->
-    <bool name="telephony_analytics_switch">true</bool>
-    <java-symbol type="bool" name="telephony_analytics_switch" />
 
     <!-- Whether to enable modem on boot if behavior is not defined -->
     <bool name="config_enable_cellular_on_boot_default">true</bool>

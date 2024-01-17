@@ -73,6 +73,8 @@ import android.window.ISurfaceSyncGroupCompletedListener;
 import android.window.ITaskFpsCallback;
 import android.window.ScreenCapture;
 import android.window.WindowContextInfo;
+import android.window.ITrustedPresentationListener;
+import android.window.TrustedPresentationThresholds;
 
 /**
  * System private interface to the window manager.
@@ -113,8 +115,6 @@ interface IWindowManager
     boolean isViewServerRunning();       // Transaction #3
 
     IWindowSession openSession(in IWindowSessionCallback callback);
-
-    boolean useBLAST();
 
     @UnsupportedAppUsage
     void getInitialDisplaySize(int displayId, out Point size);
@@ -525,11 +525,11 @@ interface IWindowManager
         out InputChannel inputChannel);
 
     /**
-     * Destroy an input consumer by name and display id.
+     * Destroy an input consumer by token and display id.
      * This method will also dispose the input channels associated with that InputConsumer.
      */
     @UnsupportedAppUsage
-    boolean destroyInputConsumer(String name, int displayId);
+    boolean destroyInputConsumer(IBinder token, int displayId);
 
     /**
      * Return the touch region for the current IME window, or an empty region if there is none.
@@ -1077,4 +1077,10 @@ interface IWindowManager
     @JavaPassthrough(annotation = "@android.annotation.RequiresPermission(android.Manifest"
             + ".permission.MONITOR_INPUT)")
     void unregisterDecorViewGestureListener(IDecorViewGestureListener listener, int displayId);
+
+    void registerTrustedPresentationListener(in IBinder window, in ITrustedPresentationListener listener,
+            in TrustedPresentationThresholds thresholds, int id);
+
+
+    void unregisterTrustedPresentationListener(in ITrustedPresentationListener listener, int id);
 }

@@ -18,6 +18,7 @@ package com.android.systemui.keyguard.domain.interactor
 
 import android.animation.ValueAnimator
 import com.android.app.animation.Interpolators
+import com.android.app.tracing.TraceUtils.Companion.launch
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.flags.FeatureFlags
@@ -31,10 +32,10 @@ import com.android.systemui.keyguard.shared.model.TransitionModeOnCanceled
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.shade.data.repository.ShadeRepository
-import com.android.systemui.util.TraceUtils.Companion.launch
 import com.android.systemui.util.kotlin.Utils.Companion.toQuad
 import com.android.systemui.util.kotlin.Utils.Companion.toTriple
 import com.android.systemui.util.kotlin.sample
+import dagger.Lazy
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
@@ -56,6 +57,7 @@ constructor(
     private val flags: FeatureFlags,
     private val shadeRepository: ShadeRepository,
     private val powerInteractor: PowerInteractor,
+    inWindowLauncherUnlockAnimationInteractor: Lazy<InWindowLauncherUnlockAnimationInteractor>,
 ) :
     TransitionInteractor(
         fromState = KeyguardState.LOCKSCREEN,
@@ -104,12 +106,21 @@ constructor(
     val surfaceBehindModel: Flow<KeyguardSurfaceBehindModel?> =
         combine(
                 transitionInteractor.startedKeyguardTransitionStep,
-                transitionInteractor.transitionStepsFromState(KeyguardState.LOCKSCREEN)
-            ) { startedStep, fromLockscreenStep ->
+                transitionInteractor.transitionStepsFromState(KeyguardState.LOCKSCREEN),
+                inWindowLauncherUnlockAnimationInteractor
+                    .get()
+                    .transitioningToGoneWithInWindowAnimation,
+            ) { startedStep, fromLockscreenStep, transitioningToGoneWithInWindowAnimation ->
                 if (startedStep.to != KeyguardState.GONE) {
                     // Only LOCKSCREEN -> GONE has specific surface params (for the unlock
                     // animation).
                     return@combine null
+                } else if (transitioningToGoneWithInWindowAnimation) {
+                    // If we're prepared for the in-window unlock, we're going to play an animation
+                    // in the window. Make it fully visible.
+                    KeyguardSurfaceBehindModel(
+                        alpha = 1f,
+                    )
                 } else if (fromLockscreenStep.value > 0.5f) {
                     // Start the animation once we're 50% transitioned to GONE.
                     KeyguardSurfaceBehindModel(
@@ -203,7 +214,7 @@ constructor(
     private fun listenForLockscreenToPrimaryBouncerDragging() {
         var transitionId: UUID? = null
         scope.launch("$TAG#listenForLockscreenToPrimaryBouncerDragging") {
-            shadeRepository.shadeModel
+            shadeRepository.legacyShadeExpansion
                 .sample(
                     combine(
                         transitionInteractor.startedKeyguardTransitionStep,
@@ -213,23 +224,23 @@ constructor(
                     ),
                     ::toQuad
                 )
-                .collect { (shadeModel, keyguardState, statusBarState, isKeyguardUnlocked) ->
+                .collect { (shadeExpansion, keyguardState, statusBarState, isKeyguardUnlocked) ->
                     val id = transitionId
                     if (id != null) {
                         if (keyguardState.to == KeyguardState.PRIMARY_BOUNCER) {
                             // An existing `id` means a transition is started, and calls to
                             // `updateTransition` will control it until FINISHED or CANCELED
                             var nextState =
-                                if (shadeModel.expansionAmount == 0f) {
+                                if (shadeExpansion == 0f) {
                                     TransitionState.FINISHED
-                                } else if (shadeModel.expansionAmount == 1f) {
+                                } else if (shadeExpansion == 1f) {
                                     TransitionState.CANCELED
                                 } else {
                                     TransitionState.RUNNING
                                 }
                             transitionRepository.updateTransition(
                                 id,
-                                1f - shadeModel.expansionAmount,
+                                1f - shadeExpansion,
                                 nextState,
                             )
 
@@ -263,7 +274,7 @@ constructor(
                         // integrated into KeyguardTransitionRepository
                         if (
                             keyguardState.to == KeyguardState.LOCKSCREEN &&
-                                shadeModel.isUserDragging &&
+                                shadeRepository.legacyShadeTracking.value &&
                                 !isKeyguardUnlocked &&
                                 statusBarState == KEYGUARD
                         ) {
@@ -369,6 +380,8 @@ constructor(
                     KeyguardState.DREAMING -> TO_DREAMING_DURATION
                     KeyguardState.OCCLUDED -> TO_OCCLUDED_DURATION
                     KeyguardState.AOD -> TO_AOD_DURATION
+                    KeyguardState.DOZING -> TO_DOZING_DURATION
+                    KeyguardState.DREAMING_LOCKSCREEN_HOSTED -> TO_DREAMING_HOSTED_DURATION
                     else -> DEFAULT_DURATION
                 }.inWholeMilliseconds
         }
@@ -377,8 +390,12 @@ constructor(
     companion object {
         const val TAG = "FromLockscreenTransitionInteractor"
         private val DEFAULT_DURATION = 400.milliseconds
+        val TO_DOZING_DURATION = 500.milliseconds
         val TO_DREAMING_DURATION = 933.milliseconds
+        val TO_DREAMING_HOSTED_DURATION = 933.milliseconds
         val TO_OCCLUDED_DURATION = 450.milliseconds
         val TO_AOD_DURATION = 500.milliseconds
+        val TO_PRIMARY_BOUNCER_DURATION = DEFAULT_DURATION
+        val TO_GONE_DURATION = DEFAULT_DURATION
     }
 }

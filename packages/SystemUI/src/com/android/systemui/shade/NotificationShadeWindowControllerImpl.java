@@ -52,13 +52,16 @@ import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
+import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.dump.DumpsysTableLogger;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController.StateListener;
 import com.android.systemui.res.R;
+import com.android.systemui.scene.shared.flag.SceneContainerFlags;
 import com.android.systemui.scene.ui.view.WindowRootViewComponent;
+import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.domain.interactor.ShadeInteractor;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.StatusBarState;
@@ -114,6 +117,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     private final AuthController mAuthController;
     private final Lazy<SelectedUserInteractor> mUserInteractor;
     private final Lazy<ShadeInteractor> mShadeInteractorLazy;
+    private final SceneContainerFlags mSceneContainerFlags;
     private ViewGroup mWindowRootView;
     private LayoutParams mLp;
     private boolean mHasTopUi;
@@ -150,16 +154,18 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             ConfigurationController configurationController,
             KeyguardViewMediator keyguardViewMediator,
             KeyguardBypassController keyguardBypassController,
+            @Main Executor mainExecutor,
             @Background Executor backgroundExecutor,
             SysuiColorExtractor colorExtractor,
             DumpManager dumpManager,
             KeyguardStateController keyguardStateController,
             ScreenOffAnimationController screenOffAnimationController,
             AuthController authController,
-            ShadeExpansionStateManager shadeExpansionStateManager,
             Lazy<ShadeInteractor> shadeInteractorLazy,
             ShadeWindowLogger logger,
-            Lazy<SelectedUserInteractor> userInteractor) {
+            Lazy<SelectedUserInteractor> userInteractor,
+            UserTracker userTracker,
+            SceneContainerFlags sceneContainerFlags) {
         mContext = context;
         mWindowRootViewComponentFactory = windowRootViewComponentFactory;
         mWindowManager = windowManager;
@@ -177,6 +183,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         dumpManager.registerDumpable(this);
         mAuthController = authController;
         mUserInteractor = userInteractor;
+        mSceneContainerFlags = sceneContainerFlags;
         mLastKeyguardRotationAllowed = mKeyguardStateController.isKeyguardScreenRotationAllowed();
         mLockScreenDisplayTimeout = context.getResources()
                 .getInteger(R.integer.config_lockScreenDisplayTimeout);
@@ -185,8 +192,9 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                 .addCallback(mStateListener,
                         SysuiStatusBarStateController.RANK_STATUS_BAR_WINDOW_CONTROLLER);
         configurationController.addCallback(this);
-        shadeExpansionStateManager.addQsExpansionListener(this::onQsExpansionChanged);
-
+        if (android.multiuser.Flags.useAllCpusDuringUserSwitch()) {
+            userTracker.addCallback(mUserTrackerCallback, mainExecutor);
+        }
         float desiredPreferredRefreshRate = context.getResources()
                 .getInteger(R.integer.config_keyguardRefreshRate);
         float actualPreferredRefreshRate = -1;
@@ -283,6 +291,15 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         mLp.privateFlags |= PRIVATE_FLAG_BEHAVIOR_CONTROLLED;
         mLp.insetsFlags.behavior = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE;
 
+        if (mSceneContainerFlags.isEnabled()) {
+            // This prevents the appearance and disappearance of the software keyboard (also known
+            // as the "IME") from scrolling/panning the window to make room for the keyboard.
+            //
+            // The scene container logic does its own adjustment and animation when the IME appears
+            // or disappears.
+            mLp.softInputMode = LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
+        }
+
         mWindowManager.addView(mWindowRootView, mLp);
 
         mLpChanged.copyFrom(mLp);
@@ -302,6 +319,11 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                 mWindowRootView,
                 mShadeInteractorLazy.get().isAnyExpanded(),
                 this::onShadeOrQsExpanded
+        );
+        collectFlow(
+                mWindowRootView,
+                mShadeInteractorLazy.get().isQsExpanded(),
+                this::onQsExpansionChanged
         );
     }
 
@@ -352,7 +374,10 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                     && !state.keyguardFadingAway && !state.keyguardGoingAway;
             if (onKeyguard
                     && mAuthController.isUdfpsEnrolled(mUserInteractor.get().getSelectedUserId())) {
-                // both max and min display refresh rate must be set to take effect:
+                // Requests the max refresh rate (ie: for smooth display). Note: By setting
+                // the preferred refresh rates below, the refresh rate will not override the max
+                // refresh rate in settings (ie: if smooth display is OFF).
+                // Both max and min display refresh rate must be set to take effect:
                 mLpChanged.preferredMaxDisplayRefreshRate = mKeyguardPreferredRefreshRate;
                 mLpChanged.preferredMinDisplayRefreshRate = mKeyguardPreferredRefreshRate;
             } else {
@@ -566,6 +591,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                 state.qsExpanded,
                 state.headsUpNotificationShowing,
                 state.lightRevealScrimOpaque,
+                state.isSwitchingUsers,
                 state.forceWindowCollapsed,
                 state.forceDozeBrightness,
                 state.forceUserActivity,
@@ -618,7 +644,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     }
 
     private void applyHasTopUi(NotificationShadeWindowState state) {
-        mHasTopUiChanged = !state.componentsForcingTopUi.isEmpty() || isExpanded(state);
+        mHasTopUiChanged = !state.componentsForcingTopUi.isEmpty() || isExpanded(state)
+                || state.isSwitchingUsers;
     }
 
     private void applyNotTouchable(NotificationShadeWindowState state) {
@@ -946,6 +973,26 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         @Override
         public void onDreamingChanged(boolean isDreaming) {
             setDreaming(isDreaming);
+        }
+    };
+
+    private final UserTracker.Callback mUserTrackerCallback = new UserTracker.Callback() {
+        @Override
+        public void onBeforeUserSwitching(int newUser) {
+            setIsSwitchingUsers(true);
+        }
+
+        @Override
+        public void onUserChanged(int newUser, Context userContext) {
+            setIsSwitchingUsers(false);
+        }
+
+        private void setIsSwitchingUsers(boolean isSwitchingUsers) {
+            if (mCurrentState.isSwitchingUsers == isSwitchingUsers) {
+                return;
+            }
+            mCurrentState.isSwitchingUsers = isSwitchingUsers;
+            apply(mCurrentState);
         }
     };
 }

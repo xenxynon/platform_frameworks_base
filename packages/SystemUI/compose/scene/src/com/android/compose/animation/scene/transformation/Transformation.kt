@@ -16,7 +16,6 @@
 
 package com.android.compose.animation.scene.transformation
 
-import androidx.compose.ui.Modifier
 import com.android.compose.animation.scene.Element
 import com.android.compose.animation.scene.ElementMatcher
 import com.android.compose.animation.scene.Scene
@@ -43,7 +42,7 @@ sealed interface Transformation {
      * Reverse this transformation. This is called when we use Transition(from = A, to = B) when
      * animating from B to A and there is no Transition(from = B, to = A) defined.
      */
-    fun reverse(): Transformation = this
+    fun reversed(): Transformation = this
 }
 
 internal class SharedElementTransformation(
@@ -51,19 +50,6 @@ internal class SharedElementTransformation(
     internal val enabled: Boolean,
     internal val scenePicker: SharedElementScenePicker,
 ) : Transformation
-
-/** A transformation that is applied on the element during the whole transition. */
-internal interface ModifierTransformation : Transformation {
-    /** Apply the transformation to [element]. */
-    // TODO(b/290184746): Figure out a public API for custom transformations that don't have access
-    // to these internal classes.
-    fun Modifier.transform(
-        layoutImpl: SceneTransitionLayoutImpl,
-        scene: Scene,
-        element: Element,
-        sceneValues: Element.TargetValues,
-    ): Modifier
-}
 
 /** A transformation that changes the value of an element property, like its size or offset. */
 internal sealed interface PropertyTransformation<T> : Transformation {
@@ -91,10 +77,10 @@ internal class RangedPropertyTransformation<T>(
     val delegate: PropertyTransformation<T>,
     override val range: TransformationRange,
 ) : PropertyTransformation<T> by delegate {
-    override fun reverse(): Transformation {
+    override fun reversed(): Transformation {
         return RangedPropertyTransformation(
-            delegate.reverse() as PropertyTransformation<T>,
-            range.reverse()
+            delegate.reversed() as PropertyTransformation<T>,
+            range.reversed()
         )
     }
 }
@@ -116,7 +102,7 @@ data class TransformationRange(
     }
 
     /** Reverse this range. */
-    fun reverse() = TransformationRange(start = reverseBound(end), end = reverseBound(start))
+    fun reversed() = TransformationRange(start = reverseBound(end), end = reverseBound(start))
 
     /** Get the progress of this range given the global [transitionProgress]. */
     fun progress(transitionProgress: Float): Float {

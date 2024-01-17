@@ -390,6 +390,8 @@ applications that come with the platform
         <!-- Permission required for ShortcutManagerUsageTest CTS test. -->
         <permission name="android.permission.ACCESS_SHORTCUTS"/>
         <permission name="android.permission.REBOOT"/>
+        <!-- Permission required for NfcResolverActivity CTS tests. -->
+        <permission name="android.permission.SHOW_CUSTOMIZED_RESOLVER"/>
         <!-- Permission required for access VIBRATOR_STATE. -->
         <permission name="android.permission.ACCESS_VIBRATOR_STATE"/>
         <!-- Permission required for UsageStatsTest CTS test. -->
@@ -446,6 +448,8 @@ applications that come with the platform
         <permission name="android.permission.MANAGE_WIFI_NETWORK_SELECTION" />
         <!-- Permission needed for CTS test - ConcurrencyTest#testP2pSetWfdInfo -->
         <permission name="android.permission.CONFIGURE_WIFI_DISPLAY" />
+        <!-- Permission required for CTS test - CtsThreadNetworkTestCases -->
+        <permission name="android.permission.THREAD_NETWORK_PRIVILEGED"/>
         <!-- Permission required for CTS test CarrierMessagingServiceWrapperTest -->
         <permission name="android.permission.BIND_CARRIER_SERVICES"/>
         <!-- Permission required for CTS test - MusicRecognitionManagerTest -->
@@ -472,6 +476,7 @@ applications that come with the platform
         <permission name="android.permission.BIND_HOTWORD_DETECTION_SERVICE" />
         <permission name="android.permission.BIND_VISUAL_QUERY_DETECTION_SERVICE" />
         <permission name="android.permission.MANAGE_APP_HIBERNATION"/>
+        <permission name="android.permission.RECEIVE_SANDBOX_TRIGGER_AUDIO" />
         <!-- Permission required for CTS test - ResourceObserverNativeTest -->
         <permission name="android.permission.REGISTER_MEDIA_RESOURCE_OBSERVER" />
         <!-- Permission required for CTS test - MediaCodecResourceTest -->
@@ -520,6 +525,8 @@ applications that come with the platform
         <permission name="android.permission.ACCESS_BROADCAST_RADIO"/>
         <!-- Permission required for CTS test - CtsAmbientContextServiceTestCases -->
         <permission name="android.permission.ACCESS_AMBIENT_CONTEXT_EVENT"/>
+        <!-- Permission required for CTS test - CtsWearableSensingServiceTestCases -->
+        <permission name="android.permission.MANAGE_WEARABLE_SENSING_SERVICE"/>
         <!-- Permission required for CTS test - CtsTelephonyProviderTestCases -->
         <permission name="android.permission.WRITE_APN_SETTINGS"/>
         <!-- Permission required for GTS test - GtsStatsdHostTestCases -->
@@ -536,6 +543,9 @@ applications that come with the platform
         <permission name="android.permission.LAUNCH_CREDENTIAL_SELECTOR"/>
         <!-- Permission required for CTS test IntentRedirectionTest -->
         <permission name="android.permission.QUERY_CLONED_APPS"/>
+        <permission name="android.permission.GET_BINDING_UID_IMPORTANCE"/>
+        <!-- Permission required for CTS test NotificationManagerZenTest -->
+        <permission name="android.permission.CONTROL_DISPLAY_COLOR_TRANSFORMS" />
     </privapp-permissions>
 
     <privapp-permissions package="com.android.statementservice">

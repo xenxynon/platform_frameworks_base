@@ -38,6 +38,7 @@ import android.media.AudioPlaybackConfiguration;
 import android.media.AudioPlaybackConfiguration.FormatInfo;
 import android.media.AudioPlaybackConfiguration.PlayerMuteEvent;
 import android.media.AudioSystem;
+import android.media.FadeManagerConfiguration;
 import android.media.IPlaybackConfigDispatcher;
 import android.media.PlayerBase;
 import android.media.VolumeShaper;
@@ -156,6 +157,7 @@ public final class PlaybackActivityMonitor
     private final int mMaxAlarmVolume;
     private int mPrivilegedAlarmActiveCount = 0;
     private final Consumer<AudioDeviceAttributes> mMuteAwaitConnectionTimeoutCb;
+    private final FadeOutManager mFadeOutManager = new FadeOutManager();
 
     PlaybackActivityMonitor(Context context, int maxAlarmVolume,
             Consumer<AudioDeviceAttributes> muteTimeoutCallback) {
@@ -390,7 +392,7 @@ public final class PlaybackActivityMonitor
             if (change) {
                 if (event == AudioPlaybackConfiguration.PLAYER_STATE_STARTED) {
                     mDuckingManager.checkDuck(apc);
-                    mFadingManager.checkFade(apc);
+                    mFadeOutManager.checkFade(apc);
                 }
                 if (doNotLog) {
                     // do not dispatch events for "ignored" players
@@ -473,7 +475,7 @@ public final class PlaybackActivityMonitor
                         "releasing player piid:" + piid));
                 mPlayers.remove(new Integer(piid));
                 mDuckingManager.removeReleased(apc);
-                mFadingManager.removeReleased(apc);
+                mFadeOutManager.removeReleased(apc);
                 mMutedPlayersAwaitingConnection.remove(Integer.valueOf(piid));
                 checkVolumeForPrivilegedAlarm(apc, AudioPlaybackConfiguration.PLAYER_STATE_RELEASED);
                 change = apc.handleStateEvent(AudioPlaybackConfiguration.PLAYER_STATE_RELEASED,
@@ -643,7 +645,7 @@ public final class PlaybackActivityMonitor
             mDuckingManager.dump(pw);
             // faded out players
             pw.println("\n  faded out players piids:");
-            mFadingManager.dump(pw);
+            mFadeOutManager.dump(pw);
             // players muted due to the device ringing or being in a call
             pw.print("\n  muted player piids due to call/ring:");
             for (int piid : mMutedPlayers) {
@@ -823,7 +825,7 @@ public final class PlaybackActivityMonitor
         if (DEBUG) { Log.v(TAG, "unduckPlayers: uids winner=" + winner.getClientUid()); }
         synchronized (mPlayerLock) {
             mDuckingManager.unduckUid(winner.getClientUid(), mPlayers);
-            mFadingManager.unfadeOutUid(winner.getClientUid(), mPlayers);
+            mFadeOutManager.unfadeOutUid(winner.getClientUid(), mPlayers);
         }
     }
 
@@ -892,8 +894,6 @@ public final class PlaybackActivityMonitor
         }
     }
 
-    private final FadeOutManager mFadingManager = new FadeOutManager();
-
     /**
      *
      * @param winner the new non-transient focus owner
@@ -914,7 +914,7 @@ public final class PlaybackActivityMonitor
                 if (DEBUG) { Log.v(TAG, "no players to fade out"); }
                 return false;
             }
-            if (!FadeOutManager.canCauseFadeOut(winner, loser)) {
+            if (!mFadeOutManager.canCauseFadeOut(winner, loser)) {
                 return false;
             }
             // check if this UID needs to be faded out (return false if not), and gather list of
@@ -928,7 +928,7 @@ public final class PlaybackActivityMonitor
                         && loser.hasSameUid(apc.getClientUid())
                         && apc.getPlayerState()
                         == AudioPlaybackConfiguration.PLAYER_STATE_STARTED) {
-                    if (!FadeOutManager.canBeFadedOut(apc)) {
+                    if (!mFadeOutManager.canBeFadedOut(apc)) {
                         // the player is not eligible to be faded out, bail
                         Log.v(TAG, "not fading out player " + apc.getPlayerInterfaceId()
                                 + " uid:" + apc.getClientUid() + " pid:" + apc.getClientPid()
@@ -943,7 +943,7 @@ public final class PlaybackActivityMonitor
                 }
             }
             if (loserHasActivePlayers) {
-                mFadingManager.fadeOutUid(loser.getClientUid(), apcsToFadeOut);
+                mFadeOutManager.fadeOutUid(loser.getClientUid(), apcsToFadeOut);
             }
         }
 
@@ -956,9 +956,25 @@ public final class PlaybackActivityMonitor
         synchronized (mPlayerLock) {
             players = (HashMap<Integer, AudioPlaybackConfiguration>) mPlayers.clone();
         }
-        mFadingManager.unfadeOutUid(uid, players);
+        mFadeOutManager.unfadeOutUid(uid, players);
         mDuckingManager.unduckUid(uid, players);
     }
+
+    @Override
+    public long getFadeOutDurationMillis(@NonNull AudioAttributes aa) {
+        return mFadeOutManager.getFadeOutDurationOnFocusLossMillis(aa);
+    }
+
+    @Override
+    public long getFadeInDelayForOffendersMillis(@NonNull AudioAttributes aa) {
+        return mFadeOutManager.getFadeInDelayForOffendersMillis(aa);
+    }
+
+    @Override
+    public boolean shouldEnforceFade() {
+        return mFadeOutManager.isFadeEnabled();
+    }
+
 
     //=================================================================
     // Track playback activity listeners
@@ -997,6 +1013,27 @@ public final class PlaybackActivityMonitor
                             new ArrayList<AudioPlaybackConfiguration>(mPlayers.values()));
             }
         }
+    }
+
+    int setFadeManagerConfiguration(int focusType, FadeManagerConfiguration fadeMgrConfig) {
+        return mFadeOutManager.setFadeManagerConfiguration(fadeMgrConfig);
+    }
+
+    int clearFadeManagerConfiguration(int focusType) {
+        return mFadeOutManager.clearFadeManagerConfiguration();
+    }
+
+    FadeManagerConfiguration getFadeManagerConfiguration(int focusType) {
+        return mFadeOutManager.getFadeManagerConfiguration();
+    }
+
+    int setTransientFadeManagerConfiguration(int focusType,
+            FadeManagerConfiguration fadeMgrConfig) {
+        return mFadeOutManager.setTransientFadeManagerConfiguration(fadeMgrConfig);
+    }
+
+    int clearTransientFadeManagerConfiguration(int focusType) {
+        return mFadeOutManager.clearTransientFadeManagerConfiguration();
     }
 
     /**
@@ -1323,6 +1360,38 @@ public final class PlaybackActivityMonitor
                     + AudioPlaybackConfiguration.toLogFriendlyPlayerType(mPlayerType)
                     + " attr:" + mPlayerAttr
                     + " session:" + mSessionId);
+        }
+    }
+
+    static final class FadeEvent extends EventLogger.Event {
+        private final int mPlayerIId;
+        private final int mPlayerType;
+        private final int mClientUid;
+        private final int mClientPid;
+        private final AudioAttributes mPlayerAttr;
+        private final VolumeShaper.Configuration mVShaper;
+        private final VolumeShaper.Operation mVOperation;
+
+        FadeEvent(AudioPlaybackConfiguration apc, VolumeShaper.Configuration vShaper,
+                VolumeShaper.Operation vOperation) {
+            mPlayerIId = apc.getPlayerInterfaceId();
+            mClientUid = apc.getClientUid();
+            mClientPid = apc.getClientPid();
+            mPlayerAttr = apc.getAudioAttributes();
+            mPlayerType = apc.getPlayerType();
+            mVShaper = vShaper;
+            mVOperation = vOperation;
+        }
+
+        @Override
+        public String eventToString() {
+            return "Fade Event:" + " player piid:" + mPlayerIId
+                    + " uid/pid:" + mClientUid + "/" + mClientPid
+                    + " player type:"
+                    + AudioPlaybackConfiguration.toLogFriendlyPlayerType(mPlayerType)
+                    + " attr:" + mPlayerAttr
+                    + " volume shaper:" + mVShaper
+                    + " volume operation:" + mVOperation;
         }
     }
 

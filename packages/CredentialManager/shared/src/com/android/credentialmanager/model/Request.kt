@@ -16,42 +16,46 @@
 
 package com.android.credentialmanager.model
 
-import android.credentials.ui.ProviderData
 import android.os.IBinder
 import android.os.ResultReceiver
-import com.google.common.collect.ImmutableList
-import com.google.common.collect.ImmutableMap
+import com.android.credentialmanager.model.get.ProviderInfo
 
 /**
  * Represents the request made by the CredentialManager API.
  */
-sealed class Request {
+sealed class Request private constructor(
+    open val token: IBinder?,
+) {
 
     /**
      * Request to close the app without displaying a message to the user and without reporting
      * anything back to the Credential Manager service.
      */
-    data object Close : Request()
+    data class Close(
+        override val token: IBinder?,
+    ) : Request(token)
 
     /**
      * Request to close the app, displaying a message to the user.
      */
     data class Cancel(
-        val appName: String
-    ) : Request()
+        val appName: String,
+        override val token: IBinder?,
+    ) : Request(token)
 
     /**
      * Request to start the get credentials flow.
      */
     data class Get(
-        val token: IBinder?,
+        override val token: IBinder?,
         val resultReceiver: ResultReceiver?,
-        val providers: ImmutableMap<String, ProviderData>,
-        val passwordEntries: ImmutableList<Password>,
-    ) : Request()
-
+        val providerInfos: List<ProviderInfo>,
+    ) : Request(token)
     /**
      * Request to start the create credentials flow.
      */
-    data object Create : Request()
+    data class Create(
+        override val token: IBinder?,
+    ) : Request(token)
 }
+

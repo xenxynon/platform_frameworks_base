@@ -807,7 +807,7 @@ final class DefaultPermissionGrantPolicy {
                     getDefaultSystemHandlerActivityPackage(pm,
                             SearchManager.INTENT_ACTION_GLOBAL_SEARCH, userId),
                     userId, MICROPHONE_PERMISSIONS, ALWAYS_LOCATION_PERMISSIONS,
-                    NOTIFICATION_PERMISSIONS);
+                    NOTIFICATION_PERMISSIONS, PHONE_PERMISSIONS);
         }
 
         // Voice recognition
@@ -1748,14 +1748,14 @@ final class DefaultPermissionGrantPolicy {
      */
     private class DelayingPackageManagerCache extends PackageManagerWrapper {
         /** uid -> permission -> isGranted, flags */
-        private SparseArray<ArrayMap<String, PermissionState>> mDelayedPermissionState =
+        private final SparseArray<ArrayMap<String, PermissionState>> mDelayedPermissionState =
                 new SparseArray<>();
         /** userId -> context */
-        private SparseArray<Context> mUserContexts = new SparseArray<>();
+        private final SparseArray<Context> mUserContexts = new SparseArray<>();
         /** Permission name -> info */
-        private ArrayMap<String, PermissionInfo> mPermissionInfos = new ArrayMap<>();
+        private final ArrayMap<String, PermissionInfo> mPermissionInfos = new ArrayMap<>();
         /** Package name -> info */
-        private ArrayMap<String, PackageInfo> mPackageInfos = new ArrayMap<>();
+        private final ArrayMap<String, PackageInfo> mPackageInfos = new ArrayMap<>();
 
         /**
          * Apply the cached state

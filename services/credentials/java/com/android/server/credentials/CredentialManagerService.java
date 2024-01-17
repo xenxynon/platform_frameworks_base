@@ -65,6 +65,7 @@ import android.util.Slog;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.content.PackageMonitor;
 import com.android.server.credentials.metrics.ApiName;
 import com.android.server.credentials.metrics.ApiStatus;
 import com.android.server.infra.AbstractMasterSystemService;
@@ -100,6 +101,13 @@ public final class CredentialManagerService
 
     private static final String DEVICE_CONFIG_ENABLE_CREDENTIAL_DESC_API =
             "enable_credential_description_api";
+
+    /**
+     * Value stored in autofill pref when credential provider is primary. This is
+     * used as a placeholder since a credman only provider will not have an
+     * autofill service.
+     */
+    public static final String AUTOFILL_PLACEHOLDER_VALUE = "credential-provider";
 
     private final Context mContext;
 
@@ -194,6 +202,8 @@ public final class CredentialManagerService
     @SuppressWarnings("GuardedBy") // ErrorProne requires service.mLock which is the same
     // this.mLock
     protected void handlePackageRemovedMultiModeLocked(String packageName, int userId) {
+        updateProvidersWhenPackageRemoved(mContext, packageName);
+
         List<CredentialManagerServiceImpl> services = peekServiceListForUserLocked(userId);
         if (services == null) {
             return;
@@ -216,8 +226,6 @@ public final class CredentialManagerService
         for (CredentialManagerServiceImpl serviceToBeRemoved : servicesToBeRemoved) {
             removeServiceFromCache(serviceToBeRemoved, userId);
             removeServiceFromSystemServicesCache(serviceToBeRemoved, userId);
-            removeServiceFromMultiModeSettings(serviceToBeRemoved.getComponentName()
-                    .flattenToString(), userId);
             CredentialDescriptionRegistry.forUser(userId)
                     .evictProviderWithPackageName(serviceToBeRemoved.getServicePackageName());
         }
@@ -862,37 +870,41 @@ public final class CredentialManagerService
             Slog.i(TAG, "isEnabledCredentialProviderService with componentName: "
                     + componentName.flattenToString());
 
-            // TODO(253157366): Check additional set of services.
             final int userId = UserHandle.getCallingUserId();
             final int callingUid = Binder.getCallingUid();
             enforceCallingPackage(callingPackage, callingUid);
-            synchronized (mLock) {
-                final List<CredentialManagerServiceImpl> services =
-                        getServiceListForUserLocked(userId);
-                for (CredentialManagerServiceImpl s : services) {
-                    final ComponentName serviceComponentName = s.getServiceComponentName();
 
-                    if (serviceComponentName.equals(componentName)) {
-                        if (!s.getServicePackageName().equals(callingPackage)) {
-                            // The component name and the package name do not match.
-                            MetricUtilities.logApiCalledSimpleV2(
-                                    ApiName.IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE,
-                                    ApiStatus.FAILURE, callingUid);
-                            Slog.w(
-                                    TAG,
-                                    "isEnabledCredentialProviderService: Component name does "
-                                            + "not match package name.");
-                            return false;
-                        }
-                        MetricUtilities.logApiCalledSimpleV2(
-                                ApiName.IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE,
-                                ApiStatus.SUCCESS, callingUid);
-                        return true;
-                    }
-                }
+            if (componentName == null) {
+                Slog.w(TAG, "isEnabledCredentialProviderService componentName is null");
+                // If the component name was not specified then throw an error and
+                // record a failure because the request failed due to invalid input.
+                MetricUtilities.logApiCalledSimpleV2(
+                      ApiName.IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE,
+                      ApiStatus.FAILURE, callingUid);
+                return false;
             }
 
-            return false;
+            if (!componentName.getPackageName().equals(callingPackage)) {
+                Slog.w(TAG, "isEnabledCredentialProviderService component name"
+                        + " does not match requested component");
+                // If the requested component name package name does not match
+                // the calling package then throw an error and record a failure
+                // metric (because the request failed due to invalid input).
+                MetricUtilities.logApiCalledSimpleV2(
+                      ApiName.IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE,
+                      ApiStatus.FAILURE, callingUid);
+                throw new IllegalArgumentException("provided component name does not match"
+                        + " does not match requesting component");
+            }
+
+            final Set<ComponentName> enabledProviders = getEnabledProvidersForUser(userId);
+            MetricUtilities.logApiCalledSimpleV2(
+                ApiName.IS_ENABLED_CREDENTIAL_PROVIDER_SERVICE,
+                ApiStatus.SUCCESS, callingUid);
+            if (enabledProviders == null) {
+                return false;
+            }
+            return enabledProviders.contains(componentName);
         }
 
         @Override
@@ -1109,5 +1121,102 @@ public final class CredentialManagerService
             }
             mRequestSessions.get(userId).put(token, requestSession);
         }
+    }
+
+    /** Updates the list of providers when an app is uninstalled. */
+    public static void updateProvidersWhenPackageRemoved(Context context, String packageName) {
+        // Get the current providers.
+        String rawProviders =
+                Settings.Secure.getStringForUser(
+                    context.getContentResolver(),
+                    Settings.Secure.CREDENTIAL_SERVICE_PRIMARY,
+                    UserHandle.myUserId());
+        if (rawProviders == null) {
+            Slog.w(TAG, "settings key is null");
+            return;
+        }
+
+        // Remove any providers from the primary setting that contain the package name
+        // being removed.
+        Set<String> primaryProviders =
+                getStoredProviders(rawProviders, packageName);
+        if (!Settings.Secure.putString(
+                context.getContentResolver(),
+                Settings.Secure.CREDENTIAL_SERVICE_PRIMARY,
+                String.join(":", primaryProviders))) {
+            Slog.w(TAG, "Failed to remove primary package: " + packageName);
+            return;
+        }
+
+        // Read the autofill provider so we don't accidentally erase it.
+        String autofillProvider =
+                Settings.Secure.getStringForUser(
+                    context.getContentResolver(),
+                    Settings.Secure.AUTOFILL_SERVICE,
+                    UserHandle.myUserId());
+
+        // If there is an autofill provider and it is the placeholder indicating
+        // that the currently selected primary provider does not support autofill
+        // then we should wipe the setting to keep it in sync.
+        if (autofillProvider != null && primaryProviders.isEmpty()) {
+            if (autofillProvider.equals(AUTOFILL_PLACEHOLDER_VALUE)) {
+                if (!Settings.Secure.putString(
+                        context.getContentResolver(),
+                        Settings.Secure.AUTOFILL_SERVICE,
+                        "")) {
+                    Slog.w(TAG, "Failed to remove autofill package: " + packageName);
+                }
+            } else {
+                // If the existing autofill provider is from the app being removed
+                // then erase the autofill service setting.
+                ComponentName cn = ComponentName.unflattenFromString(autofillProvider);
+                if (cn != null && cn.getPackageName().equals(packageName)) {
+                   if (!Settings.Secure.putString(
+                            context.getContentResolver(),
+                            Settings.Secure.AUTOFILL_SERVICE,
+                            "")) {
+                        Slog.w(TAG, "Failed to remove autofill package: " + packageName);
+                    }
+                }
+            }
+        }
+
+        // Read the credential providers to remove any reference of the removed app.
+        String rawCredentialProviders =
+                Settings.Secure.getStringForUser(
+                    context.getContentResolver(),
+                    Settings.Secure.CREDENTIAL_SERVICE,
+                    UserHandle.myUserId());
+
+        // Remove any providers that belong to the removed app.
+        Set<String> credentialProviders =
+                getStoredProviders(rawCredentialProviders, packageName);
+        if (!Settings.Secure.putString(
+                context.getContentResolver(),
+                Settings.Secure.CREDENTIAL_SERVICE,
+                String.join(":", credentialProviders))) {
+            Slog.w(TAG, "Failed to remove secondary package: " + packageName);
+        }
+    }
+
+    /** Gets the list of stored providers from a string removing any mention of package name. */
+    public static Set<String> getStoredProviders(String rawProviders, String packageName) {
+        // If the app being removed matches any of the package names from
+        // this list then don't add it in the output.
+        Set<String> providers = new HashSet<>();
+        for (String rawComponentName : rawProviders.split(":")) {
+            if (TextUtils.isEmpty(rawComponentName)
+                    || rawComponentName.equals("null")) {
+                Slog.d(TAG, "provider component name is empty or null");
+                continue;
+            }
+
+            ComponentName cn = ComponentName.unflattenFromString(rawComponentName);
+            if (cn != null && !cn.getPackageName().equals(packageName)) {
+                providers.add(cn.flattenToString());
+            }
+        }
+
+        return providers;
     }
 }

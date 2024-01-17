@@ -1725,7 +1725,7 @@ public final class PermissionManager {
     }
 
     private final class OnPermissionsChangeListenerDelegate
-            extends IOnPermissionsChangeListener.Stub implements Handler.Callback{
+            extends IOnPermissionsChangeListener.Stub implements Handler.Callback {
         private static final int MSG_PERMISSIONS_CHANGED = 1;
 
         private final PackageManager.OnPermissionsChangedListener mListener;
@@ -1738,8 +1738,9 @@ public final class PermissionManager {
         }
 
         @Override
-        public void onPermissionsChanged(int uid) {
-            mHandler.obtainMessage(MSG_PERMISSIONS_CHANGED, uid, 0).sendToTarget();
+        public void onPermissionsChanged(int uid, String persistentDeviceId) {
+            mHandler.obtainMessage(MSG_PERMISSIONS_CHANGED, uid, 0, persistentDeviceId)
+                    .sendToTarget();
         }
 
         @Override
@@ -1747,7 +1748,8 @@ public final class PermissionManager {
             switch (msg.what) {
                 case MSG_PERMISSIONS_CHANGED: {
                     final int uid = msg.arg1;
-                    mListener.onPermissionsChanged(uid);
+                    final String persistentDeviceId = msg.obj.toString();
+                    mListener.onPermissionsChanged(uid, persistentDeviceId);
                     return true;
                 }
                 default:

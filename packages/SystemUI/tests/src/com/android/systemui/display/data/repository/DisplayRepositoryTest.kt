@@ -380,6 +380,32 @@ class DisplayRepositoryTest : SysuiTestCase() {
         }
 
     @Test
+    fun pendingDisplay_afterConfigChanged_doesNotChange() =
+        testScope.runTest {
+            val pendingDisplay by lastPendingDisplay()
+
+            sendOnDisplayConnected(1, TYPE_EXTERNAL)
+            val initialPendingDisplay: DisplayRepository.PendingDisplay? = pendingDisplay
+            assertThat(pendingDisplay).isNotNull()
+            sendOnDisplayChanged(1)
+
+            assertThat(initialPendingDisplay).isEqualTo(pendingDisplay)
+        }
+
+    @Test
+    fun pendingDisplay_afterNewHigherDisplayConnected_changes() =
+        testScope.runTest {
+            val pendingDisplay by lastPendingDisplay()
+
+            sendOnDisplayConnected(1, TYPE_EXTERNAL)
+            val initialPendingDisplay: DisplayRepository.PendingDisplay? = pendingDisplay
+            assertThat(pendingDisplay).isNotNull()
+            sendOnDisplayConnected(2, TYPE_EXTERNAL)
+
+            assertThat(initialPendingDisplay).isNotEqualTo(pendingDisplay)
+        }
+
+    @Test
     fun onPendingDisplay_OneInternalAndOneExternalDisplay_internalIgnored() =
         testScope.runTest {
             val pendingDisplay by lastPendingDisplay()
@@ -388,6 +414,17 @@ class DisplayRepositoryTest : SysuiTestCase() {
             sendOnDisplayConnected(2, Display.TYPE_INTERNAL)
 
             assertThat(pendingDisplay!!.id).isEqualTo(1)
+        }
+
+    @Test
+    fun onDisplayAdded_emitsDisplayAdditionEvent() =
+        testScope.runTest {
+            val display by lastDisplayAdditionEvent()
+
+            sendOnDisplayAdded(1, TYPE_EXTERNAL)
+
+            assertThat(display!!.displayId).isEqualTo(1)
+            assertThat(display!!.type).isEqualTo(TYPE_EXTERNAL)
         }
 
     private fun Iterable<Display>.ids(): List<Int> = map { it.displayId }
@@ -411,6 +448,12 @@ class DisplayRepositoryTest : SysuiTestCase() {
         return flowValue
     }
 
+    private fun TestScope.lastDisplayAdditionEvent(): FlowValue<Display?> {
+        val flowValue = collectLastValue(displayRepository.displayAdditionEvent)
+        captureAddedRemovedListener()
+        return flowValue
+    }
+
     private fun captureAddedRemovedListener() {
         verify(displayManager)
             .registerDisplayListener(
@@ -423,9 +466,17 @@ class DisplayRepositoryTest : SysuiTestCase() {
                 )
             )
     }
+
+    private fun sendOnDisplayAdded(id: Int, displayType: Int) {
+        val mockDisplay = display(id = id, type = displayType)
+        whenever(displayManager.getDisplay(eq(id))).thenReturn(mockDisplay)
+        displayListener.value.onDisplayAdded(id)
+    }
+
     private fun sendOnDisplayAdded(id: Int) {
         displayListener.value.onDisplayAdded(id)
     }
+
     private fun sendOnDisplayRemoved(id: Int) {
         displayListener.value.onDisplayRemoved(id)
     }
@@ -439,6 +490,10 @@ class DisplayRepositoryTest : SysuiTestCase() {
         val mockDisplay = display(id = id, type = displayType)
         whenever(displayManager.getDisplay(eq(id))).thenReturn(mockDisplay)
         connectedDisplayListener.value.onDisplayConnected(id)
+    }
+
+    private fun sendOnDisplayChanged(id: Int) {
+        connectedDisplayListener.value.onDisplayChanged(id)
     }
 
     private fun setDisplays(displays: List<Display>) {

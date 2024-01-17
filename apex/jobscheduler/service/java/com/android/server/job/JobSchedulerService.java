@@ -159,6 +159,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -201,6 +202,15 @@ public class JobSchedulerService extends com.android.server.SystemService
     @ChangeId
     @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.TIRAMISU)
     static final long REQUIRE_NETWORK_PERMISSIONS_FOR_CONNECTIVITY_JOBS = 271850009L;
+
+    /**
+     * Throw an exception when biases are set by an unsupported client.
+     *
+     * @hide
+     */
+    @ChangeId
+    @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public static final long THROW_ON_UNSUPPORTED_BIAS_USAGE = 300477393L;
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     public static Clock sSystemClock = Clock.systemUTC();
@@ -259,6 +269,7 @@ public class JobSchedulerService extends com.android.server.SystemService
     /** Master list of jobs. */
     final JobStore mJobs;
     private final CountDownLatch mJobStoreLoadedLatch;
+    private final CountDownLatch mStartControllerTrackingLatch;
     /** Tracking the standby bucket state of each app */
     final StandbyTracker mStandbyTracker;
     /** Tracking amount of time each package runs for. */
@@ -291,6 +302,8 @@ public class JobSchedulerService extends com.android.server.SystemService
     private final ConnectivityController mConnectivityController;
     /** Need directly for sending uid state changes */
     private final DeviceIdleJobsController mDeviceIdleJobsController;
+    /** Need directly for sending exempted bucket changes */
+    private final FlexibilityController mFlexibilityController;
     /** Needed to get next estimated launch time. */
     private final PrefetchController mPrefetchController;
     /** Needed to get remaining quota time. */
@@ -502,6 +515,10 @@ public class JobSchedulerService extends com.android.server.SystemService
                 for (String name : properties.getKeyset()) {
                     if (name == null) {
                         continue;
+                    }
+                    if (DEBUG) {
+                        Slog.d(TAG, "DeviceConfig " + name
+                                + " changed to " + properties.getString(name, null));
                     }
                     switch (name) {
                         case Constants.KEY_ENABLE_API_QUOTAS:
@@ -989,6 +1006,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                     DEFAULT_SYSTEM_STOP_TO_FAILURE_RATIO);
         }
 
+        // TODO(141645789): move into ConnectivityController.CcConfig
         private void updateConnectivityConstantsLocked() {
             CONN_CONGESTION_DELAY_FRAC = DeviceConfig.getFloat(DeviceConfig.NAMESPACE_JOB_SCHEDULER,
                     KEY_CONN_CONGESTION_DELAY_FRAC,
@@ -1422,10 +1440,10 @@ public class JobSchedulerService extends com.android.server.SystemService
                         Slog.d(TAG, "Removing jobs for pkg " + pkgName + " at uid " + pkgUid);
                     }
                     synchronized (mLock) {
-                        // Exclude jobs scheduled on behalf of this app for now because SyncManager
+                        // Exclude jobs scheduled on behalf of this app because SyncManager
                         // and other job proxy agents may not know to reschedule the job properly
                         // after force stop.
-                        // TODO(209852664): determine how to best handle syncs & other proxied jobs
+                        // Proxied jobs will not be allowed to run if the source app is stopped.
                         cancelJobsForPackageAndUidLocked(pkgName, pkgUid,
                                 /* includeSchedulingApp */ true, /* includeSourceApp */ false,
                                 JobParameters.STOP_REASON_USER,
@@ -1437,7 +1455,9 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
     };
 
-    private String getPackageName(Intent intent) {
+    /** Returns the package name stored in the intent's data. */
+    @Nullable
+    public static String getPackageName(Intent intent) {
         Uri uri = intent.getData();
         String pkg = uri != null ? uri.getSchemeSpecificPart() : null;
         return pkg;
@@ -1811,7 +1831,13 @@ public class JobSchedulerService extends com.android.server.SystemService
                     jobStatus.getEstimatedNetworkUploadBytes(),
                     jobStatus.getWorkCount(),
                     ActivityManager.processStateAmToProto(mUidProcStates.get(jobStatus.getUid())),
-                    jobStatus.getNamespaceHash());
+                    jobStatus.getNamespaceHash(),
+                    /* system_measured_source_download_bytes */0,
+                    /* system_measured_source_upload_bytes */ 0,
+                    /* system_measured_calling_download_bytes */0,
+                    /* system_measured_calling_upload_bytes */ 0,
+                    jobStatus.getJob().getIntervalMillis(),
+                    jobStatus.getJob().getFlexMillis());
 
             // If the job is immediately ready to run, then we can just immediately
             // put it in the pending list and try to schedule it.  This is especially
@@ -2248,7 +2274,13 @@ public class JobSchedulerService extends com.android.server.SystemService
                     cancelled.getEstimatedNetworkUploadBytes(),
                     cancelled.getWorkCount(),
                     ActivityManager.processStateAmToProto(mUidProcStates.get(cancelled.getUid())),
-                    cancelled.getNamespaceHash());
+                    cancelled.getNamespaceHash(),
+                    /* system_measured_source_download_bytes */ 0,
+                    /* system_measured_source_upload_bytes */ 0,
+                    /* system_measured_calling_download_bytes */0,
+                    /* system_measured_calling_upload_bytes */ 0,
+                    cancelled.getJob().getIntervalMillis(),
+                    cancelled.getJob().getFlexMillis());
         }
         // If this is a replacement, bring in the new version of the job
         if (incomingJob != null) {
@@ -2503,20 +2535,21 @@ public class JobSchedulerService extends com.android.server.SystemService
         mBatteryStateTracker.startTracking();
 
         // Create the controllers.
+        mStartControllerTrackingLatch = new CountDownLatch(1);
         mControllers = new ArrayList<StateController>();
         mPrefetchController = new PrefetchController(this);
         mControllers.add(mPrefetchController);
-        final FlexibilityController flexibilityController =
+        mFlexibilityController =
                 new FlexibilityController(this, mPrefetchController);
-        mControllers.add(flexibilityController);
+        mControllers.add(mFlexibilityController);
         mConnectivityController =
-                new ConnectivityController(this, flexibilityController);
+                new ConnectivityController(this, mFlexibilityController);
         mControllers.add(mConnectivityController);
         mControllers.add(new TimeController(this));
-        final IdleController idleController = new IdleController(this, flexibilityController);
+        final IdleController idleController = new IdleController(this, mFlexibilityController);
         mControllers.add(idleController);
         final BatteryController batteryController =
-                new BatteryController(this, flexibilityController);
+                new BatteryController(this, mFlexibilityController);
         mControllers.add(batteryController);
         mStorageController = new StorageController(this);
         mControllers.add(mStorageController);
@@ -2533,6 +2566,8 @@ public class JobSchedulerService extends com.android.server.SystemService
         mTareController =
                 new TareController(this, backgroundJobsController, mConnectivityController);
         mControllers.add(mTareController);
+
+        startControllerTrackingAsync();
 
         mRestrictiveControllers = new ArrayList<>();
         mRestrictiveControllers.add(batteryController);
@@ -2605,7 +2640,13 @@ public class JobSchedulerService extends com.android.server.SystemService
     public void onBootPhase(int phase) {
         if (PHASE_LOCK_SETTINGS_READY == phase) {
             // This is the last phase before PHASE_SYSTEM_SERVICES_READY. We need to ensure that
+            // controllers have started tracking and that
             // persisted jobs are loaded before we can proceed to PHASE_SYSTEM_SERVICES_READY.
+            try {
+                mStartControllerTrackingLatch.await();
+            } catch (InterruptedException e) {
+                Slog.e(TAG, "Couldn't wait on controller tracking start latch");
+            }
             try {
                 mJobStoreLoadedLatch.await();
             } catch (InterruptedException e) {
@@ -2613,8 +2654,8 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
         } else if (PHASE_SYSTEM_SERVICES_READY == phase) {
             mConstantsObserver.start();
-            for (StateController controller : mControllers) {
-                controller.onSystemServicesReady();
+            for (int i = mControllers.size() - 1; i >= 0; --i) {
+                mControllers.get(i).onSystemServicesReady();
             }
 
             mAppStateTracker = (AppStateTrackerImpl) Objects.requireNonNull(
@@ -2675,6 +2716,17 @@ public class JobSchedulerService extends com.android.server.SystemService
                 mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
             }
         }
+    }
+
+    private void startControllerTrackingAsync() {
+        mHandler.post(() -> {
+            synchronized (mLock) {
+                for (int i = mControllers.size() - 1; i >= 0; --i) {
+                    mControllers.get(i).startTrackingLocked();
+                }
+            }
+            mStartControllerTrackingLatch.countDown();
+        });
     }
 
     /**
@@ -3146,6 +3198,13 @@ public class JobSchedulerService extends com.android.server.SystemService
     }
 
     @Override
+    public void onExemptedBucketChanged(@NonNull ArraySet<JobStatus> changedJobs) {
+        if (changedJobs.size() > 0) {
+            mFlexibilityController.onExemptedBucketChanged(changedJobs);
+        }
+    }
+
+    @Override
     public void onRestrictionStateChanged(@NonNull JobRestriction restriction,
             boolean stopOvertimeJobs) {
         mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
@@ -3452,7 +3511,10 @@ public class JobSchedulerService extends com.android.server.SystemService
                 }
 
                 final boolean shouldForceBatchJob;
-                if (job.shouldTreatAsExpeditedJob() || job.shouldTreatAsUserInitiatedJob()) {
+                if (job.overrideState > JobStatus.OVERRIDE_NONE) {
+                    // The job should run for some test. Don't force batch it.
+                    shouldForceBatchJob = false;
+                } else if (job.shouldTreatAsExpeditedJob() || job.shouldTreatAsUserInitiatedJob()) {
                     // Never batch expedited or user-initiated jobs, even for RESTRICTED apps.
                     shouldForceBatchJob = false;
                 } else if (job.getEffectiveStandbyBucket() == RESTRICTED_INDEX) {
@@ -3842,10 +3904,16 @@ public class JobSchedulerService extends com.android.server.SystemService
             // Only let the app use the higher runtime if it hasn't repeatedly timed out.
             final String timeoutTag = job.shouldTreatAsExpeditedJob()
                     ? QUOTA_TRACKER_TIMEOUT_EJ_TAG : QUOTA_TRACKER_TIMEOUT_REG_TAG;
+            // Developers are informed that expedited jobs can be stopped earlier than regular jobs
+            // and so shouldn't use them for long pieces of work. There's little reason to let
+            // them run longer than the normal 10 minutes.
+            final long normalUpperLimitMs = job.shouldTreatAsExpeditedJob()
+                    ? mConstants.RUNTIME_MIN_GUARANTEE_MS
+                    : mConstants.RUNTIME_FREE_QUOTA_MAX_LIMIT_MS;
             final long upperLimitMs =
                     mQuotaTracker.isWithinQuota(job.getTimeoutBlameUserId(),
                             job.getTimeoutBlamePackageName(), timeoutTag)
-                            ? mConstants.RUNTIME_FREE_QUOTA_MAX_LIMIT_MS
+                            ? normalUpperLimitMs
                             : mConstants.RUNTIME_MIN_GUARANTEE_MS;
             return Math.min(upperLimitMs,
                     mConstants.USE_TARE_POLICY
@@ -4331,6 +4399,25 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
         }
 
+        private JobInfo enforceBuilderApiPermissions(int uid, int pid, JobInfo job) {
+            if (job.getBias() != JobInfo.BIAS_DEFAULT
+                        && !hasPermission(uid, pid, Manifest.permission.UPDATE_DEVICE_STATS)) {
+                if (CompatChanges.isChangeEnabled(THROW_ON_UNSUPPORTED_BIAS_USAGE, uid)
+                        && Flags.throwOnUnsupportedBiasUsage()) {
+                    throw new SecurityException("Apps may not call setBias()");
+                } else {
+                    // We can't throw the exception. Log the issue and modify the job to remove
+                    // the invalid value.
+                    Slog.w(TAG, "Uid " + uid + " set bias on its job");
+                    return new JobInfo.Builder(job)
+                            .setBias(JobInfo.BIAS_DEFAULT)
+                            .build(false, false, false);
+                }
+            }
+
+            return job;
+        }
+
         private boolean canPersistJobs(int pid, int uid) {
             // Persisting jobs is tantamount to running at boot, so we permit
             // it when the app has declared that it uses the RECEIVE_BOOT_COMPLETED
@@ -4346,7 +4433,9 @@ public class JobSchedulerService extends com.android.server.SystemService
             job.enforceValidity(
                     CompatChanges.isChangeEnabled(
                             JobInfo.DISALLOW_DEADLINES_FOR_PREFETCH_JOBS, callingUid),
-                    rejectNegativeNetworkEstimates);
+                    rejectNegativeNetworkEstimates,
+                    CompatChanges.isChangeEnabled(
+                            JobInfo.ENFORCE_MINIMUM_TIME_WINDOWS, callingUid));
             if ((job.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0) {
                 getContext().enforceCallingOrSelfPermission(
                         android.Manifest.permission.CONNECTIVITY_INTERNAL, TAG);
@@ -4512,6 +4601,8 @@ public class JobSchedulerService extends com.android.server.SystemService
 
             namespace = validateNamespace(namespace);
 
+            job = enforceBuilderApiPermissions(uid, pid, job);
+
             final long ident = Binder.clearCallingIdentity();
             try {
                 return JobSchedulerService.this.scheduleAsPackage(job, null, uid, null, userId,
@@ -4542,6 +4633,8 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
 
             namespace = validateNamespace(namespace);
+
+            job = enforceBuilderApiPermissions(uid, pid, job);
 
             final long ident = Binder.clearCallingIdentity();
             try {
@@ -4581,6 +4674,8 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
 
             namespace = validateNamespace(namespace);
+
+            job = enforceBuilderApiPermissions(callerUid, callerPid, job);
 
             final long ident = Binder.clearCallingIdentity();
             try {
@@ -4872,6 +4967,8 @@ public class JobSchedulerService extends com.android.server.SystemService
         Slog.d(TAG, "executeRunCommand(): " + pkgName + "/" + namespace + "/" + userId
                 + " " + jobId + " s=" + satisfied + " f=" + force);
 
+        final CountDownLatch delayLatch = new CountDownLatch(1);
+        final JobStatus js;
         try {
             final int uid = AppGlobals.getPackageManager().getPackageUid(pkgName, 0,
                     userId != UserHandle.USER_ALL ? userId : UserHandle.USER_SYSTEM);
@@ -4880,7 +4977,7 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
 
             synchronized (mLock) {
-                final JobStatus js = mJobs.getJobByUidAndJobId(uid, namespace, jobId);
+                js = mJobs.getJobByUidAndJobId(uid, namespace, jobId);
                 if (js == null) {
                     return JobSchedulerShellCommand.CMD_ERR_NO_JOB;
                 }
@@ -4891,21 +4988,69 @@ public class JobSchedulerService extends com.android.server.SystemService
                 // Re-evaluate constraints after the override is set in case one of the overridden
                 // constraints was preventing another constraint from thinking it needed to update.
                 for (int c = mControllers.size() - 1; c >= 0; --c) {
-                    mControllers.get(c).reevaluateStateLocked(uid);
+                    mControllers.get(c).evaluateStateLocked(js);
                 }
 
                 if (!js.isConstraintsSatisfied()) {
-                    js.overrideState = JobStatus.OVERRIDE_NONE;
-                    return JobSchedulerShellCommand.CMD_ERR_CONSTRAINTS;
+                    if (js.hasConnectivityConstraint()
+                            && !js.isConstraintSatisfied(JobStatus.CONSTRAINT_CONNECTIVITY)
+                            && js.wouldBeReadyWithConstraint(JobStatus.CONSTRAINT_CONNECTIVITY)) {
+                        // Because of how asynchronous the connectivity signals are, JobScheduler
+                        // may not get the connectivity satisfaction signal immediately. In this
+                        // case, wait a few seconds to see if it comes in before saying the
+                        // connectivity constraint isn't satisfied.
+                        mHandler.postDelayed(
+                                checkConstraintRunnableForTesting(
+                                        mHandler, js, delayLatch, 5, 1000),
+                                1000);
+                    } else {
+                        // There's no asynchronous signal to wait for. We can immediately say the
+                        // job's constraints aren't satisfied and return.
+                        js.overrideState = JobStatus.OVERRIDE_NONE;
+                        return JobSchedulerShellCommand.CMD_ERR_CONSTRAINTS;
+                    }
+                } else {
+                    delayLatch.countDown();
                 }
-
-                queueReadyJobsForExecutionLocked();
-                maybeRunPendingJobsLocked();
             }
         } catch (RemoteException e) {
             // can't happen
+            return 0;
+        }
+
+        // Choose to block the return until we're sure about the state of the connectivity job
+        // so that tests can expect a reliable state after calling the run command.
+        try {
+            delayLatch.await(7L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Slog.e(TAG, "Couldn't wait for asynchronous constraint change", e);
+        }
+
+        synchronized (mLock) {
+            if (!js.isConstraintsSatisfied()) {
+                js.overrideState = JobStatus.OVERRIDE_NONE;
+                return JobSchedulerShellCommand.CMD_ERR_CONSTRAINTS;
+            }
+
+            queueReadyJobsForExecutionLocked();
+            maybeRunPendingJobsLocked();
         }
         return 0;
+    }
+
+    private static Runnable checkConstraintRunnableForTesting(@NonNull final Handler handler,
+            @NonNull final JobStatus js, @NonNull final CountDownLatch latch,
+            final int remainingAttempts, final long delayMs) {
+        return () -> {
+            if (remainingAttempts <= 0 || js.isConstraintsSatisfied()) {
+                latch.countDown();
+                return;
+            }
+            handler.postDelayed(
+                    checkConstraintRunnableForTesting(
+                            handler, js, latch, remainingAttempts - 1, delayMs),
+                    delayMs);
+        };
     }
 
     // Shell command infrastructure: immediately timeout currently executing jobs
@@ -5127,6 +5272,12 @@ public class JobSchedulerService extends com.android.server.SystemService
         return mTareController;
     }
 
+    @VisibleForTesting
+    protected void waitOnAsyncLoadingForTesting() throws Exception {
+        mStartControllerTrackingLatch.await();
+        // Ignore the job store loading for testing.
+    }
+
     // Shell command infrastructure
     int getJobState(PrintWriter pw, String pkgName, int userId, @Nullable String namespace,
             int jobId) {
@@ -5285,6 +5436,14 @@ public class JobSchedulerService extends com.android.server.SystemService
                 controller.dumpConstants(pw);
                 pw.decreaseIndent();
             }
+            pw.println();
+
+            pw.println("Aconfig flags:");
+            pw.increaseIndent();
+            pw.print(Flags.FLAG_THROW_ON_UNSUPPORTED_BIAS_USAGE,
+                    Flags.throwOnUnsupportedBiasUsage());
+            pw.println();
+            pw.decreaseIndent();
             pw.println();
 
             for (int i = mJobRestrictions.size() - 1; i >= 0; i--) {

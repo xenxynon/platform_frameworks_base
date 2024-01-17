@@ -35,3 +35,32 @@ flag {
     description: "Further framework support for communal profile, beyond the basics, for later releases."
     bug: "285426179"
 }
+
+flag {
+    name: "use_all_cpus_during_user_switch"
+    namespace: "multiuser"
+    description: "Allow using all cpu cores during a user switch."
+    bug: "308105403"
+}
+
+flag {
+    name: "enable_biometrics_to_unlock_private_space"
+    namespace: "profile_experiences"
+    description: "Add support to unlock the private space using biometrics"
+    bug: "312184187"
+}
+
+flag {
+    name: "support_autolock_for_private_space"
+    namespace: "profile_experiences"
+    description: "Add support to lock private space automatically after a time period"
+    bug: "303201022"
+}
+
+flag {
+    name: "avatar_sync"
+    namespace: "multiuser"
+    description: "Implement new Avatar Picker outside of SetttingsLib with ability to select avatars from Google Account and synchronise to any changes."
+    bug: "296829976"
+    is_fixed_read_only: true
+}

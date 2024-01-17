@@ -23,6 +23,7 @@ import static android.view.Display.DEFAULT_DISPLAY;
 import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN;
 import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_SOLID_COLOR_SPLASH_SCREEN;
 import static android.window.StartingWindowInfo.STARTING_WINDOW_TYPE_SPLASH_SCREEN;
+import static android.window.StartingWindowInfo.TYPE_PARAMETER_APP_PREFERS_ICON;
 
 import android.annotation.ColorInt;
 import android.annotation.IntDef;
@@ -125,6 +126,7 @@ public class SplashscreenContentDrawer {
     private final TransactionPool mTransactionPool;
     private final SplashScreenWindowAttrs mTmpAttrs = new SplashScreenWindowAttrs();
     private final Handler mSplashscreenWorkerHandler;
+    private final boolean mCanUseAppIconForSplashScreen;
     @VisibleForTesting
     final ColorCache mColorCache;
 
@@ -141,6 +143,8 @@ public class SplashscreenContentDrawer {
         shellSplashscreenWorkerThread.start();
         mSplashscreenWorkerHandler = shellSplashscreenWorkerThread.getThreadHandler();
         mColorCache = new ColorCache(mContext, mSplashscreenWorkerHandler);
+        mCanUseAppIconForSplashScreen = context.getResources().getBoolean(
+                com.android.wm.shell.R.bool.config_canUseAppIconForSplashScreen);
     }
 
     /**
@@ -243,7 +247,7 @@ public class SplashscreenContentDrawer {
         }
         params.layoutInDisplayCutoutMode = a.getInt(
                 R.styleable.Window_windowLayoutInDisplayCutoutMode,
-                params.layoutInDisplayCutoutMode);
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS);
         params.windowAnimations = a.getResourceId(R.styleable.Window_windowAnimationStyle, 0);
         a.recycle();
 
@@ -273,11 +277,6 @@ public class SplashscreenContentDrawer {
         params.token = appToken;
         params.packageName = activityInfo.packageName;
         params.privateFlags |= WindowManager.LayoutParams.SYSTEM_FLAG_SHOW_FOR_ALL_USERS;
-
-        if (!context.getResources().getCompatibilityInfo().supportsScreen()) {
-            params.privateFlags |= WindowManager.LayoutParams.PRIVATE_FLAG_COMPATIBLE_WINDOW;
-        }
-
         params.setTitle("Splash Screen " + title);
         return params;
     }
@@ -427,7 +426,10 @@ public class SplashscreenContentDrawer {
         getWindowAttrs(context, mTmpAttrs);
         mLastPackageContextConfigHash = context.getResources().getConfiguration().hashCode();
 
-        final Drawable legacyDrawable = suggestType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN
+        final @StartingWindowType int splashType =
+                suggestType == STARTING_WINDOW_TYPE_SPLASH_SCREEN && !canUseIcon(info)
+                ? STARTING_WINDOW_TYPE_SOLID_COLOR_SPLASH_SCREEN : suggestType;
+        final Drawable legacyDrawable = splashType == STARTING_WINDOW_TYPE_LEGACY_SPLASH_SCREEN
                 ? peekLegacySplashscreenContent(context, mTmpAttrs) : null;
         final ActivityInfo ai = info.targetActivityInfo != null
                 ? info.targetActivityInfo
@@ -439,10 +441,15 @@ public class SplashscreenContentDrawer {
         return new SplashViewBuilder(context, ai)
                 .setWindowBGColor(themeBGColor)
                 .overlayDrawable(legacyDrawable)
-                .chooseStyle(suggestType)
+                .chooseStyle(splashType)
                 .setUiThreadInitConsumer(uiThreadInitConsumer)
                 .setAllowHandleSolidColor(info.allowHandleSolidColorSplashScreen())
                 .build();
+    }
+
+    private boolean canUseIcon(StartingWindowInfo info) {
+        return mCanUseAppIconForSplashScreen || mTmpAttrs.mSplashScreenIcon != null
+             || (info.startingWindowTypeParameter & TYPE_PARAMETER_APP_PREFERS_ICON) != 0;
     }
 
     private int getBGColorFromCache(ActivityInfo ai, IntSupplier windowBgColorSupplier) {

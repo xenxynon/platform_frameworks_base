@@ -27,7 +27,9 @@ import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.data.repository.FakeCommandQueue
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
+import com.android.systemui.keyguard.data.repository.FakeKeyguardSurfaceBehindRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository
+import com.android.systemui.keyguard.data.repository.InWindowLauncherUnlockAnimationRepository
 import com.android.systemui.keyguard.shared.model.BiometricUnlockModel
 import com.android.systemui.keyguard.shared.model.DozeStateModel
 import com.android.systemui.keyguard.shared.model.DozeTransitionModel
@@ -41,9 +43,9 @@ import com.android.systemui.power.domain.interactor.PowerInteractor.Companion.se
 import com.android.systemui.power.domain.interactor.PowerInteractor.Companion.setAwakeForTest
 import com.android.systemui.power.domain.interactor.PowerInteractorFactory
 import com.android.systemui.shade.data.repository.FakeShadeRepository
-import com.android.systemui.shade.domain.model.ShadeModel
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.android.systemui.util.mockito.any
+import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.mockito.withArgCaptor
 import com.google.common.truth.Truth.assertThat
@@ -118,11 +120,7 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
 
         whenever(keyguardSecurityModel.getSecurityMode(anyInt())).thenReturn(PIN)
 
-        featureFlags =
-            FakeFeatureFlags().apply {
-                set(Flags.FACE_AUTH_REFACTOR, true)
-                set(Flags.KEYGUARD_WM_STATE_REFACTOR, false)
-            }
+        featureFlags = FakeFeatureFlags().apply { set(Flags.KEYGUARD_WM_STATE_REFACTOR, false) }
 
         keyguardInteractor = createKeyguardInteractor()
 
@@ -147,6 +145,15 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
                     flags = featureFlags,
                     shadeRepository = shadeRepository,
                     powerInteractor = powerInteractor,
+                    inWindowLauncherUnlockAnimationInteractor = {
+                        InWindowLauncherUnlockAnimationInteractor(
+                            InWindowLauncherUnlockAnimationRepository(),
+                            testScope,
+                            transitionInteractor,
+                            { FakeKeyguardSurfaceBehindRepository() },
+                            mock(),
+                        )
+                    },
                 )
                 .apply { start() }
 
@@ -606,7 +613,22 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
     @Test
     fun dozingToLockscreenCannotBeInterruptedByDreaming() =
         testScope.runTest {
+            transitionRepository.sendTransitionSteps(
+                KeyguardState.LOCKSCREEN,
+                KeyguardState.DOZING,
+                testScheduler
+            )
             // GIVEN a prior transition has started to LOCKSCREEN
+            transitionRepository.sendTransitionStep(
+                TransitionStep(
+                    from = KeyguardState.DOZING,
+                    to = KeyguardState.LOCKSCREEN,
+                    value = 0f,
+                    transitionState = TransitionState.STARTED,
+                    ownerName = "KeyguardTransitionScenariosTest",
+                )
+            )
+            runCurrent()
             transitionRepository.sendTransitionStep(
                 TransitionStep(
                     from = KeyguardState.DOZING,
@@ -1115,7 +1137,7 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
             runCurrent()
 
             // WHEN primary bouncer shows
-            bouncerRepository.setPrimaryShow(true) // beverlyt
+            bouncerRepository.setPrimaryShow(true)
             runCurrent()
 
             val info =
@@ -1204,6 +1226,36 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
             assertThat(info.ownerName).isEqualTo("FromDreamingTransitionInteractor")
             assertThat(info.from).isEqualTo(KeyguardState.DREAMING)
             assertThat(info.to).isEqualTo(KeyguardState.OCCLUDED)
+            assertThat(info.animator).isNotNull()
+
+            coroutineContext.cancelChildren()
+        }
+
+    @Test
+    fun dreamingToAod() =
+        testScope.runTest {
+            // GIVEN a prior transition has run to DREAMING
+            keyguardRepository.setDreaming(true)
+            runTransitionAndSetWakefulness(KeyguardState.LOCKSCREEN, KeyguardState.DREAMING)
+            runCurrent()
+
+            // WHEN the device starts DOZE_AOD
+            keyguardRepository.setDozeTransitionModel(
+                DozeTransitionModel(
+                    from = DozeStateModel.INITIALIZED,
+                    to = DozeStateModel.DOZE_AOD,
+                )
+            )
+            runCurrent()
+
+            val info =
+                withArgCaptor<TransitionInfo> {
+                    verify(transitionRepository).startTransition(capture())
+                }
+            // THEN a transition to AOD should occur
+            assertThat(info.ownerName).isEqualTo("FromDreamingTransitionInteractor")
+            assertThat(info.from).isEqualTo(KeyguardState.DREAMING)
+            assertThat(info.to).isEqualTo(KeyguardState.AOD)
             assertThat(info.animator).isNotNull()
 
             coroutineContext.cancelChildren()
@@ -1306,12 +1358,8 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
             // GIVEN the keyguard is showing locked
             keyguardRepository.setStatusBarState(StatusBarState.KEYGUARD)
             runCurrent()
-            shadeRepository.setShadeModel(
-                ShadeModel(
-                    expansionAmount = .9f,
-                    isUserDragging = true,
-                )
-            )
+            shadeRepository.setLegacyShadeTracking(true)
+            shadeRepository.setLegacyShadeExpansion(.9f)
             runCurrent()
 
             // THEN a transition from LOCKSCREEN => PRIMARY_BOUNCER should occur
@@ -1327,12 +1375,8 @@ class KeyguardTransitionScenariosTest : SysuiTestCase() {
             // WHEN the user stops dragging and shade is back to expanded
             clearInvocations(transitionRepository)
             runTransitionAndSetWakefulness(KeyguardState.LOCKSCREEN, KeyguardState.PRIMARY_BOUNCER)
-            shadeRepository.setShadeModel(
-                ShadeModel(
-                    expansionAmount = 1f,
-                    isUserDragging = false,
-                )
-            )
+            shadeRepository.setLegacyShadeTracking(false)
+            shadeRepository.setLegacyShadeExpansion(1f)
             runCurrent()
 
             // THEN a transition from PRIMARY_BOUNCER => LOCKSCREEN should occur

@@ -19,27 +19,35 @@ package com.android.systemui.keyguard.ui.view.layout.blueprints
 
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.shared.model.KeyguardBlueprint
+import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AlignShortcutsToUdfpsSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodBurnInSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodNotificationIconsSection
-import com.android.systemui.keyguard.ui.view.layout.sections.DefaultAmbientIndicationAreaSection
-import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntryIconSection
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultNotificationStackScrollLayoutSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultSettingsPopupMenuSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusBarSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusViewSection
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultUdfpsAccessibilityOverlaySection
+import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSectionsModule
 import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeGuidelines
+import com.android.systemui.util.kotlin.getOrNull
+import java.util.Optional
 import javax.inject.Inject
+import javax.inject.Named
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /** Vertically aligns the shortcuts with the udfps. */
+@ExperimentalCoroutinesApi
 @SysUISingleton
 class ShortcutsBesideUdfpsKeyguardBlueprint
 @Inject
 constructor(
     defaultIndicationAreaSection: DefaultIndicationAreaSection,
-    defaultDeviceEntryIconSection: DefaultDeviceEntryIconSection,
-    defaultAmbientIndicationAreaSection: DefaultAmbientIndicationAreaSection,
+    defaultDeviceEntrySection: DefaultDeviceEntrySection,
+    @Named(KeyguardSectionsModule.KEYGUARD_AMBIENT_INDICATION_AREA_SECTION)
+    defaultAmbientIndicationAreaSection: Optional<KeyguardSection>,
     defaultSettingsPopupMenuSection: DefaultSettingsPopupMenuSection,
     alignShortcutsToUdfpsSection: AlignShortcutsToUdfpsSection,
     defaultStatusViewSection: DefaultStatusViewSection,
@@ -48,14 +56,14 @@ constructor(
     defaultNotificationStackScrollLayoutSection: DefaultNotificationStackScrollLayoutSection,
     aodNotificationIconsSection: AodNotificationIconsSection,
     aodBurnInSection: AodBurnInSection,
+    udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection,
 ) : KeyguardBlueprint {
     override val id: String = SHORTCUTS_BESIDE_UDFPS
 
     override val sections =
-        setOf(
+        listOfNotNull(
             defaultIndicationAreaSection,
-            defaultDeviceEntryIconSection,
-            defaultAmbientIndicationAreaSection,
+            defaultAmbientIndicationAreaSection.getOrNull(),
             defaultSettingsPopupMenuSection,
             alignShortcutsToUdfpsSection,
             defaultStatusViewSection,
@@ -64,6 +72,8 @@ constructor(
             splitShadeGuidelines,
             aodNotificationIconsSection,
             aodBurnInSection,
+            defaultDeviceEntrySection,
+            udfpsAccessibilityOverlaySection, // Add LAST: Intentionally has z-order above others
         )
 
     companion object {

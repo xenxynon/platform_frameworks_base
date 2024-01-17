@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 The Android Open Source Project
+ * Copyright 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,11 @@
 
 package android.companion.virtual.camera;
 
-import android.hardware.camera2.params.SessionConfiguration;
+import android.annotation.FlaggedApi;
+import android.annotation.NonNull;
+import android.annotation.SystemApi;
+import android.companion.virtual.flags.Flags;
+import android.view.Surface;
 
 import java.util.concurrent.Executor;
 
@@ -24,15 +28,48 @@ import java.util.concurrent.Executor;
  * Interface to be provided when creating a new {@link VirtualCamera} in order to receive callbacks
  * from the framework and the camera system.
  *
- * @see VirtualCameraConfig.Builder#setCallback(Executor, VirtualCameraCallback)
+ * @see VirtualCameraConfig.Builder#setVirtualCameraCallback(Executor, VirtualCameraCallback)
  * @hide
  */
+@SystemApi
+@FlaggedApi(Flags.FLAG_VIRTUAL_CAMERA)
 public interface VirtualCameraCallback {
 
     /**
-     * Called when a client opens a new camera session for the associated {@link VirtualCamera}
+     * Called when one of the requested stream has been configured by the virtual camera service and
+     * is ready to receive data onto its {@link Surface}
      *
-     * @see android.hardware.camera2.CameraDevice#createCaptureSession(SessionConfiguration)
+     * @param streamId The id of the configured stream
+     * @param surface The surface to write data into for this stream
+     * @param streamConfig The image data configuration for this stream
      */
-    VirtualCameraSession onOpenSession();
+    void onStreamConfigured(
+            int streamId,
+            @NonNull Surface surface,
+            @NonNull VirtualCameraStreamConfig streamConfig);
+
+    /**
+     * The client application is requesting a camera frame for the given streamId and frameId.
+     *
+     * <p>The virtual camera needs to write the frame data in the {@link Surface} corresponding to
+     * this stream that was provided during the {@link #onStreamConfigured(int, Surface,
+     * VirtualCameraStreamConfig)} call.
+     *
+     * @param streamId The streamId for which the frame is requested. This corresponds to the
+     *     streamId that was given in {@link #onStreamConfigured(int, Surface,
+     *     VirtualCameraStreamConfig)}
+     * @param frameId The frameId that is being requested. Each request will have a different
+     *     frameId, that will be increasing for each call with a particular streamId.
+     */
+    default void onProcessCaptureRequest(int streamId, long frameId) {}
+
+    /**
+     * The stream previously configured when {@link #onStreamConfigured(int, Surface,
+     * VirtualCameraStreamConfig)} was called is now being closed and associated resources can be
+     * freed. The Surface corresponding to that streamId was disposed on the client side and should
+     * not be used anymore by the virtual camera owner
+     *
+     * @param streamId The id of the stream that was closed.
+     */
+    void onStreamClosed(int streamId);
 }

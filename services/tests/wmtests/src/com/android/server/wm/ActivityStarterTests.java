@@ -117,7 +117,9 @@ import androidx.test.filters.SmallTest;
 import com.android.compatibility.common.util.DeviceConfigStateHelper;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.am.PendingIntentRecord;
+import com.android.server.pm.PackageArchiver;
 import com.android.server.pm.pkg.AndroidPackage;
+import com.android.server.wm.BackgroundActivityStartController.BalVerdict;
 import com.android.server.wm.LaunchParamsController.LaunchParamsModifier;
 import com.android.server.wm.utils.MockTracker;
 
@@ -421,6 +423,7 @@ public class ActivityStarterTests extends WindowTestsBase {
         doNothing().when(mMockPackageManager).grantImplicitAccess(
                 anyInt(), any(), anyInt(), anyInt(), anyBoolean());
         doNothing().when(mMockPackageManager).notifyPackageUse(anyString(), anyInt());
+        doReturn(mock(PackageArchiver.class)).when(mMockPackageManager).getPackageArchiver();
 
         final Intent intent = new Intent();
         intent.addFlags(launchFlags);
@@ -1383,7 +1386,8 @@ public class ActivityStarterTests extends WindowTestsBase {
                 .setUserId(10)
                 .build();
 
-        final int result = starter.recycleTask(task, null, null, null);
+        final int result = starter.recycleTask(task, null, null, null,
+                BalVerdict.ALLOW_BY_DEFAULT);
         assertThat(result == START_SUCCESS).isTrue();
         assertThat(starter.mAddingToTask).isTrue();
     }
@@ -1897,7 +1901,7 @@ public class ActivityStarterTests extends WindowTestsBase {
         starter.startActivityInner(target, source, null /* voiceSession */,
                 null /* voiceInteractor */, 0 /* startFlags */,
                 options, inTask, inTaskFragment,
-                BackgroundActivityStartController.BAL_ALLOW_DEFAULT, null /* intentGrants */,
-                -1 /* realCallingUid */);
+                BalVerdict.ALLOW_BY_DEFAULT,
+                null /* intentGrants */, -1 /* realCallingUid */);
     }
 }

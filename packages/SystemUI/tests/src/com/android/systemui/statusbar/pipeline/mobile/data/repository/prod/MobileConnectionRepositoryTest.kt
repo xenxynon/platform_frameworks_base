@@ -32,13 +32,15 @@ import android.telephony.ServiceState
 import android.telephony.ServiceState.STATE_IN_SERVICE
 import android.telephony.ServiceState.STATE_OUT_OF_SERVICE
 import android.telephony.SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX
+import android.telephony.SubscriptionManager.PROFILE_CLASS_UNSET
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyCallback.DataActivityListener
+import android.telephony.TelephonyCallback.DisplayInfoListener
 import android.telephony.TelephonyCallback.ServiceStateListener
+import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA
 import android.telephony.TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE
 import android.telephony.TelephonyManager
-import android.telephony.TelephonyManager.ACTION_SERVICE_PROVIDERS_UPDATED
 import android.telephony.TelephonyManager.DATA_ACTIVITY_DORMANT
 import android.telephony.TelephonyManager.DATA_ACTIVITY_IN
 import android.telephony.TelephonyManager.DATA_ACTIVITY_INOUT
@@ -65,6 +67,8 @@ import androidx.test.filters.SmallTest
 import com.android.settingslib.mobile.MobileMappings
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.flags.FakeFeatureFlagsClassic
+import com.android.systemui.flags.Flags.ROAMING_INDICATOR_VIA_DISPLAY_INFO
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.statusbar.pipeline.mobile.data.MobileInputLogger
 import com.android.systemui.statusbar.pipeline.mobile.data.model.DataConnectionState
@@ -115,6 +119,9 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
     private lateinit var underTest: MobileConnectionRepositoryImpl
     private lateinit var connectionsRepo: FakeMobileConnectionsRepository
 
+    private val flags =
+        FakeFeatureFlagsClassic().also { it.set(ROAMING_INDICATOR_VIA_DISPLAY_INFO, true) }
+
     @Mock private lateinit var connectivityManager: ConnectivityManager
     @Mock private lateinit var telephonyManager: TelephonyManager
     @Mock private lateinit var logger: MobileInputLogger
@@ -137,6 +144,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             SubscriptionModel(
                 subscriptionId = SUB_1_ID,
                 carrierName = DEFAULT_NAME,
+                profileClass = PROFILE_CLASS_UNSET,
             )
         )
 
@@ -162,6 +170,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
                 testDispatcher,
                 logger,
                 tableLogger,
+                flags,
                 testScope.backgroundScope,
                 fiveGServiceClient,
             )
@@ -615,8 +624,82 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
         }
 
     @Test
-    fun roaming_gsm_queriesServiceState() =
+    fun roaming_gsm_queriesDisplayInfo_viaDisplayInfo() =
         testScope.runTest {
+            // GIVEN flag is true
+            flags.set(ROAMING_INDICATOR_VIA_DISPLAY_INFO, true)
+
+            // Re-create the repository, because the flag is read at init
+            underTest =
+                MobileConnectionRepositoryImpl(
+                    SUB_1_ID,
+                    context,
+                    subscriptionModel,
+                    DEFAULT_NAME_MODEL,
+                    SEP,
+                    connectivityManager,
+                    telephonyManager,
+                    systemUiCarrierConfig,
+                    fakeBroadcastDispatcher,
+                    mobileMappings,
+                    testDispatcher,
+                    logger,
+                    tableLogger,
+                    flags,
+                    testScope.backgroundScope,
+                    fiveGServiceClient,
+                )
+
+            var latest: Boolean? = null
+            val job = underTest.isRoaming.onEach { latest = it }.launchIn(this)
+
+            val cb = getTelephonyCallbackForType<DisplayInfoListener>()
+
+            // CDMA roaming is off, GSM roaming is off
+            whenever(telephonyManager.cdmaEnhancedRoamingIndicatorDisplayNumber).thenReturn(ERI_OFF)
+            cb.onDisplayInfoChanged(
+                TelephonyDisplayInfo(NETWORK_TYPE_LTE, NETWORK_TYPE_UNKNOWN, false)
+            )
+
+            assertThat(latest).isFalse()
+
+            // CDMA roaming is off, GSM roaming is on
+            cb.onDisplayInfoChanged(
+                TelephonyDisplayInfo(NETWORK_TYPE_LTE, NETWORK_TYPE_UNKNOWN, true)
+            )
+
+            assertThat(latest).isTrue()
+
+            job.cancel()
+        }
+
+    @Test
+    fun roaming_gsm_queriesDisplayInfo_viaServiceState() =
+        testScope.runTest {
+            // GIVEN flag is false
+            flags.set(ROAMING_INDICATOR_VIA_DISPLAY_INFO, false)
+
+            // Re-create the repository, because the flag is read at init
+            underTest =
+                MobileConnectionRepositoryImpl(
+                    SUB_1_ID,
+                    context,
+                    subscriptionModel,
+                    DEFAULT_NAME_MODEL,
+                    SEP,
+                    connectivityManager,
+                    telephonyManager,
+                    systemUiCarrierConfig,
+                    fakeBroadcastDispatcher,
+                    mobileMappings,
+                    testDispatcher,
+                    logger,
+                    tableLogger,
+                    flags,
+                    testScope.backgroundScope,
+                    fiveGServiceClient,
+                )
+
             var latest: Boolean? = null
             val job = underTest.isRoaming.onEach { latest = it }.launchIn(this)
 
@@ -683,6 +766,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
                 SubscriptionModel(
                     subscriptionId = SUB_1_ID,
                     carrierName = DEFAULT_NAME,
+                    profileClass = PROFILE_CLASS_UNSET,
                 )
 
             assertThat(latest?.name).isEqualTo(DEFAULT_NAME)
@@ -692,6 +776,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
                 SubscriptionModel(
                     subscriptionId = SUB_1_ID,
                     carrierName = updatedName,
+                    profileClass = PROFILE_CLASS_UNSET,
                 )
 
             assertThat(latest?.name).isEqualTo(updatedName)
@@ -993,9 +1078,9 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
     companion object {
         private const val SUB_1_ID = 1
 
-        private val DEFAULT_NAME = "Fake Mobile Network"
+        private const val DEFAULT_NAME = "Fake Mobile Network"
         private val DEFAULT_NAME_MODEL = NetworkNameModel.Default(DEFAULT_NAME)
-        private val SEP = "-"
+        private const val SEP = "-"
 
         private const val SPN = "testSpn"
         private const val PLMN = "testPlmn"

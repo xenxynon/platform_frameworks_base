@@ -16,6 +16,8 @@
 
 package android.content.pm;
 
+import android.annotation.CurrentTimeMillisLong;
+import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -27,6 +29,7 @@ import android.os.Parcelable;
  * Overall information about the contents of a package.  This corresponds
  * to all of the information collected from AndroidManifest.xml.
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class PackageInfo implements Parcelable {
     /**
      * The name of this package.  From the &lt;manifest&gt; tag's "name"
@@ -228,7 +231,7 @@ public class PackageInfo implements Parcelable {
      * or null if there were none.  This is only filled in if the flag
      * {@link PackageManager#GET_PERMISSIONS} was set.  Each value matches
      * the corresponding entry in {@link #requestedPermissions}, and will have
-     * the flags {@link #REQUESTED_PERMISSION_GRANTED} and
+     * the flags {@link #REQUESTED_PERMISSION_GRANTED}, {@link #REQUESTED_PERMISSION_IMPLICIT}, and
      * {@link #REQUESTED_PERMISSION_NEVER_FOR_LOCATION} set as appropriate.
      */
     @Nullable
@@ -242,6 +245,14 @@ public class PackageInfo implements Parcelable {
     @SuppressWarnings({"ArrayReturn", "NullableCollection"})
     @Nullable
     public Attribution[] attributions;
+
+    /**
+     * The time at which the app was archived for the user.  Units are as
+     * per {@link System#currentTimeMillis()}.
+     * @hide
+     */
+    @CurrentTimeMillisLong
+    private long mArchiveTimeMillis;
 
     /**
      * Flag for {@link #requestedPermissionsFlags}: the requested permission
@@ -508,6 +519,22 @@ public class PackageInfo implements Parcelable {
         return overlayTarget != null && mOverlayIsStatic;
     }
 
+    /**
+     * Returns the time at which the app was archived for the user.  Units are as
+     * per {@link System#currentTimeMillis()}.
+     */
+    @FlaggedApi(Flags.FLAG_ARCHIVING)
+    public @CurrentTimeMillisLong long getArchiveTimeMillis() {
+        return mArchiveTimeMillis;
+    }
+
+    /**
+     * @hide
+     */
+    public void setArchiveTimeMillis(@CurrentTimeMillisLong long value) {
+        mArchiveTimeMillis = value;
+    }
+
     @Override
     public String toString() {
         return "PackageInfo{"
@@ -575,6 +602,7 @@ public class PackageInfo implements Parcelable {
         }
         dest.writeBoolean(isApex);
         dest.writeBoolean(isActiveApex);
+        dest.writeLong(mArchiveTimeMillis);
         dest.restoreAllowSquashing(prevAllowSquashing);
     }
 
@@ -640,5 +668,6 @@ public class PackageInfo implements Parcelable {
         }
         isApex = source.readBoolean();
         isActiveApex = source.readBoolean();
+        mArchiveTimeMillis = source.readLong();
     }
 }

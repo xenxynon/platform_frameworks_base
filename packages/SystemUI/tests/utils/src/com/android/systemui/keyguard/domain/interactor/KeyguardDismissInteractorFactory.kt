@@ -20,14 +20,13 @@ import android.content.Context
 import android.os.Handler
 import com.android.keyguard.KeyguardSecurityModel
 import com.android.keyguard.KeyguardUpdateMonitor
+import com.android.systemui.biometrics.data.repository.FakeFingerprintPropertyRepository
 import com.android.systemui.bouncer.data.repository.FakeKeyguardBouncerRepository
 import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor
 import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerCallbackInteractor
 import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor
 import com.android.systemui.bouncer.ui.BouncerView
 import com.android.systemui.classifier.FalsingCollector
-import com.android.systemui.flags.FakeFeatureFlagsClassic
-import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.DismissCallbackRegistry
 import com.android.systemui.keyguard.data.repository.FakeBiometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
@@ -56,12 +55,6 @@ object KeyguardDismissInteractorFactory {
         keyguardRepository: FakeKeyguardRepository = FakeKeyguardRepository(),
         bouncerRepository: FakeKeyguardBouncerRepository = FakeKeyguardBouncerRepository(),
         keyguardUpdateMonitor: KeyguardUpdateMonitor = mock(KeyguardUpdateMonitor::class.java),
-        featureFlags: FakeFeatureFlagsClassic =
-            FakeFeatureFlagsClassic().apply {
-                set(Flags.REFACTOR_KEYGUARD_DISMISS_INTENT, true)
-                set(Flags.FULL_SCREEN_USER_SWITCHER, false)
-                set(Flags.REFACTOR_GETCURRENTUSER, true)
-            },
         powerRepository: FakePowerRepository = FakePowerRepository(),
         userRepository: FakeUserRepository = FakeUserRepository(),
     ): WithDependencies {
@@ -80,22 +73,24 @@ object KeyguardDismissInteractorFactory {
                 trustRepository,
                 testScope.backgroundScope,
                 mock(SelectedUserInteractor::class.java),
+                mock(KeyguardFaceAuthInteractor::class.java),
             )
         val alternateBouncerInteractor =
             AlternateBouncerInteractor(
                 mock(StatusBarStateController::class.java),
                 mock(KeyguardStateController::class.java),
                 bouncerRepository,
+                FakeFingerprintPropertyRepository(),
                 FakeBiometricSettingsRepository(),
                 FakeSystemClock(),
                 keyguardUpdateMonitor,
+                testScope.backgroundScope,
             )
         val powerInteractorWithDeps =
             PowerInteractorFactory.create(
                 repository = powerRepository,
             )
-        val selectedUserInteractor =
-            SelectedUserInteractor(repository = userRepository, flags = featureFlags)
+        val selectedUserInteractor = SelectedUserInteractor(repository = userRepository)
         return WithDependencies(
             trustRepository = trustRepository,
             keyguardRepository = keyguardRepository,

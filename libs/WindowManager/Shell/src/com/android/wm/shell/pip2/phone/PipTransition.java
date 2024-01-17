@@ -16,7 +16,11 @@
 
 package com.android.wm.shell.pip2.phone;
 
+import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.view.WindowManager.TRANSIT_OPEN;
+import static android.view.WindowManager.TRANSIT_PIP;
+
+import static com.android.wm.shell.transition.Transitions.TRANSIT_EXIT_PIP;
 
 import android.annotation.NonNull;
 import android.app.ActivityManager;
@@ -26,6 +30,7 @@ import android.os.IBinder;
 import android.view.SurfaceControl;
 import android.window.TransitionInfo;
 import android.window.TransitionRequestInfo;
+import android.window.WindowContainerToken;
 import android.window.WindowContainerTransaction;
 
 import androidx.annotation.Nullable;
@@ -43,8 +48,17 @@ import com.android.wm.shell.transition.Transitions;
  * Implementation of transitions for PiP on phone.
  */
 public class PipTransition extends PipTransitionController {
+    private static final String TAG = PipTransition.class.getSimpleName();
+
+    private final PipScheduler mPipScheduler;
+    @Nullable
+    private WindowContainerToken mPipTaskToken;
     @Nullable
     private IBinder mAutoEnterButtonNavTransition;
+    @Nullable
+    private IBinder mExitViaExpandTransition;
+    @Nullable
+    private IBinder mLegacyEnterTransition;
 
     public PipTransition(
             @NonNull ShellInit shellInit,
@@ -52,9 +66,13 @@ public class PipTransition extends PipTransitionController {
             @NonNull Transitions transitions,
             PipBoundsState pipBoundsState,
             PipMenuController pipMenuController,
-            PipBoundsAlgorithm pipBoundsAlgorithm) {
+            PipBoundsAlgorithm pipBoundsAlgorithm,
+            PipScheduler pipScheduler) {
         super(shellInit, shellTaskOrganizer, transitions, pipBoundsState, pipMenuController,
                 pipBoundsAlgorithm);
+
+        mPipScheduler = pipScheduler;
+        mPipScheduler.setPipTransitionController(this);
     }
 
     @Override
@@ -64,12 +82,27 @@ public class PipTransition extends PipTransitionController {
         }
     }
 
+    @Override
+    public void startExitTransition(int type, WindowContainerTransaction out,
+            @android.annotation.Nullable Rect destinationBounds) {
+        if (out == null) {
+            return;
+        }
+        IBinder transition = mTransitions.startTransition(type, out, this);
+        if (type == TRANSIT_EXIT_PIP) {
+            mExitViaExpandTransition = transition;
+        }
+    }
+
     @Nullable
     @Override
     public WindowContainerTransaction handleRequest(@NonNull IBinder transition,
             @NonNull TransitionRequestInfo request) {
         if (isAutoEnterInButtonNavigation(request)) {
             mAutoEnterButtonNavTransition = transition;
+            return getEnterPipTransaction(transition, request);
+        } else if (isLegacyEnter(request)) {
+            mLegacyEnterTransition = transition;
             return getEnterPipTransaction(transition, request);
         }
         return null;
@@ -81,11 +114,24 @@ public class PipTransition extends PipTransitionController {
         if (isAutoEnterInButtonNavigation(request)) {
             outWct.merge(getEnterPipTransaction(transition, request), true /* transfer */);
             mAutoEnterButtonNavTransition = transition;
+        } else if (isLegacyEnter(request)) {
+            outWct.merge(getEnterPipTransaction(transition, request), true /* transfer */);
+            mLegacyEnterTransition = transition;
         }
     }
 
+    @Override
+    public void mergeAnimation(@NonNull IBinder transition, @NonNull TransitionInfo info,
+            @NonNull SurfaceControl.Transaction t, @NonNull IBinder mergeTarget,
+            @NonNull Transitions.TransitionFinishCallback finishCallback) {}
+
+    @Override
+    public void onTransitionConsumed(@NonNull IBinder transition, boolean aborted,
+            @Nullable SurfaceControl.Transaction finishT) {}
+
     private WindowContainerTransaction getEnterPipTransaction(@NonNull IBinder transition,
             @NonNull TransitionRequestInfo request) {
+        // cache the original task token to check for multi-activity case later
         final ActivityManager.RunningTaskInfo pipTask = request.getPipTask();
         PictureInPictureParams pipParams = pipTask.pictureInPictureParams;
         mPipBoundsState.setBoundsStateForEntry(pipTask.topActivity, pipTask.topActivityInfo,
@@ -93,6 +139,8 @@ public class PipTransition extends PipTransitionController {
 
         // calculate the entry bounds and notify core to move task to pinned with final bounds
         final Rect entryBounds = mPipBoundsAlgorithm.getEntryDestinationBounds();
+        mPipBoundsState.setBounds(entryBounds);
+
         WindowContainerTransaction wct = new WindowContainerTransaction();
         wct.movePipActivityToPinnedRootTask(pipTask.token, entryBounds);
         return wct;
@@ -114,6 +162,10 @@ public class PipTransition extends PipTransitionController {
                 && pipTask.pictureInPictureParams.isAutoEnterEnabled();
     }
 
+    private boolean isLegacyEnter(@NonNull TransitionRequestInfo requestInfo) {
+        return requestInfo.getType() == TRANSIT_PIP;
+    }
+
     @Override
     public boolean startAnimation(@NonNull IBinder transition,
             @NonNull TransitionInfo info,
@@ -121,19 +173,79 @@ public class PipTransition extends PipTransitionController {
             @NonNull SurfaceControl.Transaction finishTransaction,
             @NonNull Transitions.TransitionFinishCallback finishCallback) {
         if (transition == mAutoEnterButtonNavTransition) {
-            startTransaction.apply();
-            finishCallback.onTransitionFinished(null);
-            return true;
+            mAutoEnterButtonNavTransition = null;
+            return startAutoEnterButtonNavAnimation(info, startTransaction, finishTransaction,
+                    finishCallback);
+        } else if (transition == mLegacyEnterTransition) {
+            mLegacyEnterTransition = null;
+            return startLegacyEnterAnimation(info, startTransaction, finishTransaction,
+                    finishCallback);
+        } else if (transition == mExitViaExpandTransition) {
+            mExitViaExpandTransition = null;
+            return startExpandAnimation(info, startTransaction, finishTransaction, finishCallback);
         }
         return false;
     }
 
-    @Override
-    public void mergeAnimation(@NonNull IBinder transition, @NonNull TransitionInfo info,
-            @NonNull SurfaceControl.Transaction t, @NonNull IBinder mergeTarget,
-            @NonNull Transitions.TransitionFinishCallback finishCallback) {}
+    private boolean startAutoEnterButtonNavAnimation(@NonNull TransitionInfo info,
+            @NonNull SurfaceControl.Transaction startTransaction,
+            @NonNull SurfaceControl.Transaction finishTransaction,
+            @NonNull Transitions.TransitionFinishCallback finishCallback) {
+        TransitionInfo.Change pipChange = getPipChange(info);
+        if (pipChange == null) {
+            return false;
+        }
+        mPipTaskToken = pipChange.getContainer();
 
-    @Override
-    public void onTransitionConsumed(@NonNull IBinder transition, boolean aborted,
-            @Nullable SurfaceControl.Transaction finishT) {}
+        // cache the PiP task token and leash
+        mPipScheduler.setPipTaskToken(mPipTaskToken);
+
+        startTransaction.apply();
+        finishCallback.onTransitionFinished(null);
+        return true;
+    }
+
+    private boolean startLegacyEnterAnimation(@NonNull TransitionInfo info,
+            @NonNull SurfaceControl.Transaction startTransaction,
+            @NonNull SurfaceControl.Transaction finishTransaction,
+            @NonNull Transitions.TransitionFinishCallback finishCallback) {
+        TransitionInfo.Change pipChange = getPipChange(info);
+        if (pipChange == null) {
+            return false;
+        }
+        mPipTaskToken = pipChange.getContainer();
+
+        // cache the PiP task token and leash
+        mPipScheduler.setPipTaskToken(mPipTaskToken);
+
+        startTransaction.apply();
+        finishCallback.onTransitionFinished(null);
+        return true;
+    }
+
+    private boolean startExpandAnimation(@NonNull TransitionInfo info,
+            @NonNull SurfaceControl.Transaction startTransaction,
+            @NonNull SurfaceControl.Transaction finishTransaction,
+            @NonNull Transitions.TransitionFinishCallback finishCallback) {
+        startTransaction.apply();
+        finishCallback.onTransitionFinished(null);
+        onExitPip();
+        return true;
+    }
+
+    @Nullable
+    private TransitionInfo.Change getPipChange(TransitionInfo info) {
+        for (TransitionInfo.Change change : info.getChanges()) {
+            if (change.getTaskInfo() != null
+                    && change.getTaskInfo().getWindowingMode() == WINDOWING_MODE_PINNED) {
+                return change;
+            }
+        }
+        return null;
+    }
+
+    private void onExitPip() {
+        mPipTaskToken = null;
+        mPipScheduler.onExitPip();
+    }
 }

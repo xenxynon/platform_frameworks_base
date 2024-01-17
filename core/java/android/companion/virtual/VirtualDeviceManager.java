@@ -28,6 +28,7 @@ import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.annotation.UserIdInt;
 import android.app.PendingIntent;
 import android.companion.AssociationInfo;
@@ -62,6 +63,7 @@ import android.os.Looper;
 import android.os.RemoteException;
 import android.util.Log;
 import android.view.Surface;
+import android.view.WindowManager;
 
 import com.android.internal.annotations.GuardedBy;
 
@@ -148,6 +150,19 @@ public final class VirtualDeviceManager {
     @SystemApi
     public static final int LAUNCH_FAILURE_NO_ACTIVITY = 2;
 
+    /**
+     * Persistent device identifier corresponding to the default device.
+     *
+     * @see Context#DEVICE_ID_DEFAULT
+     * @see VirtualDevice#getPersistentDeviceId()
+     *
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_PERSISTENT_DEVICE_ID_API)
+    public static final String PERSISTENT_DEVICE_ID_DEFAULT =
+            "default:" + Context.DEVICE_ID_DEFAULT;
+
     private final IVirtualDeviceManager mService;
     private final Context mContext;
 
@@ -184,9 +199,6 @@ public final class VirtualDeviceManager {
             int associationId,
             @NonNull VirtualDeviceParams params) {
         Objects.requireNonNull(params, "params must not be null");
-        if (Flags.moreLogs()) {
-            Log.i(TAG, "Creating VirtualDevice");
-        }
         try {
             return new VirtualDevice(mService, mContext, associationId, params);
         } catch (RemoteException e) {
@@ -201,9 +213,10 @@ public final class VirtualDeviceManager {
      * existing virtual devices.</p>
      *
      * <p>Note that if a virtual device is closed and becomes invalid, the returned objects will
-     * not be updated and may contain stale values. Use a {@link VirtualDeviceListener} for real
-     * time updates of the availability of virtual devices.</p>
+     * not be updated and may contain stale values.</p>
      */
+    // TODO(b/310912420): Add "Use a VirtualDeviceListener for real time updates of the
+    // availability  of virtual devices." in the note paragraph above with a link annotation.
     @NonNull
     public List<android.companion.virtual.VirtualDevice> getVirtualDevices() {
         if (mService == null) {
@@ -430,6 +443,25 @@ public final class VirtualDeviceManager {
         }
         try {
             mService.playSoundEffect(deviceId, effectType);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns whether the given display is an auto-mirror display owned by a virtual device.
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_INTERACTIVE_SCREEN_MIRROR)
+    @TestApi
+    public boolean isVirtualDeviceOwnedMirrorDisplay(int displayId) {
+        if (mService == null) {
+            Log.w(TAG, "Failed to retrieve virtual devices; no virtual device manager service.");
+            return false;
+        }
+        try {
+            return mService.isVirtualDeviceOwnedMirrorDisplay(displayId);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -880,6 +912,24 @@ public final class VirtualDeviceManager {
         @RequiresPermission(android.Manifest.permission.CREATE_VIRTUAL_DEVICE)
         public void setShowPointerIcon(boolean showPointerIcon) {
             mVirtualDeviceInternal.setShowPointerIcon(showPointerIcon);
+        }
+
+        /**
+         * Specifies the IME behavior on the given display. By default, all displays created by
+         * virtual devices have {@link WindowManager#DISPLAY_IME_POLICY_LOCAL}.
+         *
+         * @param displayId the ID of the display to change the IME policy for. It must be owned by
+         *                  this virtual device.
+         * @param policy the IME policy to use on that display
+         * @throws SecurityException if the display is not owned by this device or is not
+         *                           {@link DisplayManager#VIRTUAL_DISPLAY_FLAG_TRUSTED trusted}
+         */
+        @RequiresPermission(android.Manifest.permission.CREATE_VIRTUAL_DEVICE)
+        @FlaggedApi(Flags.FLAG_VDM_CUSTOM_IME)
+        public void setDisplayImePolicy(int displayId, @WindowManager.DisplayImePolicy int policy) {
+            if (Flags.vdmCustomIme()) {
+                mVirtualDeviceInternal.setDisplayImePolicy(displayId, policy);
+            }
         }
 
         /**

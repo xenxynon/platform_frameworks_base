@@ -36,7 +36,7 @@ import com.android.compose.ui.util.lerp
 fun SceneScope.animateSharedIntAsState(
     value: Int,
     key: ValueKey,
-    element: ElementKey,
+    element: ElementKey?,
     canOverflow: Boolean = true,
 ): State<Int> {
     return animateSharedValueAsState(value, key, element, ::lerp, canOverflow)
@@ -65,7 +65,7 @@ fun MovableElementScope.animateSharedIntAsState(
 fun SceneScope.animateSharedFloatAsState(
     value: Float,
     key: ValueKey,
-    element: ElementKey,
+    element: ElementKey?,
     canOverflow: Boolean = true,
 ): State<Float> {
     return animateSharedValueAsState(value, key, element, ::lerp, canOverflow)
@@ -94,7 +94,7 @@ fun MovableElementScope.animateSharedFloatAsState(
 fun SceneScope.animateSharedDpAsState(
     value: Dp,
     key: ValueKey,
-    element: ElementKey,
+    element: ElementKey?,
     canOverflow: Boolean = true,
 ): State<Dp> {
     return animateSharedValueAsState(value, key, element, ::lerp, canOverflow)
@@ -123,7 +123,7 @@ fun MovableElementScope.animateSharedDpAsState(
 fun SceneScope.animateSharedColorAsState(
     value: Color,
     key: ValueKey,
-    element: ElementKey,
+    element: ElementKey?,
 ): State<Color> {
     return animateSharedValueAsState(value, key, element, ::lerp, canOverflow = false)
 }
@@ -145,7 +145,7 @@ fun MovableElementScope.animateSharedColorAsState(
 internal fun <T> animateSharedValueAsState(
     layoutImpl: SceneTransitionLayoutImpl,
     scene: Scene,
-    element: Element,
+    element: Element?,
     key: ValueKey,
     value: T,
     lerp: (T, T, Float) -> T,
@@ -153,9 +153,9 @@ internal fun <T> animateSharedValueAsState(
 ): State<T> {
     val sharedValue =
         Snapshot.withoutReadObservation {
-            element.sceneValues.getValue(scene.key).sharedValues.getOrPut(key) {
-                Element.SharedValue(key, value)
-            } as Element.SharedValue<T>
+            val sharedValues =
+                element?.sceneValues?.getValue(scene.key)?.sharedValues ?: scene.sharedValues
+            sharedValues.getOrPut(key) { Element.SharedValue(key, value) } as Element.SharedValue<T>
         }
 
     if (value != sharedValue.value) {
@@ -169,30 +169,33 @@ internal fun <T> animateSharedValueAsState(
 
 private fun <T> computeValue(
     layoutImpl: SceneTransitionLayoutImpl,
-    element: Element,
+    element: Element?,
     sharedValue: Element.SharedValue<T>,
     lerp: (T, T, Float) -> T,
     canOverflow: Boolean,
 ): T {
-    val state = layoutImpl.state.transitionState
-    if (
-        state !is TransitionState.Transition ||
-            state.fromScene == state.toScene ||
-            !layoutImpl.isTransitionReady(state)
-    ) {
+    val transition = layoutImpl.state.currentTransition
+    if (transition == null || !layoutImpl.isTransitionReady(transition)) {
         return sharedValue.value
     }
 
     fun sceneValue(scene: SceneKey): Element.SharedValue<T>? {
-        val sceneValues = element.sceneValues[scene] ?: return null
-        val value = sceneValues.sharedValues[sharedValue.key] ?: return null
+        val sharedValues =
+            if (element == null) {
+                layoutImpl.scene(scene).sharedValues
+            } else {
+                element.sceneValues[scene]?.sharedValues
+            }
+                ?: return null
+        val value = sharedValues[sharedValue.key] ?: return null
         return value as Element.SharedValue<T>
     }
 
-    val fromValue = sceneValue(state.fromScene)
-    val toValue = sceneValue(state.toScene)
+    val fromValue = sceneValue(transition.fromScene)
+    val toValue = sceneValue(transition.toScene)
     return if (fromValue != null && toValue != null) {
-        val progress = if (canOverflow) state.progress else state.progress.coerceIn(0f, 1f)
+        val progress =
+            if (canOverflow) transition.progress else transition.progress.coerceIn(0f, 1f)
         lerp(fromValue.value, toValue.value, progress)
     } else if (fromValue != null) {
         fromValue.value

@@ -46,7 +46,6 @@ import android.os.TransactionTooLargeException;
 import android.os.WorkSource;
 import android.util.ArraySet;
 import android.util.Pair;
-import android.util.StatsEvent;
 
 import com.android.internal.os.TimeoutRecord;
 
@@ -538,8 +537,8 @@ public abstract class ActivityManagerInternal {
 
     /**
      * Returns whether the given user requires credential entry at this time. This is used to
-     * intercept activity launches for locked work apps due to work challenge being triggered or
-     * when the profile user is yet to be unlocked.
+     * intercept activity launches for apps corresponding to locked profiles due to separate
+     * challenge being triggered or when the profile user is yet to be unlocked.
      */
     public abstract boolean shouldConfirmCredentials(@UserIdInt int userId);
 
@@ -1227,7 +1226,8 @@ public abstract class ActivityManagerInternal {
      * @return The stats event for the cached apps high watermark since last pull.
      */
     @NonNull
-    public abstract StatsEvent getCachedAppsHighWatermarkStats(int atomTag, boolean resetAfterPull);
+    // TODO: restore to android.util.StatsEvent once Ravenwood includes Mainline stubs
+    public abstract Object getCachedAppsHighWatermarkStats(int atomTag, boolean resetAfterPull);
 
     /**
      * Internal method for clearing app data, with the extra param that is used to indicate restore.

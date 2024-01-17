@@ -16,6 +16,8 @@
 
 package com.android.server.audio;
 
+import static android.media.audiopolicy.Flags.enableFadeManagerConfiguration;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.AppOpsManager;
@@ -94,7 +96,7 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
 
     private final Context mContext;
     private final AppOpsManager mAppOps;
-    private PlayerFocusEnforcer mFocusEnforcer; // never null
+    private final @NonNull PlayerFocusEnforcer mFocusEnforcer;
     private boolean mMultiAudioFocusEnabled = false;
 
     private boolean mRingOrCallActive = false;
@@ -128,7 +130,8 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
      * @return the fade out duration in ms
      */
     public long getFocusFadeOutDurationForTest() {
-        return FadeOutManager.FADE_OUT_DURATION_MS;
+        return getFadeOutDurationMillis(
+                new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build());
     }
 
     /**
@@ -137,7 +140,8 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
      * @return the time gap after a fade out completion on focus loss, and fade in start in ms
      */
     public long getFocusUnmuteDelayAfterFadeOutForTest() {
-        return FadeOutManager.DELAY_FADE_IN_OFFENDERS_MS;
+        return getFadeInDelayForOffendersMillis(
+                new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build());
     }
 
     //=================================================================
@@ -178,6 +182,30 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
         mFocusEnforcer.forgetUid(uid);
     }
 
+    @Override
+    public long getFadeOutDurationMillis(@NonNull AudioAttributes aa) {
+        if (aa == null) {
+            return 0;
+        }
+        return mFocusEnforcer.getFadeOutDurationMillis(aa);
+    }
+
+    @Override
+    public long getFadeInDelayForOffendersMillis(@NonNull AudioAttributes aa) {
+        if (aa == null) {
+            return 0;
+        }
+        return mFocusEnforcer.getFadeInDelayForOffendersMillis(aa);
+    }
+
+    @Override
+    public boolean shouldEnforceFade() {
+        if (!enableFadeManagerConfiguration()) {
+            return ENFORCE_FADEOUT_FOR_FOCUS_LOSS;
+        }
+
+        return mFocusEnforcer.shouldEnforceFade();
+    }
     //==========================================================================================
     // AudioFocus
     //==========================================================================================
@@ -844,14 +872,17 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
                 return;
             }
         }
-        final FocusRequester fr;
-        if (requestResult == AudioManager.AUDIOFOCUS_REQUEST_FAILED) {
-            fr = mFocusOwnersForFocusPolicy.remove(afi.getClientId());
-        } else {
-            fr = mFocusOwnersForFocusPolicy.get(afi.getClientId());
-        }
-        if (fr != null) {
-            fr.dispatchFocusResultFromExtPolicy(requestResult);
+        synchronized (mAudioFocusLock) {
+            FocusRequester fr = getFocusRequesterLocked(afi.getClientId(),
+                    /* shouldRemove= */ requestResult == AudioManager.AUDIOFOCUS_REQUEST_FAILED);
+            if (fr != null) {
+                fr.dispatchFocusResultFromExtPolicy(requestResult);
+                // if fade is enabled for external focus policies, apply it when setting
+                // focus result as well
+                if (enableFadeManagerConfiguration()) {
+                    fr.handleFocusGainFromRequest(requestResult);
+                }
+            }
         }
     }
 
@@ -885,22 +916,78 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
                     + afi.getClientId());
         }
         synchronized (mAudioFocusLock) {
-            if (mFocusPolicy == null) {
-                if (DEBUG) { Log.v(TAG, "> failed: no focus policy" ); }
-                return AudioManager.AUDIOFOCUS_REQUEST_FAILED;
-            }
-            final FocusRequester fr;
-            if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
-                fr = mFocusOwnersForFocusPolicy.remove(afi.getClientId());
-            } else {
-                fr = mFocusOwnersForFocusPolicy.get(afi.getClientId());
-            }
+            FocusRequester fr = getFocusRequesterLocked(afi.getClientId(),
+                    /* shouldRemove= */ focusChange == AudioManager.AUDIOFOCUS_LOSS);
             if (fr == null) {
-                if (DEBUG) { Log.v(TAG, "> failed: no such focus requester known" ); }
+                if (DEBUG) {
+                    Log.v(TAG, "> failed: no such focus requester known");
+                }
                 return AudioManager.AUDIOFOCUS_REQUEST_FAILED;
             }
             return fr.dispatchFocusChange(focusChange);
         }
+    }
+
+    int dispatchFocusChangeWithFade(AudioFocusInfo afi, int focusChange,
+            List<AudioFocusInfo> otherActiveAfis) {
+        if (DEBUG) {
+            Log.v(TAG, "dispatchFocusChangeWithFade " + AudioManager.audioFocusToString(focusChange)
+                    + " to afi client=" + afi.getClientId()
+                    + " other active afis=" + otherActiveAfis);
+        }
+
+        synchronized (mAudioFocusLock) {
+            String clientId = afi.getClientId();
+            // do not remove the entry since it can be posted for fade
+            FocusRequester fr = getFocusRequesterLocked(clientId, /* shouldRemove= */ false);
+            if (fr == null) {
+                if (DEBUG) {
+                    Log.v(TAG, "> failed: no such focus requester known");
+                }
+                return AudioManager.AUDIOFOCUS_REQUEST_FAILED;
+            }
+
+            // convert other AudioFocusInfo to corresponding FocusRequester
+            ArrayList<FocusRequester> otherActiveFrs = new ArrayList<>();
+            for (int index = 0; index < otherActiveAfis.size(); index++) {
+                FocusRequester otherFr = getFocusRequesterLocked(
+                        otherActiveAfis.get(index).getClientId(), /* shouldRemove= */ false);
+                if (otherFr == null) {
+                    continue;
+                }
+                otherActiveFrs.add(otherFr);
+            }
+
+            int status = fr.dispatchFocusChangeWithFadeLocked(focusChange, otherActiveFrs);
+            if (status != AudioManager.AUDIOFOCUS_REQUEST_DELAYED
+                    && focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+                mFocusOwnersForFocusPolicy.remove(clientId);
+            }
+
+            return status;
+        }
+    }
+
+    @GuardedBy("mAudioFocusLock")
+    private FocusRequester getFocusRequesterLocked(String clientId, boolean shouldRemove) {
+        if (mFocusPolicy == null) {
+            if (DEBUG) {
+                Log.v(TAG, "> failed: no focus policy");
+            }
+            return null;
+        }
+
+        FocusRequester fr;
+        if (shouldRemove) {
+            fr = mFocusOwnersForFocusPolicy.remove(clientId);
+        } else {
+            fr = mFocusOwnersForFocusPolicy.get(clientId);
+        }
+
+        if (fr == null && DEBUG) {
+            Log.v(TAG, "> failed: no such focus requester known");
+        }
+        return fr;
     }
 
     private void dumpExtFocusPolicyFocusOwners(PrintWriter pw) {
@@ -1401,7 +1488,7 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
         if (!ENFORCE_FADEOUT_FOR_FOCUS_LOSS) {
             return 0;
         }
-        return FadeOutManager.getFadeOutDurationOnFocusLossMillis(aa);
+        return getFadeOutDurationMillis(aa);
     }
 
     private void dumpMultiAudioFocus(PrintWriter pw) {
@@ -1423,14 +1510,14 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
             Log.v(TAG, "postDelayedLossAfterFade loser=" + focusLoser.getPackageName());
         }
         mFocusHandler.sendMessageDelayed(
-                mFocusHandler.obtainMessage(MSG_L_FOCUS_LOSS_AFTER_FADE, focusLoser),
-                FadeOutManager.FADE_OUT_DURATION_MS);
+                mFocusHandler.obtainMessage(MSG_L_FOCUS_LOSS_AFTER_FADE, focusLoser), delayMs);
     }
 
-    private void postForgetUidLater(int uid) {
+    private void postForgetUidLater(FocusRequester focusRequester) {
         mFocusHandler.sendMessageDelayed(
-                mFocusHandler.obtainMessage(MSL_L_FORGET_UID, new ForgetFadeUidInfo(uid)),
-                FadeOutManager.DELAY_FADE_IN_OFFENDERS_MS);
+                mFocusHandler.obtainMessage(MSL_L_FORGET_UID,
+                        new ForgetFadeUidInfo(focusRequester.getClientUid())),
+                getFadeInDelayForOffendersMillis(focusRequester.getAudioAttributes()));
     }
 
     //=================================================================
@@ -1466,7 +1553,7 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
                             if (loser.isInFocusLossLimbo()) {
                                 loser.dispatchFocusChange(AudioManager.AUDIOFOCUS_LOSS);
                                 loser.release();
-                                postForgetUidLater(loser.getClientUid());
+                                postForgetUidLater(loser);
                             }
                         }
                         break;

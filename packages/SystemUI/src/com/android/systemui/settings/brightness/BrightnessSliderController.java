@@ -16,7 +16,7 @@
 
 package com.android.systemui.settings.brightness;
 
-import static com.android.systemui.flags.Flags.HAPTIC_BRIGHTNESS_SLIDER;
+import static com.android.systemui.Flags.hapticBrightnessSlider;
 
 import android.content.Context;
 import android.view.LayoutInflater;
@@ -30,13 +30,11 @@ import androidx.annotation.Nullable;
 import com.android.internal.logging.UiEventLogger;
 import com.android.settingslib.RestrictedLockUtils;
 import com.android.systemui.Gefingerpoken;
+import com.android.systemui.res.R;
 import com.android.systemui.classifier.Classifier;
 import com.android.systemui.dagger.qualifiers.Main;
-import com.android.systemui.flags.FeatureFlagsClassic;
 import com.android.systemui.haptics.slider.SeekableSliderEventProducer;
-import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.FalsingManager;
-import com.android.systemui.res.R;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.statusbar.policy.BrightnessMirrorController;
 import com.android.systemui.util.ViewController;
@@ -280,11 +278,9 @@ public class BrightnessSliderController extends ViewController<BrightnessSliderV
 
         private final FalsingManager mFalsingManager;
         private final UiEventLogger mUiEventLogger;
-        private final FeatureFlagsClassic mFeatureFlags;
         private final VibratorHelper mVibratorHelper;
         private final SystemClock mSystemClock;
         private final CoroutineDispatcher mMainDispatcher;
-        private final ActivityStarter mActivityStarter;
 
         @Inject
         public Factory(
@@ -292,16 +288,13 @@ public class BrightnessSliderController extends ViewController<BrightnessSliderV
                 UiEventLogger uiEventLogger,
                 VibratorHelper vibratorHelper,
                 SystemClock clock,
-                FeatureFlagsClassic featureFlags,
-                @Main CoroutineDispatcher mainDispatcher,
-                ActivityStarter activityStarter) {
+                @Main CoroutineDispatcher mainDispatcher
+        ) {
             mFalsingManager = falsingManager;
             mUiEventLogger = uiEventLogger;
-            mFeatureFlags = featureFlags;
             mVibratorHelper = vibratorHelper;
             mSystemClock = clock;
             mMainDispatcher = mainDispatcher;
-            mActivityStarter = activityStarter;
         }
 
         /**
@@ -317,10 +310,8 @@ public class BrightnessSliderController extends ViewController<BrightnessSliderV
             int layout = getLayout();
             BrightnessSliderView root = (BrightnessSliderView) LayoutInflater.from(context)
                     .inflate(layout, viewRoot, false);
-            root.setActivityStarter(mActivityStarter);
-
             BrightnessSliderHapticPlugin plugin;
-            if (mFeatureFlags.isEnabled(HAPTIC_BRIGHTNESS_SLIDER)) {
+            if (hapticBrightnessSlider()) {
                 plugin = new BrightnessSliderHapticPluginImpl(
                     mVibratorHelper,
                     mSystemClock,

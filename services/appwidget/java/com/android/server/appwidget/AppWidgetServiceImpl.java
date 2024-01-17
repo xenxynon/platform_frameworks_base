@@ -43,7 +43,9 @@ import android.app.KeyguardManager;
 import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManagerInternal;
 import android.app.admin.DevicePolicyManagerInternal.OnCrossProfileWidgetProvidersChangeListener;
+import android.app.usage.Flags;
 import android.app.usage.UsageEvents;
+import android.app.usage.UsageStatsManager;
 import android.app.usage.UsageStatsManagerInternal;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetManagerInternal;
@@ -70,6 +72,7 @@ import android.content.pm.ServiceInfo;
 import android.content.pm.ShortcutServiceInternal;
 import android.content.pm.SuspendDialogInfo;
 import android.content.pm.UserInfo;
+import android.content.pm.UserPackage;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
@@ -83,6 +86,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PersistableBundle;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -556,10 +560,11 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
                 onClickIntent = UnlaunchableAppActivity.createInQuietModeDialogIntent(appUserId);
             } else if (provider.maskedBySuspendedPackage) {
                 showBadge = mUserManager.hasBadge(appUserId);
-                final String suspendingPackage = mPackageManagerInternal.getSuspendingPackage(
+                final UserPackage suspendingPackage = mPackageManagerInternal.getSuspendingPackage(
                         appInfo.packageName, appUserId);
                 // TODO(b/281839596): don't rely on platform always meaning suspended by admin.
-                if (PLATFORM_PACKAGE_NAME.equals(suspendingPackage)) {
+                if (suspendingPackage != null
+                        && PLATFORM_PACKAGE_NAME.equals(suspendingPackage.packageName)) {
                     onClickIntent = mDevicePolicyManagerInternal.createShowAdminSupportIntent(
                             appUserId, true);
                 } else {
@@ -3815,11 +3820,24 @@ class AppWidgetServiceImpl extends IAppWidgetService.Stub implements WidgetBacku
                 final SparseArray<String> uid2PackageName = new SparseArray<String>();
                 uid2PackageName.put(providerId.uid, packageName);
                 mAppOpsManagerInternal.updateAppWidgetVisibility(uid2PackageName, true);
-                mUsageStatsManagerInternal.reportEvent(packageName,
-                        UserHandle.getUserId(providerId.uid), UsageEvents.Event.USER_INTERACTION);
+                reportWidgetInteractionEvent(packageName, UserHandle.getUserId(providerId.uid),
+                        "tap");
             }
         } finally {
             Binder.restoreCallingIdentity(ident);
+        }
+    }
+
+    private void reportWidgetInteractionEvent(@NonNull String packageName, @UserIdInt int userId,
+            @NonNull String action) {
+        if (Flags.userInteractionTypeApi()) {
+            PersistableBundle extras = new PersistableBundle();
+            extras.putString(UsageStatsManager.EXTRA_EVENT_CATEGORY, "android.appwidget");
+            extras.putString(UsageStatsManager.EXTRA_EVENT_ACTION, action);
+            mUsageStatsManagerInternal.reportUserInteractionEvent(packageName, userId, extras);
+        } else {
+            mUsageStatsManagerInternal.reportEvent(packageName, userId,
+                    UsageEvents.Event.USER_INTERACTION);
         }
     }
 

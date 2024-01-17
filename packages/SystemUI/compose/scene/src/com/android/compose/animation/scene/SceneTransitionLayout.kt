@@ -16,11 +16,20 @@
 
 package com.android.compose.animation.scene
 
+import androidx.annotation.FloatRange
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.channels.Channel
 
 /**
  * [SceneTransitionLayout] is a container that automatically animates its content whenever
@@ -37,6 +46,9 @@ import androidx.compose.ui.platform.LocalDensity
  *   instance by triggering back navigation or by swiping to a new scene.
  * @param transitions the definition of the transitions used to animate a change of scene.
  * @param state the observable state of this layout.
+ * @param edgeDetector the edge detector used to detect which edge a swipe is started from, if any.
+ * @param transitionInterceptionThreshold used during a scene transition. For the scene to be
+ *   intercepted, the progress value must be above the threshold, and below (1 - threshold).
  * @param scenes the configuration of the different scenes of this layout.
  */
 @Composable
@@ -46,26 +58,21 @@ fun SceneTransitionLayout(
     transitions: SceneTransitions,
     modifier: Modifier = Modifier,
     state: SceneTransitionLayoutState = remember { SceneTransitionLayoutState(currentScene) },
+    edgeDetector: EdgeDetector = DefaultEdgeDetector,
+    @FloatRange(from = 0.0, to = 0.5) transitionInterceptionThreshold: Float = 0f,
     scenes: SceneTransitionLayoutScope.() -> Unit,
 ) {
-    val density = LocalDensity.current
-    val layoutImpl = remember {
-        SceneTransitionLayoutImpl(
-            onChangeScene,
-            scenes,
-            transitions,
-            state,
-            density,
-        )
-    }
-
-    layoutImpl.onChangeScene = onChangeScene
-    layoutImpl.transitions = transitions
-    layoutImpl.density = density
-    layoutImpl.setScenes(scenes)
-    layoutImpl.setCurrentScene(currentScene)
-
-    layoutImpl.Content(modifier)
+    SceneTransitionLayoutForTesting(
+        currentScene,
+        onChangeScene,
+        modifier,
+        transitions,
+        state,
+        edgeDetector,
+        transitionInterceptionThreshold,
+        onLayoutImpl = null,
+        scenes,
+    )
 }
 
 interface SceneTransitionLayoutScope {
@@ -92,7 +99,11 @@ interface SceneTransitionLayoutScope {
 @DslMarker annotation class ElementDsl
 
 @ElementDsl
+@Stable
 interface SceneScope {
+    /** The state of the [SceneTransitionLayout] in which this scene is contained. */
+    val layoutState: SceneTransitionLayoutState
+
     /**
      * Tag an element identified by [key].
      *
@@ -112,7 +123,31 @@ interface SceneScope {
      * TODO(b/291566282): Migrate this to the new Modifier Node API and remove the @Composable
      *   constraint.
      */
-    @Composable fun Modifier.element(key: ElementKey): Modifier
+    fun Modifier.element(key: ElementKey): Modifier
+
+    /**
+     * Adds a [NestedScrollConnection] to intercept scroll events not handled by the scrollable
+     * component.
+     *
+     * @param leftBehavior when we should perform the overscroll animation at the left.
+     * @param rightBehavior when we should perform the overscroll animation at the right.
+     */
+    fun Modifier.horizontalNestedScrollToScene(
+        leftBehavior: NestedScrollBehavior = NestedScrollBehavior.EdgeNoPreview,
+        rightBehavior: NestedScrollBehavior = NestedScrollBehavior.EdgeNoPreview,
+    ): Modifier
+
+    /**
+     * Adds a [NestedScrollConnection] to intercept scroll events not handled by the scrollable
+     * component.
+     *
+     * @param topBehavior when we should perform the overscroll animation at the top.
+     * @param bottomBehavior when we should perform the overscroll animation at the bottom.
+     */
+    fun Modifier.verticalNestedScrollToScene(
+        topBehavior: NestedScrollBehavior = NestedScrollBehavior.EdgeNoPreview,
+        bottomBehavior: NestedScrollBehavior = NestedScrollBehavior.EdgeNoPreview,
+    ): Modifier
 
     /**
      * Create a *movable* element identified by [key].
@@ -137,7 +172,9 @@ interface SceneScope {
      *
      * @param value the value of this shared value in the current scene.
      * @param key the key of this shared value.
-     * @param element the element associated with this value.
+     * @param element the element associated with this value. If `null`, this value will be
+     *   associated at the scene level, which means that [key] should be used maximum once in the
+     *   same scene.
      * @param lerp the *linear* interpolation function that should be used to interpolate between
      *   two different values. Note that it has to be linear because the [fraction] passed to this
      *   interpolator is already interpolated.
@@ -152,10 +189,28 @@ interface SceneScope {
     fun <T> animateSharedValueAsState(
         value: T,
         key: ValueKey,
-        element: ElementKey,
+        element: ElementKey?,
         lerp: (start: T, stop: T, fraction: Float) -> T,
         canOverflow: Boolean,
     ): State<T>
+
+    /**
+     * Punch a hole in this [element] using the bounds of [bounds] in [scene] and the given [shape].
+     *
+     * Punching a hole in an element will "remove" any pixel drawn by that element in the hole area.
+     * This can be used to make content drawn below an opaque element visible. For example, if we
+     * have [this lockscreen scene](http://shortn/_VYySFnJDhN) drawn below
+     * [this shade scene](http://shortn/_fpxGUk0Rg7) and punch a hole in the latter using the big
+     * clock time bounds and a RoundedCornerShape(10dp), [this](http://shortn/_qt80IvORFj) would be
+     * the result.
+     */
+    fun Modifier.punchHole(element: ElementKey, bounds: ElementKey, shape: Shape): Modifier
+
+    /**
+     * Don't resize during transitions. This can for instance be used to make sure that scrollable
+     * lists keep a constant size during transitions even if its elements are growing/shrinking.
+     */
+    fun Modifier.noResizeDuringTransitions(): Modifier
 }
 
 // TODO(b/291053742): Add animateSharedValueAsState(targetValue) without any ValueKey and ElementKey
@@ -191,9 +246,77 @@ data class Swipe(
     }
 }
 
-enum class SwipeDirection {
-    Up,
-    Down,
-    Left,
-    Right,
+enum class SwipeDirection(val orientation: Orientation) {
+    Up(Orientation.Vertical),
+    Down(Orientation.Vertical),
+    Left(Orientation.Horizontal),
+    Right(Orientation.Horizontal),
+}
+
+/**
+ * An internal version of [SceneTransitionLayout] to be used for tests.
+ *
+ * Important: You should use this only in tests and if you need to access the underlying
+ * [SceneTransitionLayoutImpl]. In other cases, you should use [SceneTransitionLayout].
+ */
+@Composable
+internal fun SceneTransitionLayoutForTesting(
+    currentScene: SceneKey,
+    onChangeScene: (SceneKey) -> Unit,
+    modifier: Modifier = Modifier,
+    transitions: SceneTransitions = transitions {},
+    state: SceneTransitionLayoutState = remember { SceneTransitionLayoutState(currentScene) },
+    edgeDetector: EdgeDetector = DefaultEdgeDetector,
+    transitionInterceptionThreshold: Float = 0f,
+    onLayoutImpl: ((SceneTransitionLayoutImpl) -> Unit)? = null,
+    scenes: SceneTransitionLayoutScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
+    val layoutImpl = remember {
+        SceneTransitionLayoutImpl(
+                state = state as SceneTransitionLayoutStateImpl,
+                onChangeScene = onChangeScene,
+                density = density,
+                edgeDetector = edgeDetector,
+                transitionInterceptionThreshold = transitionInterceptionThreshold,
+                builder = scenes,
+                coroutineScope = coroutineScope,
+            )
+            .also { onLayoutImpl?.invoke(it) }
+    }
+
+    // TODO(b/317014852): Move this into the SideEffect {} again once STLImpl.scenes is not a
+    // SnapshotStateMap anymore.
+    layoutImpl.updateScenes(scenes)
+
+    val targetSceneChannel = remember { Channel<SceneKey>(Channel.CONFLATED) }
+    SideEffect {
+        if (state != layoutImpl.state) {
+            error(
+                "This SceneTransitionLayout was bound to a different SceneTransitionLayoutState" +
+                    " that was used when creating it, which is not supported"
+            )
+        }
+
+        layoutImpl.onChangeScene = onChangeScene
+        (state as SceneTransitionLayoutStateImpl).transitions = transitions
+        layoutImpl.density = density
+        layoutImpl.edgeDetector = edgeDetector
+
+        state.transitions = transitions
+
+        targetSceneChannel.trySend(currentScene)
+    }
+
+    LaunchedEffect(targetSceneChannel) {
+        for (newKey in targetSceneChannel) {
+            // Inspired by AnimateAsState.kt: let's poll the last value to avoid being one frame
+            // late.
+            val newKey = targetSceneChannel.tryReceive().getOrNull() ?: newKey
+            animateToScene(layoutImpl.state, newKey)
+        }
+    }
+
+    layoutImpl.Content(modifier)
 }

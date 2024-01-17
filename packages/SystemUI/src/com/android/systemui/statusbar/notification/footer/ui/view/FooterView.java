@@ -18,6 +18,8 @@ package com.android.systemui.statusbar.notification.footer.ui.view;
 
 import static android.graphics.PorterDuff.Mode.SRC_ATOP;
 
+import static com.android.systemui.Flags.notificationBackgroundTintOptimization;
+
 import android.annotation.ColorInt;
 import android.annotation.DrawableRes;
 import android.annotation.StringRes;
@@ -46,6 +48,7 @@ import com.android.systemui.statusbar.notification.stack.ViewState;
 import com.android.systemui.util.DumpUtilsKt;
 
 import java.io.PrintWriter;
+import java.util.function.Consumer;
 
 public class FooterView extends StackScrollerDecorView {
     private static final String TAG = "FooterView";
@@ -63,8 +66,12 @@ public class FooterView extends StackScrollerDecorView {
     private String mSeenNotifsFilteredText;
     private Drawable mSeenNotifsFilteredIcon;
 
+    private @StringRes int mClearAllButtonTextId;
+    private @StringRes int mClearAllButtonDescriptionId;
     private @StringRes int mMessageStringId;
     private @DrawableRes int mMessageIconId;
+
+    private OnClickListener mClearAllButtonClickListener;
 
     public FooterView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -79,6 +86,25 @@ public class FooterView extends StackScrollerDecorView {
         return findViewById(R.id.dismiss_text);
     }
 
+    /** Whether the "Clear all" button is currently visible. */
+    public boolean isClearAllButtonVisible() {
+        return isSecondaryVisible();
+    }
+
+    /** See {@link this#setClearAllButtonVisible(boolean, boolean, Consumer)}. */
+    public void setClearAllButtonVisible(boolean visible, boolean animate) {
+        setClearAllButtonVisible(visible, animate, /* onAnimationEnded = */ null);
+    }
+
+    /**
+     * Set the visibility of the "Clear all" button to {@code visible}. Animate the change if
+     * {@code animate} is true.
+     */
+    public void setClearAllButtonVisible(boolean visible, boolean animate,
+            Consumer<Boolean> onAnimationEnded) {
+        setSecondaryVisible(visible, animate, onAnimationEnded);
+    }
+
     @Override
     public void dump(PrintWriter pwOriginal, String[] args) {
         IndentingPrintWriter pw = DumpUtilsKt.asIndenting(pwOriginal);
@@ -91,6 +117,42 @@ public class FooterView extends StackScrollerDecorView {
             pw.println("dismissButton visibility: "
                     + DumpUtilsKt.visibilityString(mClearAllButton.getVisibility()));
         });
+    }
+
+    /** Set the text label for the "Clear all" button. */
+    public void setClearAllButtonText(@StringRes int textId) {
+        if (FooterViewRefactor.isUnexpectedlyInLegacyMode()) return;
+        if (mClearAllButtonTextId == textId) {
+            return; // nothing changed
+        }
+        mClearAllButtonTextId = textId;
+        updateClearAllButtonText();
+    }
+
+    private void updateClearAllButtonText() {
+        if (mClearAllButtonTextId == 0) {
+            return; // not initialized yet
+        }
+        mClearAllButton.setText(getContext().getString(mClearAllButtonTextId));
+    }
+
+    /** Set the accessibility content description for the "Clear all" button. */
+    public void setClearAllButtonDescription(@StringRes int contentDescriptionId) {
+        if (FooterViewRefactor.isUnexpectedlyInLegacyMode()) {
+            return;
+        }
+        if (mClearAllButtonDescriptionId == contentDescriptionId) {
+            return; // nothing changed
+        }
+        mClearAllButtonDescriptionId = contentDescriptionId;
+        updateClearAllButtonDescription();
+    }
+
+    private void updateClearAllButtonDescription() {
+        if (mClearAllButtonDescriptionId == 0) {
+            return; // not initialized yet
+        }
+        mClearAllButton.setContentDescription(getContext().getString(mClearAllButtonDescriptionId));
     }
 
     /** Set the string for a message to be shown instead of the buttons. */
@@ -168,6 +230,10 @@ public class FooterView extends StackScrollerDecorView {
 
     /** Set onClickListener for the clear all (end) button. */
     public void setClearAllButtonClickListener(OnClickListener listener) {
+        if (FooterViewRefactor.isEnabled()) {
+            if (mClearAllButtonClickListener == listener) return;
+            mClearAllButtonClickListener = listener;
+        }
         mClearAllButton.setOnClickListener(listener);
     }
 
@@ -201,7 +267,28 @@ public class FooterView extends StackScrollerDecorView {
             mManageButton.setText(mManageNotificationText);
             mManageButton.setContentDescription(mManageNotificationText);
         }
-        if (!FooterViewRefactor.isEnabled()) {
+        if (FooterViewRefactor.isEnabled()) {
+            updateClearAllButtonText();
+            updateClearAllButtonDescription();
+
+            updateMessageString();
+            updateMessageIcon();
+        } else {
+            // NOTE: Prior to the refactor, `updateResources` set the class properties to the right
+            // string values. It was always being called together with `updateContent`, which
+            // deals with actually associating those string values with the correct views
+            // (buttons or text).
+            // In the new code, the resource IDs are being set in the view binder (through
+            // setMessageString and similar setters). The setters themselves now deal with
+            // updating both the resource IDs and the views where appropriate (as in, calling
+            // `updateMessageString` when the resource ID changes). This eliminates the need for
+            // `updateResources`, which will eventually be removed. There are, however, still
+            // situations in which we want to update the views even if the resource IDs didn't
+            // change, such as configuration changes.
+            mClearAllButton.setText(R.string.clear_all_notifications_text);
+            mClearAllButton.setContentDescription(
+                    mContext.getString(R.string.accessibility_clear_all));
+
             mSeenNotifsFooterTextView.setText(mSeenNotifsFilteredText);
             mSeenNotifsFooterTextView
                     .setCompoundDrawablesRelative(mSeenNotifsFilteredIcon, null, null, null);
@@ -217,16 +304,8 @@ public class FooterView extends StackScrollerDecorView {
     protected void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         updateColors();
-        mClearAllButton.setText(R.string.clear_all_notifications_text);
-        mClearAllButton.setContentDescription(
-                mContext.getString(R.string.accessibility_clear_all));
         updateResources();
         updateContent();
-
-        if (FooterViewRefactor.isEnabled()) {
-            updateMessageString();
-            updateMessageIcon();
-        }
     }
 
     /**
@@ -236,15 +315,16 @@ public class FooterView extends StackScrollerDecorView {
         Resources.Theme theme = mContext.getTheme();
         final @ColorInt int onSurface = Utils.getColorAttrDefaultColor(mContext,
                 com.android.internal.R.attr.materialColorOnSurface);
-        final @ColorInt int scHigh = Utils.getColorAttrDefaultColor(mContext,
-                com.android.internal.R.attr.materialColorSurfaceContainerHigh);
         final Drawable clearAllBg = theme.getDrawable(R.drawable.notif_footer_btn_background);
         final Drawable manageBg = theme.getDrawable(R.drawable.notif_footer_btn_background);
-        // TODO(b/282173943): Remove redundant tinting once Resources are thread-safe
-        final ColorFilter bgColorFilter = new PorterDuffColorFilter(scHigh, SRC_ATOP);
-        if (scHigh != 0) {
-            clearAllBg.setColorFilter(bgColorFilter);
-            manageBg.setColorFilter(bgColorFilter);
+        if (!notificationBackgroundTintOptimization()) {
+            final @ColorInt int scHigh = Utils.getColorAttrDefaultColor(mContext,
+                    com.android.internal.R.attr.materialColorSurfaceContainerHigh);
+            if (scHigh != 0) {
+                final ColorFilter bgColorFilter = new PorterDuffColorFilter(scHigh, SRC_ATOP);
+                clearAllBg.setColorFilter(bgColorFilter);
+                manageBg.setColorFilter(bgColorFilter);
+            }
         }
         mClearAllButton.setBackground(clearAllBg);
         mClearAllButton.setTextColor(onSurface);
@@ -293,7 +373,7 @@ public class FooterView extends StackScrollerDecorView {
             super.applyToView(view);
             if (view instanceof FooterView) {
                 FooterView footerView = (FooterView) view;
-                footerView.setContentVisible(!hideContent);
+                footerView.setContentVisibleAnimated(!hideContent);
             }
         }
     }

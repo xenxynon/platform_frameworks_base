@@ -19,18 +19,25 @@ package com.android.compose.animation.scene
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.intermediateLayout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.zIndex
+import com.android.compose.animation.scene.modifiers.noResizeDuringTransitions
 
 /** A scene in a [SceneTransitionLayout]. */
+@Stable
 internal class Scene(
     val key: SceneKey,
     layoutImpl: SceneTransitionLayoutImpl,
@@ -43,11 +50,24 @@ internal class Scene(
     var content by mutableStateOf(content)
     var userActions by mutableStateOf(actions)
     var zIndex by mutableFloatStateOf(zIndex)
-    var size by mutableStateOf(IntSize.Zero)
+    var targetSize by mutableStateOf(IntSize.Zero)
+
+    /** The shared values in this scene that are not tied to a specific element. */
+    val sharedValues = SnapshotStateMap<ValueKey, Element.SharedValue<*>>()
 
     @Composable
+    @OptIn(ExperimentalComposeUiApi::class)
     fun Content(modifier: Modifier = Modifier) {
-        Box(modifier.zIndex(zIndex).onPlaced { size = it.size }.testTag(key.testTag)) {
+        Box(
+            modifier
+                .zIndex(zIndex)
+                .intermediateLayout { measurable, constraints ->
+                    targetSize = lookaheadSize
+                    val placeable = measurable.measure(constraints)
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
+                .testTag(key.testTag)
+        ) {
             scope.content()
         }
     }
@@ -61,25 +81,52 @@ private class SceneScopeImpl(
     private val layoutImpl: SceneTransitionLayoutImpl,
     private val scene: Scene,
 ) : SceneScope {
-    @Composable
+    override val layoutState: SceneTransitionLayoutState = layoutImpl.state
+
     override fun Modifier.element(key: ElementKey): Modifier {
         return element(layoutImpl, scene, key)
     }
+
+    override fun Modifier.horizontalNestedScrollToScene(
+        leftBehavior: NestedScrollBehavior,
+        rightBehavior: NestedScrollBehavior,
+    ): Modifier =
+        nestedScrollToScene(
+            layoutImpl = layoutImpl,
+            orientation = Orientation.Horizontal,
+            topOrLeftBehavior = leftBehavior,
+            bottomOrRightBehavior = rightBehavior,
+        )
+
+    override fun Modifier.verticalNestedScrollToScene(
+        topBehavior: NestedScrollBehavior,
+        bottomBehavior: NestedScrollBehavior
+    ): Modifier =
+        nestedScrollToScene(
+            layoutImpl = layoutImpl,
+            orientation = Orientation.Vertical,
+            topOrLeftBehavior = topBehavior,
+            bottomOrRightBehavior = bottomBehavior,
+        )
 
     @Composable
     override fun <T> animateSharedValueAsState(
         value: T,
         key: ValueKey,
-        element: ElementKey,
+        element: ElementKey?,
         lerp: (T, T, Float) -> T,
         canOverflow: Boolean
     ): State<T> {
         val element =
-            layoutImpl.elements[element]
-                ?: error(
-                    "Element $element is not composed. Make sure to call animateSharedXAsState " +
-                        "*after* Modifier.element(key)."
-                )
+            element?.let { key ->
+                Snapshot.withoutReadObservation {
+                    layoutImpl.elements[key]
+                        ?: error(
+                            "Element $key is not composed. Make sure to call " +
+                                "animateSharedXAsState *after* Modifier.element(key)."
+                        )
+                }
+            }
 
         return animateSharedValueAsState(
             layoutImpl,
@@ -100,20 +147,14 @@ private class SceneScopeImpl(
     ) {
         MovableElement(layoutImpl, scene, key, modifier, content)
     }
-}
 
-/** The destination scene when swiping up or left from [upOrLeft]. */
-internal fun Scene.upOrLeft(orientation: Orientation): SceneKey? {
-    return when (orientation) {
-        Orientation.Vertical -> userActions[Swipe.Up]
-        Orientation.Horizontal -> userActions[Swipe.Left]
-    }
-}
+    override fun Modifier.punchHole(
+        element: ElementKey,
+        bounds: ElementKey,
+        shape: Shape
+    ): Modifier = punchHole(layoutImpl, element, bounds, shape)
 
-/** The destination scene when swiping down or right from [downOrRight]. */
-internal fun Scene.downOrRight(orientation: Orientation): SceneKey? {
-    return when (orientation) {
-        Orientation.Vertical -> userActions[Swipe.Down]
-        Orientation.Horizontal -> userActions[Swipe.Right]
+    override fun Modifier.noResizeDuringTransitions(): Modifier {
+        return noResizeDuringTransitions(layoutState = layoutImpl.state)
     }
 }

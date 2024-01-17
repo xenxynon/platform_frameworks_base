@@ -18,6 +18,7 @@ package com.android.systemui.biometrics;
 
 import static android.hardware.biometrics.BiometricAuthenticator.TYPE_FACE;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+
 import static com.android.internal.jank.InteractionJankMonitor.CUJ_BIOMETRIC_PROMPT_TRANSITION;
 
 import android.animation.Animator;
@@ -29,6 +30,7 @@ import android.content.Context;
 import android.graphics.PixelFormat;
 import android.hardware.biometrics.BiometricAuthenticator.Modality;
 import android.hardware.biometrics.BiometricConstants;
+import android.hardware.biometrics.BiometricManager.Authenticators;
 import android.hardware.biometrics.PromptInfo;
 import android.hardware.face.FaceSensorPropertiesInternal;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
@@ -63,7 +65,6 @@ import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.widget.LockPatternUtils;
-import com.android.systemui.res.R;
 import com.android.systemui.biometrics.AuthController.ScaleFactorProvider;
 import com.android.systemui.biometrics.domain.interactor.PromptCredentialInteractor;
 import com.android.systemui.biometrics.domain.interactor.PromptSelectorInteractor;
@@ -76,8 +77,8 @@ import com.android.systemui.biometrics.ui.binder.Spaghetti;
 import com.android.systemui.biometrics.ui.viewmodel.CredentialViewModel;
 import com.android.systemui.biometrics.ui.viewmodel.PromptViewModel;
 import com.android.systemui.dagger.qualifiers.Background;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
+import com.android.systemui.res.R;
 import com.android.systemui.statusbar.VibratorHelper;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 
@@ -168,7 +169,7 @@ public class AuthContainerView extends LinearLayout
     // HAT received from LockSettingsService when credential is verified.
     @Nullable private byte[] mCredentialAttestation;
 
-    // TODO(b/287311775): remove when legacy prompt is replaced
+    // TODO(b/313469218): remove when legacy prompt is replaced
     @Deprecated
     static class Config {
         Context mContext;
@@ -220,6 +221,9 @@ public class AuthContainerView extends LinearLayout
             mHandler.postDelayed(() -> {
                 addCredentialView(false /* animatePanel */, true /* animateContents */);
             }, mConfig.mSkipAnimation ? 0 : ANIMATE_CREDENTIAL_START_DELAY_MS);
+
+            // TODO(b/313469218): Remove Config
+            mConfig.mPromptInfo.setAuthenticators(Authenticators.DEVICE_CREDENTIAL);
         }
 
         @Override
@@ -280,7 +284,6 @@ public class AuthContainerView extends LinearLayout
 
     // TODO(b/251476085): remove Config and further decompose these properties out of view classes
     AuthContainerView(@NonNull Config config,
-            @NonNull FeatureFlags featureFlags,
             @NonNull CoroutineScope applicationCoroutineScope,
             @Nullable List<FingerprintSensorPropertiesInternal> fpProps,
             @Nullable List<FaceSensorPropertiesInternal> faceProps,
@@ -295,7 +298,7 @@ public class AuthContainerView extends LinearLayout
             @NonNull Provider<CredentialViewModel> credentialViewModelProvider,
             @NonNull @Background DelayableExecutor bgExecutor,
             @NonNull VibratorHelper vibratorHelper) {
-        this(config, featureFlags, applicationCoroutineScope, fpProps, faceProps,
+        this(config, applicationCoroutineScope, fpProps, faceProps,
                 wakefulnessLifecycle, panelInteractionDetector, userManager, lockPatternUtils,
                 jankMonitor, promptSelectorInteractor, promptCredentialInteractor, promptViewModel,
                 credentialViewModelProvider, new Handler(Looper.getMainLooper()), bgExecutor,
@@ -304,7 +307,6 @@ public class AuthContainerView extends LinearLayout
 
     @VisibleForTesting
     AuthContainerView(@NonNull Config config,
-            @NonNull FeatureFlags featureFlags,
             @NonNull CoroutineScope applicationCoroutineScope,
             @Nullable List<FingerprintSensorPropertiesInternal> fpProps,
             @Nullable List<FaceSensorPropertiesInternal> faceProps,
@@ -368,7 +370,7 @@ public class AuthContainerView extends LinearLayout
         showPrompt(config, layoutInflater, promptViewModel,
                 Utils.findFirstSensorProperties(fpProps, mConfig.mSensorIds),
                 Utils.findFirstSensorProperties(faceProps, mConfig.mSensorIds),
-                vibratorHelper, featureFlags);
+                vibratorHelper);
 
         // TODO: De-dupe the logic with AuthCredentialPasswordView
         setOnKeyListener((v, keyCode, event) -> {
@@ -390,8 +392,7 @@ public class AuthContainerView extends LinearLayout
             @NonNull PromptViewModel viewModel,
             @Nullable FingerprintSensorPropertiesInternal fpProps,
             @Nullable FaceSensorPropertiesInternal faceProps,
-            @NonNull VibratorHelper vibratorHelper,
-            @NonNull FeatureFlags featureFlags
+            @NonNull VibratorHelper vibratorHelper
     ) {
         if (Utils.isBiometricAllowed(config.mPromptInfo)) {
             mPromptSelectorInteractorProvider.get().useBiometricsForAuthentication(
@@ -407,7 +408,7 @@ public class AuthContainerView extends LinearLayout
                     getJankListener(view, TRANSIT,
                             BiometricViewSizeBinder.ANIMATE_MEDIUM_TO_LARGE_DURATION_MS),
                     mBackgroundView, mBiometricCallback, mApplicationCoroutineScope,
-                    vibratorHelper, featureFlags);
+                    vibratorHelper);
 
             // TODO(b/251476085): migrate these dependencies
             if (fpProps != null && fpProps.isAnyUdfpsType()) {
@@ -491,6 +492,10 @@ public class AuthContainerView extends LinearLayout
     @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
+
+        if (mContainerState == STATE_ANIMATING_OUT) {
+            return;
+        }
 
         mWakefulnessLifecycle.addObserver(this);
         mPanelInteractionDetector.enable(

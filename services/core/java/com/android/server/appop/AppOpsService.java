@@ -63,6 +63,7 @@ import static android.app.AppOpsManager.opAllowSystemBypassRestriction;
 import static android.app.AppOpsManager.opRestrictsRead;
 import static android.app.AppOpsManager.opToName;
 import static android.app.AppOpsManager.opToPublicName;
+import static android.companion.virtual.VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT;
 import static android.content.pm.PermissionInfo.PROTECTION_DANGEROUS;
 import static android.content.pm.PermissionInfo.PROTECTION_FLAG_APPOP;
 
@@ -148,6 +149,7 @@ import com.android.internal.app.IAppOpsStartedCallback;
 import com.android.internal.app.MessageSamplingConfig;
 import com.android.internal.compat.IPlatformCompat;
 import com.android.internal.os.Clock;
+import com.android.internal.pm.pkg.component.ParsedAttribution;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.DumpUtils;
 import com.android.internal.util.Preconditions;
@@ -165,7 +167,6 @@ import com.android.server.pm.PackageManagerLocal;
 import com.android.server.pm.UserManagerInternal;
 import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageState;
-import com.android.server.pm.pkg.component.ParsedAttribution;
 import com.android.server.policy.AppOpsPolicy;
 
 import dalvik.annotation.optimization.NeverCompile;
@@ -531,19 +532,6 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
         }
 
-        // Functions for uid mode access and manipulation.
-        public SparseIntArray getNonDefaultUidModes() {
-            return mAppOpsCheckingService.getNonDefaultUidModes(uid);
-        }
-
-        public int getUidMode(int op) {
-            return mAppOpsCheckingService.getUidMode(uid, op);
-        }
-
-        public boolean setUidMode(int op, int mode) {
-            return mAppOpsCheckingService.setUidMode(uid, op, mode);
-        }
-
         @SuppressWarnings("GuardedBy")
         int evalMode(int op, int mode) {
             return getUidStateTracker().evalMode(uid, op, mode);
@@ -613,15 +601,6 @@ public class AppOpsService extends IAppOpsService.Stub {
             this.packageName = packageName;
         }
 
-        @Mode int getMode() {
-            return mAppOpsCheckingService.getPackageMode(packageName, this.op,
-                    UserHandle.getUserId(this.uid));
-        }
-        void setMode(@Mode int mode) {
-            mAppOpsCheckingService.setPackageMode(packageName, this.op, mode,
-                    UserHandle.getUserId(this.uid));
-        }
-
         void removeAttributionsWithNoTime() {
             for (int i = mAttributions.size() - 1; i >= 0; i--) {
                 if (!mAttributions.valueAt(i).hasAnyTime()) {
@@ -653,7 +632,11 @@ public class AppOpsService extends IAppOpsService.Stub {
                         mAttributions.valueAt(i).createAttributedOpEntryLocked());
             }
 
-            return new OpEntry(op, getMode(), attributionEntries);
+            return new OpEntry(
+                    op,
+                    mAppOpsCheckingService.getPackageMode(
+                            this.packageName, this.op, UserHandle.getUserId(this.uid)),
+                    attributionEntries);
         }
 
         @NonNull OpEntry createSingleAttributionEntryLocked(@Nullable String attributionTag) {
@@ -668,7 +651,11 @@ public class AppOpsService extends IAppOpsService.Stub {
                 }
             }
 
-            return new OpEntry(op, getMode(), attributionEntries);
+            return new OpEntry(
+                    op,
+                    mAppOpsCheckingService.getPackageMode(
+                            this.packageName, this.op, UserHandle.getUserId(this.uid)),
+                    attributionEntries);
         }
 
         boolean isRunning() {
@@ -1193,6 +1180,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                                     uidState.pkgOps.put(packageName,
                                             new Ops(packageName, uidState));
                                 }
+
+                                createSandboxUidStateIfNotExistsForAppLocked(uid);
                             }
                         }
                     }
@@ -1274,6 +1263,8 @@ public class AppOpsService extends IAppOpsService.Stub {
                 ops.put(code, new Op(uidState, packageName, code, uid));
             }
         }
+
+        createSandboxUidStateIfNotExistsForAppLocked(uid);
     }
 
     /**
@@ -1363,7 +1354,10 @@ public class AppOpsService extends IAppOpsService.Stub {
 
                 SparseBooleanArray foregroundOps = new SparseBooleanArray();
 
-                SparseBooleanArray uidForegroundOps = mAppOpsCheckingService.getForegroundOps(uid);
+                // TODO(b/299330771): Check uidForegroundOps for all devices.
+                SparseBooleanArray uidForegroundOps =
+                        mAppOpsCheckingService.getForegroundOps(
+                                uid, PERSISTENT_DEVICE_ID_DEFAULT);
                 for (int i = 0; i < uidForegroundOps.size(); i++) {
                     foregroundOps.put(uidForegroundOps.keyAt(i), true);
                 }
@@ -1383,9 +1377,17 @@ public class AppOpsService extends IAppOpsService.Stub {
                         continue;
                     }
                     final int code = foregroundOps.keyAt(fgi);
-
-                    if (uidState.getUidMode(code) != AppOpsManager.opToDefaultMode(code)
-                            && uidState.getUidMode(code) == AppOpsManager.MODE_FOREGROUND) {
+                    // TODO(b/299330771): Notify op changes for all relevant devices.
+                    if (mAppOpsCheckingService.getUidMode(
+                                            uidState.uid,
+                                            PERSISTENT_DEVICE_ID_DEFAULT,
+                                            code)
+                                    != AppOpsManager.opToDefaultMode(code)
+                            && mAppOpsCheckingService.getUidMode(
+                                            uidState.uid,
+                                            PERSISTENT_DEVICE_ID_DEFAULT,
+                                            code)
+                                    == AppOpsManager.MODE_FOREGROUND) {
                         mHandler.sendMessage(PooledLambda.obtainMessage(
                                 AppOpsService::notifyOpChangedForAllPkgsInUid,
                                 this, code, uidState.uid, true));
@@ -1405,7 +1407,11 @@ public class AppOpsService extends IAppOpsService.Stub {
                                     if (op == null) {
                                         continue;
                                     }
-                                    if (op.getMode() == AppOpsManager.MODE_FOREGROUND) {
+                                    if (mAppOpsCheckingService.getPackageMode(
+                                                    op.packageName,
+                                                    op.op,
+                                                    UserHandle.getUserId(op.uid))
+                                            == AppOpsManager.MODE_FOREGROUND) {
                                         mHandler.sendMessage(PooledLambda.obtainMessage(
                                                 AppOpsService::notifyOpChanged,
                                                 this, listenerSet.valueAt(cbi), code, uidState.uid,
@@ -1497,7 +1503,11 @@ public class AppOpsService extends IAppOpsService.Stub {
     @Nullable
     private ArrayList<AppOpsManager.OpEntry> collectUidOps(@NonNull UidState uidState,
             @Nullable int[] ops) {
-        final SparseIntArray opModes = uidState.getNonDefaultUidModes();
+        // TODO(b/299330771): Make this methods device-aware, currently it represents only the
+        // primary device.
+        final SparseIntArray opModes =
+                mAppOpsCheckingService.getNonDefaultUidModes(
+                        uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT);
         if (opModes == null) {
             return null;
         }
@@ -1778,7 +1788,11 @@ public class AppOpsService extends IAppOpsService.Stub {
             Ops ops = getOpsLocked(uid, packageName, null, false, null, /* edit */ false);
             if (ops != null) {
                 ops.remove(op.op);
-                op.setMode(AppOpsManager.opToDefaultMode(op.op));
+                mAppOpsCheckingService.setPackageMode(
+                        packageName,
+                        op.op,
+                        AppOpsManager.opToDefaultMode(op.op),
+                        UserHandle.getUserId(op.uid));
                 if (ops.size() <= 0) {
                     UidState uidState = ops.uidState;
                     ArrayMap<String, Ops> pkgOps = uidState.pkgOps;
@@ -1848,15 +1862,22 @@ public class AppOpsService extends IAppOpsService.Stub {
                 uidState = new UidState(uid);
                 mUidStates.put(uid, uidState);
             }
-            if (uidState.getUidMode(code) != AppOpsManager.opToDefaultMode(code)) {
-                previousMode = uidState.getUidMode(code);
+            // TODO(b/266164193): Ensure this behavior is device-aware after uid op mode for runtime
+            //  permissions is deprecated.
+            if (mAppOpsCheckingService.getUidMode(
+                            uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, code)
+                    != AppOpsManager.opToDefaultMode(code)) {
+                previousMode =
+                        mAppOpsCheckingService.getUidMode(
+                                uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, code);
             } else {
                 // doesn't look right but is legacy behavior.
                 previousMode = MODE_DEFAULT;
             }
 
             mIgnoredCallback = permissionPolicyCallback;
-            if (!uidState.setUidMode(code, mode)) {
+            if (!mAppOpsCheckingService.setUidMode(
+                    uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, code, mode)) {
                 return;
             }
             if (mode != MODE_ERRORED && mode != previousMode) {
@@ -2133,10 +2154,15 @@ public class AppOpsService extends IAppOpsService.Stub {
         synchronized (this) {
             Op op = getOpLocked(code, uid, packageName, null, false, pvr.bypass, /* edit */ true);
             if (op != null) {
-                if (op.getMode() != mode) {
-                    previousMode = op.getMode();
+                if (mAppOpsCheckingService.getPackageMode(
+                                op.packageName, op.op, UserHandle.getUserId(op.uid))
+                        != mode) {
+                    previousMode =
+                            mAppOpsCheckingService.getPackageMode(
+                                    op.packageName, op.op, UserHandle.getUserId(op.uid));
                     mIgnoredCallback = permissionPolicyCallback;
-                    op.setMode(mode);
+                    mAppOpsCheckingService.setPackageMode(op.packageName, op.op, mode,
+                            UserHandle.getUserId(op.uid));
                 }
             }
         }
@@ -2273,8 +2299,10 @@ public class AppOpsService extends IAppOpsService.Stub {
             boolean changed = false;
             for (int i = mUidStates.size() - 1; i >= 0; i--) {
                 UidState uidState = mUidStates.valueAt(i);
-
-                SparseIntArray opModes = uidState.getNonDefaultUidModes();
+                // TODO(b/299330771): Check non default modes for all devices.
+                SparseIntArray opModes =
+                        mAppOpsCheckingService.getNonDefaultUidModes(
+                                uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT);
                 if (opModes != null && (uidState.uid == reqUid || reqUid == -1)) {
                     final int uidOpCount = opModes.size();
                     for (int j = uidOpCount - 1; j >= 0; j--) {
@@ -2283,7 +2311,12 @@ public class AppOpsService extends IAppOpsService.Stub {
                             int previousMode = opModes.valueAt(j);
                             int newMode = isUidOpGrantedByRole(uidState.uid, code) ? MODE_ALLOWED :
                                     AppOpsManager.opToDefaultMode(code);
-                            uidState.setUidMode(code, newMode);
+                            // TODO(b/299330771): Set mode for all necessary devices.
+                            mAppOpsCheckingService.setUidMode(
+                                    uidState.uid,
+                                    PERSISTENT_DEVICE_ID_DEFAULT,
+                                    code,
+                                    newMode);
                             for (String packageName : getPackagesForUid(uidState.uid)) {
                                 callbacks = addCallbacks(callbacks, code, uidState.uid, packageName,
                                         previousMode, mOpModeWatchers.get(code));
@@ -2325,14 +2358,22 @@ public class AppOpsService extends IAppOpsService.Stub {
                             continue;
                         }
                         if (AppOpsManager.opAllowsReset(curOp.op)) {
-                            int previousMode = curOp.getMode();
+                            int previousMode =
+                                    mAppOpsCheckingService.getPackageMode(
+                                            curOp.packageName,
+                                            curOp.op,
+                                            UserHandle.getUserId(curOp.uid));
                             int newMode = isPackageOpGrantedByRole(packageName, uidState.uid,
                                     curOp.op) ? MODE_ALLOWED : AppOpsManager.opToDefaultMode(
                                     curOp.op);
                             if (previousMode == newMode) {
                                 continue;
                             }
-                            curOp.setMode(newMode);
+                            mAppOpsCheckingService.setPackageMode(
+                                    curOp.packageName,
+                                    curOp.op,
+                                    newMode,
+                                    UserHandle.getUserId(curOp.uid));
                             changed = true;
                             uidChanged = true;
                             final int uid = curOp.uidState.uid;
@@ -2391,7 +2432,8 @@ public class AppOpsService extends IAppOpsService.Stub {
         long token = Binder.clearCallingIdentity();
         try {
             // Permissions are managed by UIDs, but unfortunately a package name is required in API.
-            String packageName = ArrayUtils.firstOrNull(packageManager.getPackagesForUid(uid));
+            String packageName = ArrayUtils.firstOrNull(ArrayUtils.defeatNullable(
+                    packageManager.getPackagesForUid(uid)));
             if (packageName == null) {
                 return false;
             }
@@ -2538,17 +2580,30 @@ public class AppOpsService extends IAppOpsService.Stub {
     public int checkOperationRaw(int code, int uid, String packageName,
             @Nullable String attributionTag) {
         return mCheckOpsDelegateDispatcher.checkOperation(code, uid, packageName, attributionTag,
-                true /*raw*/);
+                Context.DEVICE_ID_DEFAULT, true /*raw*/);
+    }
+
+    @Override
+    public int checkOperationRawForDevice(int code, int uid, @Nullable String packageName,
+            @Nullable String attributionTag, int virtualDeviceId) {
+        return mCheckOpsDelegateDispatcher.checkOperation(code, uid, packageName, attributionTag,
+                virtualDeviceId, true /*raw*/);
     }
 
     @Override
     public int checkOperation(int code, int uid, String packageName) {
         return mCheckOpsDelegateDispatcher.checkOperation(code, uid, packageName, null,
-                false /*raw*/);
+                Context.DEVICE_ID_DEFAULT, false /*raw*/);
+    }
+
+    @Override
+    public int checkOperationForDevice(int code, int uid, String packageName, int virtualDeviceId) {
+        return mCheckOpsDelegateDispatcher.checkOperation(code, uid, packageName, null,
+                virtualDeviceId, false /*raw*/);
     }
 
     private int checkOperationImpl(int code, int uid, String packageName,
-            @Nullable String attributionTag, boolean raw) {
+             @Nullable String attributionTag, int virtualDeviceId, boolean raw) {
         verifyIncomingOp(code);
         if (!isIncomingPackageValid(packageName, UserHandle.getUserId(uid))) {
             return AppOpsManager.opToDefaultMode(code);
@@ -2590,16 +2645,27 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
             code = AppOpsManager.opToSwitch(code);
             UidState uidState = getUidStateLocked(uid, false);
+            // TODO(b/299330771): Check mode for the relevant device.
             if (uidState != null
-                    && uidState.getUidMode(code) != AppOpsManager.opToDefaultMode(code)) {
-                final int rawMode = uidState.getUidMode(code);
+                    && mAppOpsCheckingService.getUidMode(
+                                    uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, code)
+                            != AppOpsManager.opToDefaultMode(code)) {
+                final int rawMode =
+                        mAppOpsCheckingService.getUidMode(
+                                uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, code);
                 return raw ? rawMode : uidState.evalMode(code, rawMode);
             }
             Op op = getOpLocked(code, uid, packageName, null, false, pvr.bypass, /* edit */ false);
             if (op == null) {
                 return AppOpsManager.opToDefaultMode(code);
             }
-            return raw ? op.getMode() : op.uidState.evalMode(op.op, op.getMode());
+            return raw
+                    ? mAppOpsCheckingService.getPackageMode(
+                            op.packageName, op.op, UserHandle.getUserId(op.uid))
+                    : op.uidState.evalMode(
+                            op.op,
+                            mAppOpsCheckingService.getPackageMode(
+                                    op.packageName, op.op, UserHandle.getUserId(op.uid)));
         }
     }
 
@@ -2680,8 +2746,17 @@ public class AppOpsService extends IAppOpsService.Stub {
                 .filterAppAccess(packageName, callingUid, userId);
     }
 
+    /** @deprecated Use {@link #noteProxyOperationWithState} instead. */
     @Override
     public SyncNotedAppOp noteProxyOperation(int code,
+            AttributionSource attributionSource, boolean shouldCollectAsyncNotedOp,
+            String message, boolean shouldCollectMessage, boolean skipProxyOperation) {
+        return mCheckOpsDelegateDispatcher.noteProxyOperation(code, attributionSource,
+                shouldCollectAsyncNotedOp, message, shouldCollectMessage, skipProxyOperation);
+    }
+
+    @Override
+    public SyncNotedAppOp noteProxyOperationWithState(int code,
             AttributionSourceState attributionSourceState, boolean shouldCollectAsyncNotedOp,
             String message, boolean shouldCollectMessage, boolean skipProxyOperation) {
         AttributionSource attributionSource = new AttributionSource(attributionSourceState);
@@ -2754,12 +2829,23 @@ public class AppOpsService extends IAppOpsService.Stub {
             String attributionTag, boolean shouldCollectAsyncNotedOp, String message,
             boolean shouldCollectMessage) {
         return mCheckOpsDelegateDispatcher.noteOperation(code, uid, packageName,
-                attributionTag, shouldCollectAsyncNotedOp, message, shouldCollectMessage);
+                attributionTag, Context.DEVICE_ID_DEFAULT, shouldCollectAsyncNotedOp, message,
+                shouldCollectMessage);
+    }
+
+    @Override
+    public SyncNotedAppOp noteOperationForDevice(int code, int uid, @Nullable String packageName,
+            @Nullable String attributionTag, int virtualDeviceId, boolean shouldCollectAsyncNotedOp,
+            String message, boolean shouldCollectMessage) {
+        return mCheckOpsDelegateDispatcher.noteOperation(code, uid, packageName,
+                attributionTag, virtualDeviceId, shouldCollectAsyncNotedOp, message,
+                shouldCollectMessage);
     }
 
     private SyncNotedAppOp noteOperationImpl(int code, int uid, @Nullable String packageName,
-            @Nullable String attributionTag, boolean shouldCollectAsyncNotedOp,
-            @Nullable String message, boolean shouldCollectMessage) {
+             @Nullable String attributionTag, int virtualDeviceId,
+             boolean shouldCollectAsyncNotedOp, @Nullable String message,
+             boolean shouldCollectMessage) {
         verifyIncomingUid(uid);
         verifyIncomingOp(code);
         if (!isIncomingPackageValid(packageName, UserHandle.getUserId(uid))) {
@@ -2778,10 +2864,10 @@ public class AppOpsService extends IAppOpsService.Stub {
     }
 
     private SyncNotedAppOp noteOperationUnchecked(int code, int uid, @NonNull String packageName,
-            @Nullable String attributionTag, int proxyUid, String proxyPackageName,
-            @Nullable String proxyAttributionTag, @OpFlags int flags,
-            boolean shouldCollectAsyncNotedOp, @Nullable String message,
-            boolean shouldCollectMessage) {
+           @Nullable String attributionTag, int proxyUid, String proxyPackageName,
+           @Nullable String proxyAttributionTag, @OpFlags int flags,
+           boolean shouldCollectAsyncNotedOp, @Nullable String message,
+           boolean shouldCollectMessage) {
         PackageVerificationResult pvr;
         try {
             pvr = verifyAndGetBypass(uid, packageName, attributionTag, proxyPackageName);
@@ -2824,10 +2910,19 @@ public class AppOpsService extends IAppOpsService.Stub {
                 return new SyncNotedAppOp(AppOpsManager.MODE_IGNORED, code, attributionTag,
                         packageName);
             }
+            // TODO(b/299330771): Check mode for the relevant device.
             // If there is a non-default per UID policy (we set UID op mode only if
             // non-default) it takes over, otherwise use the per package policy.
-            if (uidState.getUidMode(switchCode) != AppOpsManager.opToDefaultMode(switchCode)) {
-                final int uidMode = uidState.evalMode(code, uidState.getUidMode(switchCode));
+            if (mAppOpsCheckingService.getUidMode(
+                            uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, switchCode)
+                    != AppOpsManager.opToDefaultMode(switchCode)) {
+                final int uidMode =
+                        uidState.evalMode(
+                                code,
+                                mAppOpsCheckingService.getUidMode(
+                                        uidState.uid,
+                                        PERSISTENT_DEVICE_ID_DEFAULT,
+                                        switchCode));
                 if (uidMode != AppOpsManager.MODE_ALLOWED) {
                     if (DEBUG) Slog.d(TAG, "noteOperation: uid reject #" + uidMode + " for code "
                             + switchCode + " (" + code + ") uid " + uid + " package "
@@ -2840,7 +2935,13 @@ public class AppOpsService extends IAppOpsService.Stub {
             } else {
                 final Op switchOp = switchCode != code ? getOpLocked(ops, switchCode, uid, true)
                         : op;
-                final int mode = switchOp.uidState.evalMode(switchOp.op, switchOp.getMode());
+                final int mode =
+                        switchOp.uidState.evalMode(
+                                switchOp.op,
+                                mAppOpsCheckingService.getPackageMode(
+                                        switchOp.packageName,
+                                        switchOp.op,
+                                        UserHandle.getUserId(switchOp.uid)));
                 if (mode != AppOpsManager.MODE_ALLOWED) {
                     if (DEBUG) Slog.d(TAG, "noteOperation: reject #" + mode + " for code "
                             + switchCode + " (" + code + ") uid " + uid + " package "
@@ -3161,12 +3262,26 @@ public class AppOpsService extends IAppOpsService.Stub {
             String message, boolean shouldCollectMessage, @AttributionFlags int attributionFlags,
             int attributionChainId) {
         return mCheckOpsDelegateDispatcher.startOperation(token, code, uid, packageName,
-                attributionTag, startIfModeDefault, shouldCollectAsyncNotedOp, message,
-                shouldCollectMessage, attributionFlags, attributionChainId);
+                attributionTag, Context.DEVICE_ID_DEFAULT, startIfModeDefault,
+                shouldCollectAsyncNotedOp, message, shouldCollectMessage, attributionFlags,
+                attributionChainId
+        );
+    }
+
+    @Override
+    public SyncNotedAppOp startOperationForDevice(IBinder token, int code, int uid,
+            @Nullable String packageName, @Nullable String attributionTag, int virtualDeviceId,
+            boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp, String message,
+            boolean shouldCollectMessage, @AttributionFlags int attributionFlags,
+            int attributionChainId) {
+        return mCheckOpsDelegateDispatcher.startOperation(token, code, uid, packageName,
+                attributionTag, virtualDeviceId, startIfModeDefault, shouldCollectAsyncNotedOp,
+                message, shouldCollectMessage, attributionFlags, attributionChainId
+        );
     }
 
     private SyncNotedAppOp startOperationImpl(@NonNull IBinder clientId, int code, int uid,
-            @Nullable String packageName, @Nullable String attributionTag,
+            @Nullable String packageName, @Nullable String attributionTag, int virtualDeviceId,
             boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp, @NonNull String message,
             boolean shouldCollectMessage, @AttributionFlags int attributionFlags,
             int attributionChainId) {
@@ -3212,8 +3327,21 @@ public class AppOpsService extends IAppOpsService.Stub {
                 attributionChainId);
     }
 
+    /** @deprecated Use {@link #startProxyOperationWithState} instead. */
     @Override
     public SyncNotedAppOp startProxyOperation(@NonNull IBinder clientId, int code,
+            @NonNull AttributionSource attributionSource, boolean startIfModeDefault,
+            boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
+            boolean skipProxyOperation, @AttributionFlags int proxyAttributionFlags,
+            @AttributionFlags int proxiedAttributionFlags, int attributionChainId) {
+        return mCheckOpsDelegateDispatcher.startProxyOperation(clientId, code, attributionSource,
+                startIfModeDefault, shouldCollectAsyncNotedOp, message, shouldCollectMessage,
+                skipProxyOperation, proxyAttributionFlags, proxiedAttributionFlags,
+                attributionChainId);
+    }
+
+    @Override
+    public SyncNotedAppOp startProxyOperationWithState(@NonNull IBinder clientId, int code,
             @NonNull AttributionSourceState attributionSourceState, boolean startIfModeDefault,
             boolean shouldCollectAsyncNotedOp, String message, boolean shouldCollectMessage,
             boolean skipProxyOperation, @AttributionFlags int proxyAttributionFlags,
@@ -3347,10 +3475,19 @@ public class AppOpsService extends IAppOpsService.Stub {
             isRestricted = isOpRestrictedLocked(uid, code, packageName, attributionTag, pvr.bypass,
                     false);
             final int switchCode = AppOpsManager.opToSwitch(code);
+            // TODO(b/299330771): Check mode for the relevant device.
             // If there is a non-default per UID policy (we set UID op mode only if
             // non-default) it takes over, otherwise use the per package policy.
-            if (uidState.getUidMode(switchCode) != AppOpsManager.opToDefaultMode(switchCode)) {
-                final int uidMode = uidState.evalMode(code, uidState.getUidMode(switchCode));
+            if (mAppOpsCheckingService.getUidMode(
+                            uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, switchCode)
+                    != AppOpsManager.opToDefaultMode(switchCode)) {
+                final int uidMode =
+                        uidState.evalMode(
+                                code,
+                                mAppOpsCheckingService.getUidMode(
+                                        uidState.uid,
+                                        PERSISTENT_DEVICE_ID_DEFAULT,
+                                        switchCode));
                 if (!shouldStartForMode(uidMode, startIfModeDefault)) {
                     if (DEBUG) {
                         Slog.d(TAG, "startOperation: uid reject #" + uidMode + " for code "
@@ -3365,7 +3502,13 @@ public class AppOpsService extends IAppOpsService.Stub {
             } else {
                 final Op switchOp = switchCode != code ? getOpLocked(ops, switchCode, uid, true)
                         : op;
-                final int mode = switchOp.uidState.evalMode(switchOp.op, switchOp.getMode());
+                final int mode =
+                        switchOp.uidState.evalMode(
+                                switchOp.op,
+                                mAppOpsCheckingService.getPackageMode(
+                                        switchOp.packageName,
+                                        switchOp.op,
+                                        UserHandle.getUserId(switchOp.uid)));
                 if (mode != AppOpsManager.MODE_ALLOWED
                         && (!startIfModeDefault || mode != MODE_DEFAULT)) {
                     if (DEBUG) Slog.d(TAG, "startOperation: reject #" + mode + " for code "
@@ -3453,10 +3596,19 @@ public class AppOpsService extends IAppOpsService.Stub {
             isRestricted = isOpRestrictedLocked(uid, code, packageName, attributionTag, pvr.bypass,
                     false);
             final int switchCode = AppOpsManager.opToSwitch(code);
+            // TODO(b/299330771): Check mode for the relevant device.
             // If there is a non-default mode per UID policy (we set UID op mode only if
             // non-default) it takes over, otherwise use the per package policy.
-            if (uidState.getUidMode(switchCode) != AppOpsManager.opToDefaultMode(switchCode)) {
-                final int uidMode = uidState.evalMode(code, uidState.getUidMode(switchCode));
+            if (mAppOpsCheckingService.getUidMode(
+                            uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT, switchCode)
+                    != AppOpsManager.opToDefaultMode(switchCode)) {
+                final int uidMode =
+                        uidState.evalMode(
+                                code,
+                                mAppOpsCheckingService.getUidMode(
+                                        uidState.uid,
+                                        PERSISTENT_DEVICE_ID_DEFAULT,
+                                        switchCode));
                 if (!shouldStartForMode(uidMode, startIfModeDefault)) {
                     if (DEBUG) {
                         Slog.d(TAG, "startOperation: uid reject #" + uidMode + " for code "
@@ -3468,7 +3620,13 @@ public class AppOpsService extends IAppOpsService.Stub {
             } else {
                 final Op switchOp = switchCode != code ? getOpLocked(ops, switchCode, uid, true)
                         : op;
-                final int mode = switchOp.uidState.evalMode(switchOp.op, switchOp.getMode());
+                final int mode =
+                        switchOp.uidState.evalMode(
+                                switchOp.op,
+                                mAppOpsCheckingService.getPackageMode(
+                                        switchOp.packageName,
+                                        switchOp.op,
+                                        UserHandle.getUserId(switchOp.uid)));
                 if (mode != AppOpsManager.MODE_ALLOWED
                         && (!startIfModeDefault || mode != MODE_DEFAULT)) {
                     if (DEBUG) {
@@ -3494,11 +3652,18 @@ public class AppOpsService extends IAppOpsService.Stub {
     public void finishOperation(IBinder clientId, int code, int uid, String packageName,
             String attributionTag) {
         mCheckOpsDelegateDispatcher.finishOperation(clientId, code, uid, packageName,
-                attributionTag);
+                attributionTag, Context.DEVICE_ID_DEFAULT);
+    }
+
+    @Override
+    public void finishOperationForDevice(IBinder clientId, int code, int uid,
+            @Nullable String packageName, @Nullable String attributionTag, int virtualDeviceId) {
+        mCheckOpsDelegateDispatcher.finishOperation(clientId, code, uid, packageName,
+                attributionTag, virtualDeviceId);
     }
 
     private void finishOperationImpl(IBinder clientId, int code, int uid, String packageName,
-            String attributionTag) {
+            String attributionTag, int virtualDeviceId) {
         verifyIncomingUid(uid);
         verifyIncomingOp(code);
         if (!isIncomingPackageValid(packageName, UserHandle.getUserId(uid))) {
@@ -3513,8 +3678,16 @@ public class AppOpsService extends IAppOpsService.Stub {
         finishOperationUnchecked(clientId, code, uid, resolvedPackageName, attributionTag);
     }
 
+    /** @deprecated Use {@link #finishProxyOperationWithState} instead. */
     @Override
     public void finishProxyOperation(@NonNull IBinder clientId, int code,
+            @NonNull AttributionSource attributionSource, boolean skipProxyOperation) {
+        mCheckOpsDelegateDispatcher.finishProxyOperation(clientId, code, attributionSource,
+                skipProxyOperation);
+    }
+
+    @Override
+    public void finishProxyOperationWithState(@NonNull IBinder clientId, int code,
             @NonNull AttributionSourceState attributionSourceState, boolean skipProxyOperation) {
         AttributionSource attributionSource = new AttributionSource(attributionSourceState);
         mCheckOpsDelegateDispatcher.finishProxyOperation(clientId, code, attributionSource,
@@ -3885,6 +4058,11 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         return uidState;
+    }
+
+    private void createSandboxUidStateIfNotExistsForAppLocked(int uid) {
+        final int sandboxUid = Process.toSdkSandboxUid(uid);
+        getUidStateLocked(sandboxUid, true);
     }
 
     private void updateAppWidgetVisibility(SparseArray<String> uidPackageNames, boolean visible) {
@@ -5589,7 +5767,10 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
             for (int i=0; i<mUidStates.size(); i++) {
                 UidState uidState = mUidStates.valueAt(i);
-                final SparseIntArray opModes = uidState.getNonDefaultUidModes();
+                // TODO(b/299330771): Get modes for all devices.
+                final SparseIntArray opModes =
+                        mAppOpsCheckingService.getNonDefaultUidModes(
+                                uidState.uid, PERSISTENT_DEVICE_ID_DEFAULT);
                 final ArrayMap<String, Ops> pkgOps = uidState.pkgOps;
 
                 if (dumpWatchers || dumpHistory) {
@@ -5617,7 +5798,12 @@ public class AppOpsService extends IAppOpsService.Stub {
                             }
                             if (!hasMode) {
                                 for (int opi = 0; !hasMode && opi < ops.size(); opi++) {
-                                    if (ops.valueAt(opi).getMode() == dumpMode) {
+                                    final Op op = ops.valueAt(opi);
+                                    if (mAppOpsCheckingService.getPackageMode(
+                                                    op.packageName,
+                                                    op.op,
+                                                    UserHandle.getUserId(op.uid))
+                                            == dumpMode) {
                                         hasMode = true;
                                     }
                                 }
@@ -5668,7 +5854,12 @@ public class AppOpsService extends IAppOpsService.Stub {
                         if (dumpOp >= 0 && dumpOp != opCode) {
                             continue;
                         }
-                        if (dumpMode >= 0 && dumpMode != op.getMode()) {
+                        if (dumpMode >= 0
+                                && dumpMode
+                                        != mAppOpsCheckingService.getPackageMode(
+                                                op.packageName,
+                                                op.op,
+                                                UserHandle.getUserId(op.uid))) {
                             continue;
                         }
                         if (!printedPackage) {
@@ -5676,14 +5867,25 @@ public class AppOpsService extends IAppOpsService.Stub {
                             printedPackage = true;
                         }
                         pw.print("      "); pw.print(AppOpsManager.opToName(opCode));
-                        pw.print(" ("); pw.print(AppOpsManager.modeToName(op.getMode()));
+                        pw.print(" (");
+                        pw.print(
+                                AppOpsManager.modeToName(
+                                        mAppOpsCheckingService.getPackageMode(
+                                                op.packageName,
+                                                op.op,
+                                                UserHandle.getUserId(op.uid))));
                         final int switchOp = AppOpsManager.opToSwitch(opCode);
                         if (switchOp != opCode) {
                             pw.print(" / switch ");
                             pw.print(AppOpsManager.opToName(switchOp));
                             final Op switchObj = ops.get(switchOp);
-                            int mode = switchObj == null
-                                    ? AppOpsManager.opToDefaultMode(switchOp) : switchObj.getMode();
+                            int mode =
+                                    switchObj == null
+                                            ? AppOpsManager.opToDefaultMode(switchOp)
+                                            : mAppOpsCheckingService.getPackageMode(
+                                                    switchObj.packageName,
+                                                    switchObj.op,
+                                                    UserHandle.getUserId(switchObj.uid));
                             pw.print("="); pw.print(AppOpsManager.modeToName(mode));
                         }
                         pw.println("): ");
@@ -5817,7 +6019,13 @@ public class AppOpsService extends IAppOpsService.Stub {
         for (int pkgNum = 0; pkgNum < numPkgOps; pkgNum++) {
             Ops ops = uidState.pkgOps.valueAt(pkgNum);
             Op op = ops != null ? ops.get(code) : null;
-            if (op == null || (op.getMode() != MODE_ALLOWED && op.getMode() != MODE_FOREGROUND)) {
+            if (op == null) {
+                continue;
+            }
+            final int mode =
+                    mAppOpsCheckingService.getPackageMode(
+                            op.packageName, op.op, UserHandle.getUserId(op.uid));
+            if (mode != MODE_ALLOWED && mode != MODE_FOREGROUND) {
                 continue;
             }
             int numAttrTags = op.mAttributions.size();
@@ -6637,25 +6845,28 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         public int checkOperation(int code, int uid, String packageName,
-                @Nullable String attributionTag, boolean raw) {
+                @Nullable String attributionTag, int virtualDeviceId, boolean raw) {
             if (mPolicy != null) {
                 if (mCheckOpsDelegate != null) {
-                    return mPolicy.checkOperation(code, uid, packageName, attributionTag, raw,
-                            this::checkDelegateOperationImpl);
+                    return mPolicy.checkOperation(code, uid, packageName, attributionTag,
+                            virtualDeviceId, raw, this::checkDelegateOperationImpl
+                    );
                 } else {
-                    return mPolicy.checkOperation(code, uid, packageName, attributionTag, raw,
-                            AppOpsService.this::checkOperationImpl);
+                    return mPolicy.checkOperation(code, uid, packageName, attributionTag,
+                            virtualDeviceId, raw, AppOpsService.this::checkOperationImpl
+                    );
                 }
             } else if (mCheckOpsDelegate != null) {
-                return checkDelegateOperationImpl(code, uid, packageName, attributionTag, raw);
+                return checkDelegateOperationImpl(code, uid, packageName, attributionTag,
+                        virtualDeviceId, raw);
             }
-            return checkOperationImpl(code, uid, packageName, attributionTag, raw);
+            return checkOperationImpl(code, uid, packageName, attributionTag, virtualDeviceId, raw);
         }
 
         private int checkDelegateOperationImpl(int code, int uid, String packageName,
-                @Nullable String attributionTag, boolean raw) {
-            return mCheckOpsDelegate.checkOperation(code, uid, packageName, attributionTag, raw,
-                    AppOpsService.this::checkOperationImpl);
+                 @Nullable String attributionTag, int virtualDeviceId, boolean raw) {
+            return mCheckOpsDelegate.checkOperation(code, uid, packageName, attributionTag,
+                    virtualDeviceId, raw, AppOpsService.this::checkOperationImpl);
         }
 
         public int checkAudioOperation(int code, int usage, int uid, String packageName) {
@@ -6680,33 +6891,36 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         public SyncNotedAppOp noteOperation(int code, int uid, String packageName,
-                String attributionTag, boolean shouldCollectAsyncNotedOp, String message,
-                boolean shouldCollectMessage) {
+                String attributionTag, int virtualDeviceId, boolean shouldCollectAsyncNotedOp,
+                String message, boolean shouldCollectMessage) {
             if (mPolicy != null) {
                 if (mCheckOpsDelegate != null) {
                     return mPolicy.noteOperation(code, uid, packageName, attributionTag,
-                            shouldCollectAsyncNotedOp, message, shouldCollectMessage,
-                            this::noteDelegateOperationImpl);
+                            virtualDeviceId, shouldCollectAsyncNotedOp, message,
+                            shouldCollectMessage, this::noteDelegateOperationImpl
+                    );
                 } else {
                     return mPolicy.noteOperation(code, uid, packageName, attributionTag,
-                            shouldCollectAsyncNotedOp, message, shouldCollectMessage,
-                            AppOpsService.this::noteOperationImpl);
+                            virtualDeviceId, shouldCollectAsyncNotedOp, message,
+                            shouldCollectMessage, AppOpsService.this::noteOperationImpl
+                    );
                 }
             } else if (mCheckOpsDelegate != null) {
-                return noteDelegateOperationImpl(code, uid, packageName,
-                        attributionTag, shouldCollectAsyncNotedOp, message, shouldCollectMessage);
+                return noteDelegateOperationImpl(code, uid, packageName, attributionTag,
+                        virtualDeviceId, shouldCollectAsyncNotedOp, message, shouldCollectMessage);
             }
             return noteOperationImpl(code, uid, packageName, attributionTag,
-                    shouldCollectAsyncNotedOp, message, shouldCollectMessage);
+                    virtualDeviceId, shouldCollectAsyncNotedOp, message, shouldCollectMessage);
         }
 
         private SyncNotedAppOp noteDelegateOperationImpl(int code, int uid,
-                @Nullable String packageName, @Nullable String featureId,
+                @Nullable String packageName, @Nullable String featureId, int virtualDeviceId,
                 boolean shouldCollectAsyncNotedOp, @Nullable String message,
                 boolean shouldCollectMessage) {
             return mCheckOpsDelegate.noteOperation(code, uid, packageName, featureId,
-                    shouldCollectAsyncNotedOp, message, shouldCollectMessage,
-                    AppOpsService.this::noteOperationImpl);
+                    virtualDeviceId, shouldCollectAsyncNotedOp, message, shouldCollectMessage,
+                    AppOpsService.this::noteOperationImpl
+            );
         }
 
         public SyncNotedAppOp noteProxyOperation(int code, AttributionSource attributionSource,
@@ -6741,40 +6955,45 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         public SyncNotedAppOp startOperation(IBinder token, int code, int uid,
-                @Nullable String packageName, @NonNull String attributionTag,
+                @Nullable String packageName, @NonNull String attributionTag, int virtualDeviceId,
                 boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp,
                 @Nullable String message, boolean shouldCollectMessage,
                 @AttributionFlags int attributionFlags, int attributionChainId) {
             if (mPolicy != null) {
                 if (mCheckOpsDelegate != null) {
-                    return mPolicy.startOperation(token, code, uid, packageName,
-                            attributionTag, startIfModeDefault, shouldCollectAsyncNotedOp, message,
+                    return mPolicy.startOperation(token, code, uid, packageName, attributionTag,
+                            virtualDeviceId, startIfModeDefault, shouldCollectAsyncNotedOp, message,
                             shouldCollectMessage, attributionFlags, attributionChainId,
-                            this::startDelegateOperationImpl);
+                            this::startDelegateOperationImpl
+                    );
                 } else {
                     return mPolicy.startOperation(token, code, uid, packageName, attributionTag,
-                            startIfModeDefault, shouldCollectAsyncNotedOp, message,
+                            virtualDeviceId, startIfModeDefault, shouldCollectAsyncNotedOp, message,
                             shouldCollectMessage, attributionFlags, attributionChainId,
-                            AppOpsService.this::startOperationImpl);
+                            AppOpsService.this::startOperationImpl
+                    );
                 }
             } else if (mCheckOpsDelegate != null) {
                 return startDelegateOperationImpl(token, code, uid, packageName, attributionTag,
-                        startIfModeDefault, shouldCollectAsyncNotedOp, message,
-                        shouldCollectMessage, attributionFlags, attributionChainId);
+                        virtualDeviceId, startIfModeDefault, shouldCollectAsyncNotedOp, message,
+                        shouldCollectMessage, attributionFlags, attributionChainId
+                );
             }
             return startOperationImpl(token, code, uid, packageName, attributionTag,
-                    startIfModeDefault, shouldCollectAsyncNotedOp, message, shouldCollectMessage,
-                    attributionFlags, attributionChainId);
+                    virtualDeviceId, startIfModeDefault, shouldCollectAsyncNotedOp, message,
+                    shouldCollectMessage, attributionFlags, attributionChainId
+            );
         }
 
         private SyncNotedAppOp startDelegateOperationImpl(IBinder token, int code, int uid,
                 @Nullable String packageName, @Nullable String attributionTag,
-                boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp, String message,
-                boolean shouldCollectMessage, @AttributionFlags int attributionFlags,
-                int attributionChainId) {
+                int virtualDeviceId, boolean startIfModeDefault, boolean shouldCollectAsyncNotedOp,
+                String message, boolean shouldCollectMessage,
+                @AttributionFlags int attributionFlags, int attributionChainId) {
             return mCheckOpsDelegate.startOperation(token, code, uid, packageName, attributionTag,
-                    startIfModeDefault, shouldCollectAsyncNotedOp, message, shouldCollectMessage,
-                    attributionFlags, attributionChainId, AppOpsService.this::startOperationImpl);
+                    virtualDeviceId, startIfModeDefault, shouldCollectAsyncNotedOp, message,
+                    shouldCollectMessage, attributionFlags, attributionChainId,
+                    AppOpsService.this::startOperationImpl);
         }
 
         public SyncNotedAppOp startProxyOperation(@NonNull IBinder clientId, int code,
@@ -6819,26 +7038,28 @@ public class AppOpsService extends IAppOpsService.Stub {
         }
 
         public void finishOperation(IBinder clientId, int code, int uid, String packageName,
-                String attributionTag) {
+                String attributionTag, int virtualDeviceId) {
             if (mPolicy != null) {
                 if (mCheckOpsDelegate != null) {
                     mPolicy.finishOperation(clientId, code, uid, packageName, attributionTag,
-                            this::finishDelegateOperationImpl);
+                            virtualDeviceId, this::finishDelegateOperationImpl);
                 } else {
                     mPolicy.finishOperation(clientId, code, uid, packageName, attributionTag,
-                            AppOpsService.this::finishOperationImpl);
+                            virtualDeviceId, AppOpsService.this::finishOperationImpl);
                 }
             } else if (mCheckOpsDelegate != null) {
-                finishDelegateOperationImpl(clientId, code, uid, packageName, attributionTag);
+                finishDelegateOperationImpl(clientId, code, uid, packageName, attributionTag,
+                        virtualDeviceId);
             } else {
-                finishOperationImpl(clientId, code, uid, packageName, attributionTag);
+                finishOperationImpl(clientId, code, uid, packageName, attributionTag,
+                        virtualDeviceId);
             }
         }
 
         private void finishDelegateOperationImpl(IBinder clientId, int code, int uid,
-                String packageName, String attributionTag) {
+                String packageName, String attributionTag, int virtualDeviceId) {
             mCheckOpsDelegate.finishOperation(clientId, code, uid, packageName, attributionTag,
-                    AppOpsService.this::finishOperationImpl);
+                    virtualDeviceId, AppOpsService.this::finishOperationImpl);
         }
 
         public void finishProxyOperation(@NonNull IBinder clientId, int code,

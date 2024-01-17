@@ -1,3 +1,18 @@
+// Device Idle
+aconfig_declarations {
+    name: "service-deviceidle.flags-aconfig",
+    package: "com.android.server.deviceidle",
+    srcs: [
+        "device_idle.aconfig",
+    ],
+}
+
+java_aconfig_library {
+    name: "service-jobscheduler-deviceidle.flags-aconfig-java",
+    aconfig_declarations: "service-deviceidle.flags-aconfig",
+    visibility: ["//frameworks/base:__subpackages__"],
+}
+
 // JobScheduler
 aconfig_declarations {
     name: "service-job.flags-aconfig",
@@ -10,20 +25,5 @@ aconfig_declarations {
 java_aconfig_library {
     name: "service-jobscheduler-job.flags-aconfig-java",
     aconfig_declarations: "service-job.flags-aconfig",
-    defaults: ["framework-minus-apex-aconfig-java-defaults"],
-    visibility: ["//frameworks/base:__subpackages__"],
-}
-
-service_jobscheduler_aconfig_srcjars = [
-    ":service-jobscheduler-job.flags-aconfig-java{.generated_srcjars}",
-]
-
-// Aconfig declarations and libraries for the core framework
-java_defaults {
-    name: "service-jobscheduler-aconfig-libraries",
-    // Add java_aconfig_libraries to here to add them to the core framework
-    srcs: service_jobscheduler_aconfig_srcjars,
-    // Add aconfig-annotations-lib as a dependency for the optimization
-    libs: ["aconfig-annotations-lib"],
     visibility: ["//frameworks/base:__subpackages__"],
 }

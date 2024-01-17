@@ -17,6 +17,8 @@
 package com.android.credentialmanager.ui.screens.single.password
 
 import android.content.Intent
+import android.credentials.ui.ProviderPendingIntentResponse
+import android.credentials.ui.UserSelectionDialogResult
 import android.util.Log
 import androidx.activity.result.IntentSenderRequest
 import androidx.annotation.MainThread
@@ -24,28 +26,25 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.android.credentialmanager.TAG
 import com.android.credentialmanager.ktx.getIntentSenderRequest
-import com.android.credentialmanager.model.Password
 import com.android.credentialmanager.model.Request
-import com.android.credentialmanager.repository.PasswordRepository
-import com.android.credentialmanager.repository.RequestRepository
+import com.android.credentialmanager.client.CredentialManagerClient
+import com.android.credentialmanager.model.get.CredentialEntryInfo
 import com.android.credentialmanager.ui.model.PasswordUiModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class SinglePasswordScreenViewModel @Inject constructor(
-    private val requestRepository: RequestRepository,
-    private val passwordRepository: PasswordRepository,
+    private val credentialManagerClient: CredentialManagerClient,
 ) : ViewModel() {
 
     private var initializeCalled = false
 
     private lateinit var requestGet: Request.Get
-    private lateinit var password: Password
+    private lateinit var entryInfo: CredentialEntryInfo
 
     private val _uiState =
         MutableStateFlow<SinglePasswordScreenUiState>(SinglePasswordScreenUiState.Idle)
@@ -57,21 +56,22 @@ class SinglePasswordScreenViewModel @Inject constructor(
         initializeCalled = true
 
         viewModelScope.launch {
-            val request = requestRepository.requests.first()
-            Log.d(TAG, "request: $request")
+            val request = credentialManagerClient.requests.value
+            Log.d(TAG, "request: $request, client instance: $credentialManagerClient")
 
             if (request !is Request.Get) {
                 _uiState.value = SinglePasswordScreenUiState.Error
             } else {
                 requestGet = request
-                if (requestGet.passwordEntries.isEmpty()) {
+
+                if (requestGet.providerInfos.all { it.credentialEntryList.isEmpty() }) {
                     Log.d(TAG, "Empty passwordEntries")
                     _uiState.value = SinglePasswordScreenUiState.Error
                 } else {
-                    password = requestGet.passwordEntries.first()
+                    entryInfo = requestGet.providerInfos.first().credentialEntryList.first()
                     _uiState.value = SinglePasswordScreenUiState.Loaded(
                         PasswordUiModel(
-                            email = password.passwordCredentialEntry.username.toString(),
+                            email = entryInfo.userName,
                         )
                     )
                 }
@@ -85,7 +85,7 @@ class SinglePasswordScreenViewModel @Inject constructor(
 
     fun onOKClick() {
         _uiState.value = SinglePasswordScreenUiState.PasswordSelected(
-            intentSenderRequest = password.getIntentSenderRequest()
+            intentSenderRequest = entryInfo.getIntentSenderRequest()
         )
     }
 
@@ -93,16 +93,15 @@ class SinglePasswordScreenViewModel @Inject constructor(
         resultCode: Int? = null,
         resultData: Intent? = null,
     ) {
-        viewModelScope.launch {
-            passwordRepository.selectPassword(
-                password = password,
-                request = requestGet,
-                resultCode = resultCode,
-                resultData = resultData
-            )
-
-            _uiState.value = SinglePasswordScreenUiState.Completed
-        }
+        val userSelectionDialogResult = UserSelectionDialogResult(
+            requestGet.token,
+            entryInfo.providerId,
+            entryInfo.entryKey,
+            entryInfo.entrySubkey,
+            if (resultCode != null) ProviderPendingIntentResponse(resultCode, resultData) else null
+        )
+        credentialManagerClient.sendResult(userSelectionDialogResult)
+        _uiState.value = SinglePasswordScreenUiState.Completed
     }
 }
 
@@ -110,7 +109,7 @@ sealed class SinglePasswordScreenUiState {
     data object Idle : SinglePasswordScreenUiState()
     data class Loaded(val passwordUiModel: PasswordUiModel) : SinglePasswordScreenUiState()
     data class PasswordSelected(
-        val intentSenderRequest: IntentSenderRequest
+        val intentSenderRequest: IntentSenderRequest?
     ) : SinglePasswordScreenUiState()
 
     data object Cancel : SinglePasswordScreenUiState()

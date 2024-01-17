@@ -205,7 +205,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
     private boolean mAsync;
     private BroadcastOptions mBroadcastOptions;
     private boolean mShowSplashScreen;
-    private boolean mDismissKeyguard;
+    private boolean mDismissKeyguardIfInsecure;
 
     final boolean mDumping;
 
@@ -552,8 +552,9 @@ final class ActivityManagerShellCommand extends ShellCommand {
                     mAsync = true;
                 } else if (opt.equals("--splashscreen-show-icon")) {
                     mShowSplashScreen = true;
-                } else if (opt.equals("--dismiss-keyguard")) {
-                    mDismissKeyguard = true;
+                } else if (opt.equals("--dismiss-keyguard-if-insecure")
+                      || opt.equals("--dismiss-keyguard")) {
+                    mDismissKeyguardIfInsecure = true;
                 } else {
                     return false;
                 }
@@ -714,11 +715,11 @@ final class ActivityManagerShellCommand extends ShellCommand {
                 }
                 options.setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_ICON);
             }
-            if (mDismissKeyguard) {
+            if (mDismissKeyguardIfInsecure) {
                 if (options == null) {
                     options = ActivityOptions.makeBasic();
                 }
-                options.setDismissKeyguard();
+                options.setDismissKeyguardIfInsecure();
             }
             if (mWaitOption) {
                 result = mInternal.startActivityAndWait(null, SHELL_PACKAGE_NAME, null, intent,
@@ -1179,7 +1180,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
                 synchronized (mInternal.mOomAdjuster.mCachedAppOptimizer.mFreezerLock) {
                     app.mOptRecord.setFreezeSticky(isSticky);
                     mInternal.mOomAdjuster.mCachedAppOptimizer.unfreezeAppInternalLSP(app, 0,
-                            false);
+                            true);
                 }
             }
         }
@@ -1361,7 +1362,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
             }
             userId = user.id;
         }
-        mInternal.mProcessList.mAppStartInfoTracker
+        mInternal.mProcessList.getAppStartInfoTracker()
                 .clearHistoryProcessStartInfo(packageName, userId);
         return 0;
     }
@@ -4157,7 +4158,7 @@ final class ActivityManagerShellCommand extends ShellCommand {
             pw.println("      -D: enable debugging");
             pw.println("      --suspend: debugged app suspend threads at startup (only with -D)");
             pw.println("      -N: enable native debugging");
-            pw.println("      -W: wait for launch to complete");
+            pw.println("      -W: wait for launch to complete (initial display)");
             pw.println("      --start-profiler <FILE>: start profiler and send results to <FILE>");
             pw.println("      --sampling INTERVAL: use sample profiling with INTERVAL microseconds");
             pw.println("          between samples (use with --start-profiler)");

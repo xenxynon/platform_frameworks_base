@@ -26,21 +26,21 @@ import androidx.constraintlayout.widget.ConstraintSet.END
 import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
 import androidx.constraintlayout.widget.ConstraintSet.START
 import androidx.constraintlayout.widget.ConstraintSet.TOP
+import com.android.systemui.Flags.migrateClocksToBlueprint
 import com.android.systemui.common.ui.ConfigurationState
 import com.android.systemui.flags.FeatureFlagsClassic
-import com.android.systemui.flags.Flags
+import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
 import com.android.systemui.keyguard.shared.model.KeyguardSection
+import com.android.systemui.keyguard.ui.viewmodel.KeyguardSmartspaceViewModel
 import com.android.systemui.res.R
-import com.android.systemui.shade.NotificationPanelView
 import com.android.systemui.statusbar.notification.icon.ui.viewbinder.AlwaysOnDisplayNotificationIconViewStore
 import com.android.systemui.statusbar.notification.icon.ui.viewbinder.NotificationIconContainerViewBinder
+import com.android.systemui.statusbar.notification.icon.ui.viewbinder.StatusBarIconViewBindingFailureTracker
 import com.android.systemui.statusbar.notification.icon.ui.viewmodel.NotificationIconContainerAlwaysOnDisplayViewModel
 import com.android.systemui.statusbar.notification.shared.NotificationIconContainerRefactor
-import com.android.systemui.statusbar.phone.DozeParameters
 import com.android.systemui.statusbar.phone.NotificationIconAreaController
 import com.android.systemui.statusbar.phone.NotificationIconContainer
-import com.android.systemui.statusbar.phone.ScreenOffAnimationController
-import com.android.systemui.statusbar.policy.ConfigurationController
+import com.android.systemui.statusbar.ui.SystemBarUtilsState
 import javax.inject.Inject
 import kotlinx.coroutines.DisposableHandle
 
@@ -49,14 +49,13 @@ class AodNotificationIconsSection
 constructor(
     private val context: Context,
     private val configurationState: ConfigurationState,
-    private val configurationController: ConfigurationController,
-    private val dozeParameters: DozeParameters,
     private val featureFlags: FeatureFlagsClassic,
+    private val iconBindingFailureTracker: StatusBarIconViewBindingFailureTracker,
     private val nicAodViewModel: NotificationIconContainerAlwaysOnDisplayViewModel,
     private val nicAodIconViewStore: AlwaysOnDisplayNotificationIconViewStore,
-    private val notificationPanelView: NotificationPanelView,
     private val notificationIconAreaController: NotificationIconAreaController,
-    private val screenOffAnimationController: ScreenOffAnimationController,
+    private val smartspaceViewModel: KeyguardSmartspaceViewModel,
+    private val systemBarUtilsState: SystemBarUtilsState,
 ) : KeyguardSection() {
 
     private var nicBindingDisposable: DisposableHandle? = null
@@ -64,7 +63,7 @@ constructor(
     private lateinit var nic: NotificationIconContainer
 
     override fun addViews(constraintLayout: ConstraintLayout) {
-        if (!featureFlags.isEnabled(Flags.MIGRATE_KEYGUARD_STATUS_VIEW)) {
+        if (!KeyguardShadeMigrationNssl.isEnabled) {
             return
         }
         nic =
@@ -83,22 +82,19 @@ constructor(
     }
 
     override fun bindData(constraintLayout: ConstraintLayout) {
-        if (!featureFlags.isEnabled(Flags.MIGRATE_KEYGUARD_STATUS_VIEW)) {
+        if (!KeyguardShadeMigrationNssl.isEnabled) {
             return
         }
 
         if (NotificationIconContainerRefactor.isEnabled) {
-            nic.setOnLockScreen(true)
             nicBindingDisposable?.dispose()
             nicBindingDisposable =
-                NotificationIconContainerViewBinder.bind(
+                NotificationIconContainerViewBinder.bindWhileAttached(
                     nic,
                     nicAodViewModel,
                     configurationState,
-                    configurationController,
-                    dozeParameters,
-                    featureFlags,
-                    screenOffAnimationController,
+                    systemBarUtilsState,
+                    iconBindingFailureTracker,
                     nicAodIconViewStore,
                 )
         } else {
@@ -107,7 +103,7 @@ constructor(
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
-        if (!featureFlags.isEnabled(Flags.MIGRATE_KEYGUARD_STATUS_VIEW)) {
+        if (!KeyguardShadeMigrationNssl.isEnabled) {
             return
         }
         val bottomMargin =
@@ -121,9 +117,19 @@ constructor(
             } else {
                 BOTTOM
             }
-
         constraintSet.apply {
-            connect(nicId, TOP, R.id.keyguard_status_view, topAlignment, bottomMargin)
+            if (migrateClocksToBlueprint()) {
+                connect(
+                    nicId,
+                    TOP,
+                    smartspaceViewModel.smartspaceViewId,
+                    topAlignment,
+                    bottomMargin
+                )
+                setGoneMargin(nicId, topAlignment, bottomMargin)
+            } else {
+                connect(nicId, TOP, R.id.keyguard_status_view, topAlignment, bottomMargin)
+            }
             connect(nicId, START, PARENT_ID, START)
             connect(nicId, END, PARENT_ID, END)
             constrainHeight(

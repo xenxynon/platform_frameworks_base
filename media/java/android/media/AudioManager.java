@@ -19,11 +19,14 @@ package android.media;
 import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_DEFAULT;
 import static android.companion.virtual.VirtualDeviceParams.POLICY_TYPE_AUDIO;
 import static android.content.Context.DEVICE_ID_DEFAULT;
-
-import static com.android.media.audio.flags.Flags.autoPublicVolumeApiHardening;
+import static android.media.audio.Flags.autoPublicVolumeApiHardening;
+import static android.media.audio.Flags.automaticBtDeviceType;
+import static android.media.audio.Flags.FLAG_FOCUS_FREEZE_TEST_API;
+import static android.media.audiopolicy.Flags.FLAG_ENABLE_FADE_MANAGER_CONFIGURATION;
 
 import android.Manifest;
 import android.annotation.CallbackExecutor;
+import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
 import android.annotation.NonNull;
@@ -49,6 +52,7 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes.AttributeSystemUsage;
 import android.media.CallbackUtil.ListenerInfo;
 import android.media.audiopolicy.AudioPolicy;
@@ -684,6 +688,7 @@ public class AudioManager {
             FLAG_ABSOLUTE_VOLUME,
     })
     @Retention(RetentionPolicy.SOURCE)
+    // TODO(308698465) remove due to potential conflict with the new flags class
     public @interface Flags {}
 
     /**
@@ -900,6 +905,7 @@ public class AudioManager {
     @UnsupportedAppUsage
     public AudioManager(Context context) {
         setContext(context);
+        initPlatform();
     }
 
     private Context getContext() {
@@ -913,6 +919,9 @@ public class AudioManager {
     }
 
     private void setContext(Context context) {
+        if (context == null) {
+            return;
+        }
         mOriginalContextDeviceId = context.getDeviceId();
         mApplicationContext = context.getApplicationContext();
         if (mApplicationContext != null) {
@@ -1062,7 +1071,7 @@ public class AudioManager {
      * @see #isVolumeFixed()
      */
     public void adjustVolume(int direction, @PublicVolumeFlags int flags) {
-        if (autoPublicVolumeApiHardening()) {
+        if (applyAutoHardening()) {
             final IAudioService service = getService();
             try {
                 service.adjustVolume(direction, flags);
@@ -1101,7 +1110,7 @@ public class AudioManager {
      */
     public void adjustSuggestedStreamVolume(int direction, int suggestedStreamType,
             @PublicVolumeFlags int flags) {
-        if (autoPublicVolumeApiHardening()) {
+        if (applyAutoHardening()) {
             final IAudioService service = getService();
             try {
                 service.adjustSuggestedStreamVolume(direction, suggestedStreamType, flags);
@@ -4775,6 +4784,7 @@ public class AudioManager {
      * @return the list of UIDs, can be empty when no app is being ducked.
      */
     @TestApi
+    @FlaggedApi(FLAG_FOCUS_FREEZE_TEST_API)
     @RequiresPermission("android.permission.QUERY_AUDIO_STATE")
     public @NonNull List<Integer> getFocusDuckedUidsForTest() {
         try {
@@ -4790,6 +4800,7 @@ public class AudioManager {
      * @return the fade out duration in ms
      */
     @TestApi
+    @FlaggedApi(FLAG_FOCUS_FREEZE_TEST_API)
     @RequiresPermission("android.permission.QUERY_AUDIO_STATE")
     public long getFocusFadeOutDurationForTest() {
         try {
@@ -4806,6 +4817,7 @@ public class AudioManager {
      * @return the time gap after a fade-out completion on focus loss, and fade-in start in ms.
      */
     @TestApi
+    @FlaggedApi(FLAG_FOCUS_FREEZE_TEST_API)
     @RequiresPermission("android.permission.QUERY_AUDIO_STATE")
     public long getFocusUnmuteDelayAfterFadeOutForTest() {
         try {
@@ -4832,6 +4844,7 @@ public class AudioManager {
      *     in a proper state with a predictable behavior for audio focus management.
      */
     @TestApi
+    @FlaggedApi(FLAG_FOCUS_FREEZE_TEST_API)
     @RequiresPermission("Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED")
     public boolean enterAudioFocusFreezeForTest(@NonNull List<Integer> exemptedUids) {
         Objects.requireNonNull(exemptedUids);
@@ -4850,6 +4863,7 @@ public class AudioManager {
      *     such as the freeze already having ended, or not started.
      */
     @TestApi
+    @FlaggedApi(FLAG_FOCUS_FREEZE_TEST_API)
     @RequiresPermission("Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED")
     public boolean exitAudioFocusFreezeForTest() {
         try {
@@ -5125,6 +5139,71 @@ public class AudioManager {
         final IAudioService service = getService();
         try {
             return service.dispatchFocusChange(afi, focusChange, ap.cb());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Notifies an application with a focus listener of gain or loss of audio focus
+     *
+     * <p>This is similar to {@link #dispatchAudioFocusChange(AudioFocusInfo, int, AudioPolicy)} but
+     * with additional functionality  of fade. The players of the application with  audio focus
+     * change, provided they meet the active {@link FadeManagerConfiguration} requirements, are
+     * faded before dispatching the callback to the application. For example, players of the
+     * application losing audio focus will be faded out, whereas players of the application gaining
+     * audio focus will be faded in, if needed.
+     *
+     * <p>The applicability of fade is decided against the supplied active {@link AudioFocusInfo}.
+     * This list cannot be {@code null}. The list can be empty if no other active
+     * {@link AudioFocusInfo} available at the time of the dispatch.
+     *
+     * <p>The {@link FadeManagerConfiguration} supplied here is prioritized over existing fade
+     * configurations. If none supplied, either the {@link FadeManagerConfiguration} set through
+     * {@link AudioPolicy} or the default will be used to determine the fade properties.
+     *
+     * <p>This method can only be used by owners of an {@link AudioPolicy} configured with
+     * {@link AudioPolicy.Builder#setIsAudioFocusPolicy(boolean)} set to true.
+     *
+     * @param afi the recipient of the focus change, that has previously requested audio focus, and
+     *     that was received by the {@code AudioPolicy} through
+     *     {@link AudioPolicy.AudioPolicyFocusListener#onAudioFocusRequest(AudioFocusInfo, int)}
+     * @param focusChange one of focus gain types ({@link #AUDIOFOCUS_GAIN},
+     *     {@link #AUDIOFOCUS_GAIN_TRANSIENT}, {@link #AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK} or
+     *     {@link #AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE})
+     *     or one of the focus loss types ({@link AudioManager#AUDIOFOCUS_LOSS},
+     *     {@link AudioManager#AUDIOFOCUS_LOSS_TRANSIENT},
+     *     or {@link AudioManager#AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK}).
+     *     <br>For the focus gain, the change type should be the same as the app requested
+     * @param ap a valid registered {@link AudioPolicy} configured as a focus policy.
+     * @param otherActiveAfis active {@link AudioFocusInfo} that are granted audio focus at the time
+     *     of dispatch
+     * @param transientFadeMgrConfig {@link FadeManagerConfiguration} that will be used for fading
+     *     players resulting from this dispatch. This is a transient configuration that is only
+     *     valid for this focus change and shall be discarded after processing this request.
+     * @return {@link #AUDIOFOCUS_REQUEST_FAILED} if the focus client didn't have a listener or if
+     *     there was an error sending the request, or {@link #AUDIOFOCUS_REQUEST_GRANTED} if the
+     *     dispatch was successfully sent, or {@link #AUDIOFOCUS_REQUEST_DELAYED} if
+     *     the request was successful but the dispatch of focus change was delayed due to a fade
+     *     operation.
+     * @throws NullPointerException if the {@link AudioFocusInfo} or {@link AudioPolicy} or list of
+     *     other active {@link AudioFocusInfo} are {@code null}.
+     * @hide
+     */
+    @FlaggedApi(FLAG_ENABLE_FADE_MANAGER_CONFIGURATION)
+    @SystemApi
+    @RequiresPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)
+    public int dispatchAudioFocusChangeWithFade(@NonNull AudioFocusInfo afi, int focusChange,
+            @NonNull AudioPolicy ap, @NonNull List<AudioFocusInfo> otherActiveAfis,
+            @Nullable FadeManagerConfiguration transientFadeMgrConfig) {
+        Objects.requireNonNull(afi, "AudioFocusInfo cannot be null");
+        Objects.requireNonNull(ap, "AudioPolicy cannot be null");
+        Objects.requireNonNull(otherActiveAfis, "Other active AudioFocusInfo list cannot be null");
+
+        IAudioService service = getService();
+        try {
+            return service.dispatchFocusChangeWithFade(afi, focusChange, ap.cb(), otherActiveAfis,
+                    transientFadeMgrConfig);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -6145,7 +6224,7 @@ public class AudioManager {
      */
     public static boolean isOutputDevice(int device)
     {
-        return (device & AudioSystem.DEVICE_BIT_IN) == 0;
+        return !AudioSystem.isInputDevice(device);
     }
 
     /**
@@ -6154,7 +6233,7 @@ public class AudioManager {
      */
     public static boolean isInputDevice(int device)
     {
-        return (device & AudioSystem.DEVICE_BIT_IN) == AudioSystem.DEVICE_BIT_IN;
+        return AudioSystem.isInputDevice(device);
     }
 
 
@@ -7214,10 +7293,14 @@ public class AudioManager {
      * Sets the audio device type of a Bluetooth device given its MAC address
      */
     @RequiresPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)
-    public void setBluetoothAudioDeviceCategory(@NonNull String address, boolean isBle,
+    public void setBluetoothAudioDeviceCategory_legacy(@NonNull String address, boolean isBle,
             @AudioDeviceCategory int btAudioDeviceType) {
+        if (automaticBtDeviceType()) {
+            // do nothing
+            return;
+        }
         try {
-            getService().setBluetoothAudioDeviceCategory(address, isBle, btAudioDeviceType);
+            getService().setBluetoothAudioDeviceCategory_legacy(address, isBle, btAudioDeviceType);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -7229,9 +7312,67 @@ public class AudioManager {
      */
     @RequiresPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)
     @AudioDeviceCategory
-    public int getBluetoothAudioDeviceCategory(@NonNull String address, boolean isBle) {
+    public int getBluetoothAudioDeviceCategory_legacy(@NonNull String address, boolean isBle) {
+        if (automaticBtDeviceType()) {
+            return AUDIO_DEVICE_CATEGORY_UNKNOWN;
+        }
         try {
-            return getService().getBluetoothAudioDeviceCategory(address, isBle);
+            return getService().getBluetoothAudioDeviceCategory_legacy(address, isBle);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     * Sets the audio device type of a Bluetooth device given its MAC address
+     *
+     * @return {@code true} if the device type was set successfully. If the
+     *         audio device type was automatically identified this method will
+     *         return {@code false}.
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)
+    public boolean setBluetoothAudioDeviceCategory(@NonNull String address,
+            @AudioDeviceCategory int btAudioDeviceCategory) {
+        if (!automaticBtDeviceType()) {
+            return false;
+        }
+        try {
+            return getService().setBluetoothAudioDeviceCategory(address, btAudioDeviceCategory);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     * Gets the audio device type of a Bluetooth device given its MAC address
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)
+    @AudioDeviceCategory
+    public int getBluetoothAudioDeviceCategory(@NonNull String address) {
+        if (!automaticBtDeviceType()) {
+            return AUDIO_DEVICE_CATEGORY_UNKNOWN;
+        }
+        try {
+            return getService().getBluetoothAudioDeviceCategory(address);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * @hide
+     * Returns {@code true} if the audio device type of a Bluetooth device can
+     * be automatically identified
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)
+    public boolean isBluetoothAudioDeviceCategoryFixed(@NonNull String address) {
+        if (!automaticBtDeviceType()) {
+            return false;
+        }
+        try {
+            return getService().isBluetoothAudioDeviceCategoryFixed(address);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -10035,6 +10176,30 @@ public class AudioManager {
                     mMuteAwaitConnectionListenerLock,
                     (listener) -> listener.onUnmutedEvent(event, device, mutedUsages));
         }
+    }
+
+    //====================================================================
+    // Flag related utilities
+
+    private boolean mIsAutomotive = false;
+
+    private void initPlatform() {
+        try {
+            final Context context = getContext();
+            if (context != null) {
+                mIsAutomotive = context.getPackageManager()
+                        .hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error querying system feature for AUTOMOTIVE", e);
+        }
+    }
+
+    private boolean applyAutoHardening() {
+        if (mIsAutomotive && autoPublicVolumeApiHardening()) {
+            return true;
+        }
+        return false;
     }
 
     //---------------------------------------------------------

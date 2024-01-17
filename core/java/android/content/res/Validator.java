@@ -19,6 +19,8 @@ package android.content.res;
 import android.annotation.NonNull;
 import android.annotation.StyleableRes;
 
+import com.android.internal.R;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -79,11 +81,14 @@ public class Validator {
      * Validates the resource string of a manifest tag attribute.
      */
     public void validateResStrAttr(@NonNull XmlPullParser parser, @StyleableRes int index,
-            CharSequence stringValue) throws XmlPullParserException {
+            CharSequence stringValue) {
         if (parser.getDepth() > mElements.size()) {
             return;
         }
         mElements.peek().validateResStrAttr(index, stringValue);
+        if (index == R.styleable.AndroidManifestMetaData_value) {
+            validateComponentMetadata(stringValue.toString());
+        }
     }
 
     /**
@@ -94,5 +99,20 @@ public class Validator {
             return;
         }
         mElements.peek().validateStrAttr(attrName, attrValue);
+        if (attrName.equals(Element.TAG_ATTR_VALUE)) {
+            validateComponentMetadata(attrValue);
+        }
+    }
+
+    private void validateComponentMetadata(String attrValue) {
+        Element element = mElements.peek();
+        // Meta-data values are evaluated on the parent element which is the next element in the
+        // mElements stack after the meta-data element. The top of the stack is always the current
+        // element being validated so check that the top element is meta-data.
+        if (element.mTag.equals(Element.TAG_META_DATA) && mElements.size() > 1) {
+            element = mElements.pop();
+            mElements.peek().validateComponentMetadata(attrValue);
+            mElements.push(element);
+        }
     }
 }

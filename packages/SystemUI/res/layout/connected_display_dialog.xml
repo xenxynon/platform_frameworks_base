@@ -30,11 +30,11 @@
         android:layout_width="@dimen/connected_display_dialog_logo_size"
         android:layout_height="@dimen/connected_display_dialog_logo_size"
         android:background="@drawable/circular_background"
-        android:backgroundTint="?androidprv:attr/materialColorPrimary"
+        android:backgroundTint="?androidprv:attr/materialColorSecondary"
         android:importantForAccessibility="no"
         android:padding="6dp"
         android:src="@drawable/stat_sys_connected_display"
-        android:tint="?androidprv:attr/materialColorOnPrimary" />
+        android:tint="?androidprv:attr/materialColorOnSecondary" />
 
     <TextView
         android:id="@+id/connected_display_dialog_title"
@@ -44,6 +44,15 @@
         android:gravity="center"
         android:text="@string/connected_display_dialog_start_mirroring"
         android:textAppearance="@style/TextAppearance.Dialog.Title" />
+
+    <TextView
+        android:id="@+id/dual_display_warning"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:visibility="gone"
+        android:text="@string/connected_display_dialog_dual_display_stop_warning"
+        android:textAppearance="@style/TextAppearance.Dialog.Body" />
 
     <LinearLayout
         android:layout_width="match_parent"

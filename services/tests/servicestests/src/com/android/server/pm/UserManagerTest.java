@@ -21,6 +21,7 @@ import static com.google.common.truth.Truth.assertWithMessage;
 
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertThrows;
 
 import android.annotation.UserIdInt;
@@ -30,10 +31,12 @@ import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
 import android.content.pm.UserProperties;
 import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.platform.test.annotations.Postsubmit;
+import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.provider.Settings;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.MediumTest;
@@ -215,8 +218,12 @@ public final class UserManagerTest {
                 .isEqualTo(cloneUserProperties.isMediaSharedWithParent());
         assertThat(typeProps.isCredentialShareableWithParent())
                 .isEqualTo(cloneUserProperties.isCredentialShareableWithParent());
+        assertThat(typeProps.getCrossProfileContentSharingStrategy())
+                .isEqualTo(cloneUserProperties.getCrossProfileContentSharingStrategy());
         assertThrows(SecurityException.class, cloneUserProperties::getDeleteAppWithParent);
         assertThrows(SecurityException.class, cloneUserProperties::getAlwaysVisible);
+        compareDrawables(mUserManager.getUserBadge(),
+                Resources.getSystem().getDrawable(userTypeDetails.getBadgePlain()));
 
         // Verify clone user parent
         assertThat(mUserManager.getProfileParent(mainUserId)).isNull();
@@ -267,6 +274,34 @@ public final class UserManagerTest {
     }
 
     @Test
+    @RequiresFlagsEnabled(android.multiuser.Flags.FLAG_SUPPORT_COMMUNAL_PROFILE)
+    public void testGetProfilesIncludingCommunal() throws Exception {
+        int mainUserId = mUserManager.getMainUser().getIdentifier();
+        final UserInfo otherUser = createUser("TestUser", /* flags= */ 0);
+        final UserInfo profile = createProfileForUser("Profile",
+                UserManager.USER_TYPE_PROFILE_MANAGED, mainUserId);
+
+        final UserHandle communalProfile = mUserManager.getCommunalProfile();
+
+        final List<UserInfo> mainsActual = mUserManager.getProfilesIncludingCommunal(mainUserId);
+        final List<UserInfo> othersActual = mUserManager.getProfilesIncludingCommunal(otherUser.id);
+
+        final List<Integer> mainsExpected = new ArrayList<>();
+        mainsExpected.add(mainUserId);
+        if (profile != null) mainsExpected.add(profile.id);
+        if (communalProfile != null) mainsExpected.add(communalProfile.getIdentifier());
+        assertEquals(mainsExpected.stream().sorted().toList(),
+                mainsActual.stream().map(ui -> ui.id).sorted().toList());
+
+
+        final List<Integer> othersExpected = new ArrayList<>();
+        othersExpected.add(otherUser.id);
+        if (communalProfile != null) othersExpected.add(communalProfile.getIdentifier());
+        assertEquals(othersExpected.stream().sorted().toList(),
+                othersActual.stream().map(ui -> ui.id).sorted().toList());
+    }
+
+    @Test
     public void testPrivateProfile() throws Exception {
         UserHandle mainUser = mUserManager.getMainUser();
         assumeTrue("Main user is null", mainUser != null);
@@ -301,7 +336,17 @@ public final class UserManagerTest {
                 .isEqualTo(privateProfileUserProperties.isMediaSharedWithParent());
         assertThat(typeProps.isCredentialShareableWithParent())
                 .isEqualTo(privateProfileUserProperties.isCredentialShareableWithParent());
+        assertThat(typeProps.isAuthAlwaysRequiredToDisableQuietMode())
+                .isEqualTo(privateProfileUserProperties
+                        .isAuthAlwaysRequiredToDisableQuietMode());
+        assertThat(typeProps.getCrossProfileContentSharingStrategy())
+                .isEqualTo(privateProfileUserProperties.getCrossProfileContentSharingStrategy());
         assertThrows(SecurityException.class, privateProfileUserProperties::getDeleteAppWithParent);
+        assertThrows(SecurityException.class,
+                privateProfileUserProperties::getAllowStoppingUserWithDelayedLocking);
+
+        compareDrawables(mUserManager.getUserBadge(),
+                Resources.getSystem().getDrawable(userTypeDetails.getBadgePlain()));
 
         // Verify private profile parent
         assertThat(mUserManager.getProfileParent(mainUserId)).isNull();
@@ -310,6 +355,8 @@ public final class UserManagerTest {
         assertThat(mainUserId).isEqualTo(parentProfileInfo.id);
         removeUser(userInfo.id);
         assertThat(mUserManager.getProfileParent(mainUserId)).isNull();
+        assertThat(mUserManager.getProfileLabel()).isEqualTo(
+                Resources.getSystem().getString(userTypeDetails.getLabel(0)));
     }
 
     @MediumTest
@@ -920,6 +967,8 @@ public final class UserManagerTest {
                 .isEqualTo(userTypeDetails.getBadgeNoBackground());
         assertThat(mUserManager.getUserStatusBarIconResId(userId))
                 .isEqualTo(userTypeDetails.getStatusBarIcon());
+        compareDrawables(mUserManager.getUserBadge(),
+                Resources.getSystem().getDrawable(userTypeDetails.getBadgePlain()));
 
         final int badgeIndex = userInfo.profileBadge;
         assertThat(mUserManager.getUserBadgeColor(userId)).isEqualTo(
@@ -1725,6 +1774,12 @@ public final class UserManagerTest {
     private boolean isMainUserPermanentAdmin() {
         return Resources.getSystem()
                 .getBoolean(com.android.internal.R.bool.config_isMainUserPermanentAdmin);
+    }
+
+    private void compareDrawables(Drawable actual, Drawable expected){
+        assertEquals(actual.getIntrinsicWidth(), expected.getIntrinsicWidth());
+        assertEquals(actual.getIntrinsicHeight(), expected.getIntrinsicHeight());
+        assertEquals(actual.getLevel(), expected.getLevel());
     }
 
 }

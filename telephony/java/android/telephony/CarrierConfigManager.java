@@ -274,6 +274,7 @@ public class CarrierConfigManager {
      *
      * The default value is true.
      */
+    @FlaggedApi(Flags.FLAG_SHOW_CALL_ID_AND_CALL_WAITING_IN_ADDITIONAL_SETTINGS_MENU)
     public static final String KEY_ADDITIONAL_SETTINGS_CALLER_ID_VISIBILITY_BOOL =
             "additional_settings_caller_id_visibility_bool";
 
@@ -283,6 +284,7 @@ public class CarrierConfigManager {
      *
      * The default value is true.
      */
+    @FlaggedApi(Flags.FLAG_SHOW_CALL_ID_AND_CALL_WAITING_IN_ADDITIONAL_SETTINGS_MENU)
     public static final String KEY_ADDITIONAL_SETTINGS_CALL_WAITING_VISIBILITY_BOOL =
             "additional_settings_call_waiting_visibility_bool";
 
@@ -543,6 +545,12 @@ public class CarrierConfigManager {
      * Value defaults to false as of Android T to discourage the use of insecure 2G protocols.
      */
     public static final String KEY_PREFER_2G_BOOL = "prefer_2g_bool";
+
+    /**
+     * Used in the Preferred Network Types menu to determine if the 3G option is displayed.
+     */
+    @FlaggedApi(Flags.FLAG_HIDE_PREFER_3G_ITEM)
+    public static final String KEY_PREFER_3G_VISIBILITY_BOOL = "prefer_3g_visibility_bool";
 
     /**
      * Used in Cellular Network Settings for preferred network type to show 4G only mode.
@@ -3421,10 +3429,40 @@ public class CarrierConfigManager {
     /**
      * Determines whether we should show a notification when the phone established a data
      * connection in roaming network, to warn users about possible roaming charges.
+     *
+     * @see #KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_EXCLUDED_MCCS_STRING_ARRAY
+     * @see #KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_INCLUDED_MCC_MNCS_STRING_ARRAY
      * @hide
      */
     public static final String KEY_SHOW_DATA_CONNECTED_ROAMING_NOTIFICATION_BOOL =
             "show_data_connected_roaming_notification";
+
+    /**
+     * Determines what MCCs are exceptions for the value of
+     * {@link #KEY_SHOW_DATA_CONNECTED_ROAMING_NOTIFICATION_BOOL}.
+     * An empty list indicates that there are no exceptions.
+     *
+     * @see #KEY_SHOW_DATA_CONNECTED_ROAMING_NOTIFICATION_BOOL
+     * @see #KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_INCLUDED_MCC_MNCS_STRING_ARRAY
+     * @hide
+     */
+    public static final String
+            KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_EXCLUDED_MCCS_STRING_ARRAY =
+            "data_connected_roaming_notification_excluded_mccs_string_array";
+
+    /**
+     * Determines what MCC+MNCs are exceptions for the MCCs specified in
+     * {@link #KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_EXCLUDED_MCCS_STRING_ARRAY}, meaning the
+     * value for the MCC+MNC is {@link #KEY_SHOW_DATA_CONNECTED_ROAMING_NOTIFICATION_BOOL}.
+     * An empty list indicates that there are no MNC-specific exceptions.
+     *
+     * @see #KEY_SHOW_DATA_CONNECTED_ROAMING_NOTIFICATION_BOOL
+     * @see #KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_EXCLUDED_MCCS_STRING_ARRAY
+     * @hide
+     */
+    public static final String
+            KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_INCLUDED_MCC_MNCS_STRING_ARRAY =
+            "data_connected_roaming_notification_included_mcc_mncs_string_array";
 
     /**
      * A list of 4 LTE RSRP thresholds above which a signal level is considered POOR,
@@ -8925,6 +8963,24 @@ public class CarrierConfigManager {
                 KEY_PREFIX + "epdg_static_address_roaming_string";
 
         /**
+         * Controls if the multiple SA proposals allowed for IKE session to include
+         * all the 3GPP TS 33.210 and RFC 8221 supported cipher suites in multiple
+         * IKE SA proposals as per RFC 7296.
+         */
+        @FlaggedApi(Flags.FLAG_ENABLE_MULTIPLE_SA_PROPOSALS)
+        public static final String KEY_SUPPORTS_IKE_SESSION_MULTIPLE_SA_PROPOSALS_BOOL =
+                KEY_PREFIX + "supports_ike_session_multiple_sa_proposals_bool";
+
+        /**
+         * Controls if the multiple SA proposals allowed for Child session to include
+         * all the 3GPP TS 33.210 and RFC 8221 supported cipher suites in multiple
+         * Child SA proposals as per RFC 7296.
+         */
+        @FlaggedApi(Flags.FLAG_ENABLE_MULTIPLE_SA_PROPOSALS)
+        public static final String KEY_SUPPORTS_CHILD_SESSION_MULTIPLE_SA_PROPOSALS_BOOL =
+                KEY_PREFIX + "supports_child_session_multiple_sa_proposals_bool";
+
+        /**
          * List of supported key sizes for AES Cipher Block Chaining (CBC) encryption mode of child
          * session. Possible values are:
          * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_UNUSED},
@@ -8947,12 +9003,35 @@ public class CarrierConfigManager {
                 KEY_PREFIX + "child_session_aes_ctr_key_size_int_array";
 
         /**
+         * List of supported key sizes for AES Galois/Counter Mode (GCM) encryption mode
+         * of child session.
+         * Possible values are:
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_UNUSED},
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_AES_128},
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_AES_192},
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_AES_256}
+         */
+        @FlaggedApi(Flags.FLAG_ENABLE_AEAD_ALGORITHMS)
+        public static final String KEY_CHILD_SESSION_AES_GCM_KEY_SIZE_INT_ARRAY =
+                KEY_PREFIX + "child_session_aes_gcm_key_size_int_array";
+
+        /**
          * List of supported encryption algorithms for child session. Possible values are
          * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_CBC},
          * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_CTR}
          */
         public static final String KEY_SUPPORTED_CHILD_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY =
                 KEY_PREFIX + "supported_child_session_encryption_algorithms_int_array";
+
+        /**
+         * List of supported AEAD algorithms for child session. Possible values are
+         * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_GCM_8},
+         * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_GCM_12},
+         * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_GCM_16}
+         */
+        @FlaggedApi(Flags.FLAG_ENABLE_AEAD_ALGORITHMS)
+        public static final String KEY_SUPPORTED_CHILD_SESSION_AEAD_ALGORITHMS_INT_ARRAY =
+                KEY_PREFIX + "supported_child_session_aead_algorithms_int_array";
 
         /**
          * Time in seconds after which the IKE session is terminated if rekey procedure is not
@@ -8991,12 +9070,35 @@ public class CarrierConfigManager {
                  KEY_PREFIX + "ike_session_encryption_aes_ctr_key_size_int_array";
 
         /**
+         * List of supported key sizes for AES Galois/Counter Mode (GCM) encryption mode
+         * of IKE session.
+         * Possible values -
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_UNUSED},
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_AES_128},
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_AES_192},
+         * {@link android.net.ipsec.ike.SaProposal#KEY_LEN_AES_256}
+         */
+        @FlaggedApi(Flags.FLAG_ENABLE_AEAD_ALGORITHMS)
+        public static final String KEY_IKE_SESSION_AES_GCM_KEY_SIZE_INT_ARRAY =
+                KEY_PREFIX + "ike_session_encryption_aes_gcm_key_size_int_array";
+
+        /**
          * List of supported encryption algorithms for IKE session. Possible values are
          * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_CBC},
          * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_CTR}
          */
         public static final String KEY_SUPPORTED_IKE_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY =
                 KEY_PREFIX + "supported_ike_session_encryption_algorithms_int_array";
+
+        /**
+         * List of supported AEAD algorithms for IKE session. Possible values are
+         * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_GCM_8},
+         * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_GCM_12},
+         * {@link android.net.ipsec.ike.SaProposal#ENCRYPTION_ALGORITHM_AES_GCM_16}
+         */
+        @FlaggedApi(Flags.FLAG_ENABLE_AEAD_ALGORITHMS)
+        public static final String KEY_SUPPORTED_IKE_SESSION_AEAD_ALGORITHMS_INT_ARRAY =
+                KEY_PREFIX + "supported_ike_session_aead_algorithms_int_array";
 
         /**
          * List of supported integrity algorithms for IKE session. Possible values are
@@ -9213,6 +9315,8 @@ public class CarrierConfigManager {
             defaults.putInt(KEY_IKE_REKEY_HARD_TIMER_SEC_INT, 14400);
             defaults.putInt(KEY_CHILD_SA_REKEY_SOFT_TIMER_SEC_INT, 3600);
             defaults.putInt(KEY_CHILD_SA_REKEY_HARD_TIMER_SEC_INT, 7200);
+            defaults.putBoolean(KEY_SUPPORTS_IKE_SESSION_MULTIPLE_SA_PROPOSALS_BOOL, false);
+            defaults.putBoolean(KEY_SUPPORTS_CHILD_SESSION_MULTIPLE_SA_PROPOSALS_BOOL, false);
             defaults.putIntArray(
                     KEY_RETRANSMIT_TIMER_MSEC_INT_ARRAY, new int[] {500, 1000, 2000, 4000, 8000});
             defaults.putInt(KEY_DPD_TIMER_SEC_INT, 120);
@@ -9228,8 +9332,12 @@ public class CarrierConfigManager {
                     KEY_SUPPORTED_IKE_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY,
                     new int[] {SaProposal.ENCRYPTION_ALGORITHM_AES_CBC});
             defaults.putIntArray(
+                    KEY_SUPPORTED_IKE_SESSION_AEAD_ALGORITHMS_INT_ARRAY, new int[] {});
+            defaults.putIntArray(
                     KEY_SUPPORTED_CHILD_SESSION_ENCRYPTION_ALGORITHMS_INT_ARRAY,
                     new int[] {SaProposal.ENCRYPTION_ALGORITHM_AES_CBC});
+            defaults.putIntArray(
+                    KEY_SUPPORTED_CHILD_SESSION_AEAD_ALGORITHMS_INT_ARRAY, new int[] {});
             defaults.putIntArray(
                     KEY_SUPPORTED_INTEGRITY_ALGORITHMS_INT_ARRAY,
                     new int[] {
@@ -9278,6 +9386,10 @@ public class CarrierConfigManager {
                       SaProposal.KEY_LEN_AES_128,
                       SaProposal.KEY_LEN_AES_192,
                       SaProposal.KEY_LEN_AES_256});
+            defaults.putIntArray(
+                    KEY_IKE_SESSION_AES_GCM_KEY_SIZE_INT_ARRAY, new int[] {});
+            defaults.putIntArray(
+                    KEY_CHILD_SESSION_AES_GCM_KEY_SIZE_INT_ARRAY, new int[] {});
             defaults.putIntArray(
                     KEY_EPDG_ADDRESS_PRIORITY_INT_ARRAY,
                     new int[] {EPDG_ADDRESS_PLMN, EPDG_ADDRESS_STATIC});
@@ -9541,6 +9653,106 @@ public class CarrierConfigManager {
     @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public static final String KEY_SATELLITE_ATTACH_SUPPORTED_BOOL =
             "satellite_attach_supported_bool";
+
+    /**
+     * The carrier-enabled satellite connection hysteresis time in seconds for which the device
+     * continues in satellite mode after it loses the connection with the satellite network.
+     * <p>
+     * If the device is in satellite mode, the following actions will be taken by the device:
+     * <ul>
+     * <li>System UI will continue showing the satellite icon.</li>
+     * <li>When there is an ongoing emergency call, and the IMS is not registered, and cellular
+     * service is not available, and the device is in satellite mode, a timer with a duration
+     * defined by the overlay config
+     * {@code config_emergency_call_wait_for_connection_timeout_millis} will be started. When the
+     * timer expires, Telephony will send the event
+     * {@link TelephonyManager#EVENT_DISPLAY_EMERGENCY_MESSAGE} to Dialer, which will then prompt
+     * users to switch to using satellite emergency messaging.</li>
+     * </ul>
+     * <p>
+     * The default value is 300 seconds.
+     */
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final String KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT =
+            "satellite_connection_hysteresis_sec_int";
+
+    /**
+     * This threshold is used when connected to a non-terrestrial LTE network.
+     * A list of 4 NTN LTE RSRP thresholds above which a signal level is considered POOR,
+     * MODERATE, GOOD, or EXCELLENT, to be used in SignalStrength reporting.
+     *
+     * Note that the min and max thresholds are fixed at -140 and -44, as explained in
+     * TS 136.133 9.1.4 - RSRP Measurement Report Mapping.
+     * <p>
+     * See SignalStrength#MAX_LTE_RSRP and SignalStrength#MIN_LTE_RSRP. Any signal level outside
+     * these boundaries is considered invalid.
+     */
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final String KEY_NTN_LTE_RSRP_THRESHOLDS_INT_ARRAY =
+            "ntn_lte_rsrp_thresholds_int_array";
+
+    /**
+     * This threshold is used when connected to a non-terrestrial LTE network.
+     * A list of 4 customized NTN LTE Reference Signal Received Quality (RSRQ) thresholds.
+     *
+     * Reference: TS 136.133 v12.6.0 section 9.1.7 - RSRQ Measurement Report Mapping.
+     *
+     * 4 threshold integers must be within the boundaries [-34 dB, 3 dB], and the levels are:
+     *     "NONE: [-34, threshold1)"
+     *     "POOR: [threshold1, threshold2)"
+     *     "MODERATE: [threshold2, threshold3)"
+     *     "GOOD:  [threshold3, threshold4)"
+     *     "EXCELLENT:  [threshold4, 3]"
+     *
+     * This key is considered invalid if the format is violated. If the key is invalid or
+     * not configured, a default value set will apply.
+     */
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final String KEY_NTN_LTE_RSRQ_THRESHOLDS_INT_ARRAY =
+            "ntn_lte_rsrq_thresholds_int_array";
+
+    /**
+     * This threshold is used when connected to a non-terrestrial LTE network.
+     * A list of 4 customized NTN LTE Reference Signal Signal to Noise Ratio (RSSNR) thresholds.
+     *
+     * 4 threshold integers must be within the boundaries [-20 dB, 30 dB], and the levels are:
+     *     "NONE: [-20, threshold1)"
+     *     "POOR: [threshold1, threshold2)"
+     *     "MODERATE: [threshold2, threshold3)"
+     *     "GOOD:  [threshold3, threshold4)"
+     *     "EXCELLENT:  [threshold4, 30]"
+     *
+     * This key is considered invalid if the format is violated. If the key is invalid or
+     * not configured, a default value set will apply.
+     */
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final String KEY_NTN_LTE_RSSNR_THRESHOLDS_INT_ARRAY =
+            "ntn_lte_rssnr_thresholds_int_array";
+
+    /**
+     * This threshold is used when connected to a non-terrestrial LTE network.
+     * Bit-field integer to determine whether to use Reference Signal Received Power (RSRP),
+     * Reference Signal Received Quality (RSRQ), or/and Reference Signal Signal to Noise Ratio
+     * (RSSNR) for the number of NTN LTE signal bars and signal criteria reporting enabling.
+     *
+     * <p> If a measure is not set, signal criteria reporting from modem will not be triggered and
+     * not be used for calculating signal level. If multiple measures are set bit, the parameter
+     * whose value is smallest is used to indicate the signal level.
+     * <UL>
+     *  <LI>RSRP = 1 << 0</LI>
+     *  <LI>RSRQ = 1 << 1</LI>
+     *  <LI>RSSNR = 1 << 2</LI>
+     * </UL>
+     * <p> The value of this key must be bitwise OR of CellSignalStrengthLte#USE_RSRP,
+     * CellSignalStrengthLte#USE_RSRQ, CellSignalStrengthLte#USE_RSSNR.
+     *
+     * <p> For example, if both RSRP and RSRQ are used, the value of key is 3 (1 << 0 | 1 << 1).
+     * If the key is invalid or not configured, a default value (RSRP = 1 << 0) will apply.
+     *
+     */
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final String KEY_PARAMETERS_USED_FOR_NTN_LTE_SIGNAL_BAR_INT =
+            "parameters_used_for_ntn_lte_signal_bar_int";
 
     /**
      * Indicating whether DUN APN should be disabled when the device is roaming. In that case,
@@ -10135,6 +10347,7 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_MDN_IS_ADDITIONAL_VOICEMAIL_NUMBER_BOOL, false);
         sDefaults.putBoolean(KEY_OPERATOR_SELECTION_EXPAND_BOOL, true);
         sDefaults.putBoolean(KEY_PREFER_2G_BOOL, false);
+        sDefaults.putBoolean(KEY_PREFER_3G_VISIBILITY_BOOL, true);
         sDefaults.putBoolean(KEY_4G_ONLY_BOOL, false);
         sDefaults.putBoolean(KEY_SHOW_APN_SETTING_CDMA_BOOL, false);
         sDefaults.putBoolean(KEY_SHOW_CDMA_CHOICES_BOOL, false);
@@ -10445,6 +10658,11 @@ public class CarrierConfigManager {
         sDefaults.putBoolean(KEY_CARRIER_CONFIG_APPLIED_BOOL, false);
         sDefaults.putBoolean(KEY_CHECK_PRICING_WITH_CARRIER_FOR_DATA_ROAMING_BOOL, false);
         sDefaults.putBoolean(KEY_SHOW_DATA_CONNECTED_ROAMING_NOTIFICATION_BOOL, false);
+        sDefaults.putStringArray(KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_EXCLUDED_MCCS_STRING_ARRAY,
+                new String[0]);
+        sDefaults.putStringArray(
+                KEY_DATA_CONNECTED_ROAMING_NOTIFICATION_INCLUDED_MCC_MNCS_STRING_ARRAY,
+                new String[0]);
         sDefaults.putIntArray(KEY_LTE_RSRP_THRESHOLDS_INT_ARRAY,
                 // Boundaries: [-140 dBm, -44 dBm]
                 new int[] {
@@ -10709,6 +10927,33 @@ public class CarrierConfigManager {
                 KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
                 PersistableBundle.EMPTY);
         sDefaults.putBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, false);
+        sDefaults.putInt(KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT, 300);
+        sDefaults.putIntArray(KEY_NTN_LTE_RSRP_THRESHOLDS_INT_ARRAY,
+                // Boundaries: [-140 dBm, -44 dBm]
+                new int[]{
+                        -128, /* SIGNAL_STRENGTH_POOR */
+                        -118, /* SIGNAL_STRENGTH_MODERATE */
+                        -108, /* SIGNAL_STRENGTH_GOOD */
+                        -98  /* SIGNAL_STRENGTH_GREAT */
+                });
+        sDefaults.putIntArray(KEY_NTN_LTE_RSRQ_THRESHOLDS_INT_ARRAY,
+                // Boundaries: [-34 dB, 3 dB]
+                new int[]{
+                        -20, /* SIGNAL_STRENGTH_POOR */
+                        -17, /* SIGNAL_STRENGTH_MODERATE */
+                        -14, /* SIGNAL_STRENGTH_GOOD */
+                        -11  /* SIGNAL_STRENGTH_GREAT */
+                });
+        sDefaults.putIntArray(KEY_NTN_LTE_RSSNR_THRESHOLDS_INT_ARRAY,
+                // Boundaries: [-20 dBm, 30 dBm]
+                new int[] {
+                        -3, /* SIGNAL_STRENGTH_POOR */
+                        1, /* SIGNAL_STRENGTH_MODERATE */
+                        5,  /* SIGNAL_STRENGTH_GOOD */
+                        13   /* SIGNAL_STRENGTH_GREAT */
+                });
+        sDefaults.putInt(KEY_PARAMETERS_USED_FOR_NTN_LTE_SIGNAL_BAR_INT,
+                CellSignalStrengthLte.USE_RSRP);
         sDefaults.putBoolean(KEY_DISABLE_DUN_APN_WHILE_ROAMING_WITH_PRESET_APN_BOOL, false);
         sDefaults.putString(KEY_DEFAULT_PREFERRED_APN_NAME_STRING, "");
         sDefaults.putBoolean(KEY_SUPPORTS_CALL_COMPOSER_BOOL, false);

@@ -24,6 +24,7 @@ import android.content.pm.SigningDetails
 import android.os.Build
 import android.util.Slog
 import com.android.internal.os.RoSystemProperties
+import com.android.internal.pm.permission.CompatibilityPermissionInfo
 import com.android.modules.utils.BinaryXmlPullParser
 import com.android.modules.utils.BinaryXmlSerializer
 import com.android.server.permission.access.AccessState
@@ -42,7 +43,6 @@ import com.android.server.permission.access.util.hasBits
 import com.android.server.permission.access.util.isInternal
 import com.android.server.pm.KnownPackages
 import com.android.server.pm.parsing.PackageInfoUtils
-import com.android.server.pm.permission.CompatibilityPermissionInfo
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.pkg.PackageState
 
@@ -1262,7 +1262,7 @@ class AppIdPermissionPolicy : SchemePolicy() {
         val apexModuleName = packageState.apexModuleName
         val packageName = packageState.packageName
         return when {
-            packageState.isVendor ->
+            packageState.isVendor || packageState.isOdm ->
                 permissionAllowlist.getVendorPrivilegedAppAllowlistState(
                     packageName,
                     permissionName
@@ -1448,15 +1448,6 @@ class AppIdPermissionPolicy : SchemePolicy() {
             // Special permissions for the system companion device manager.
             return true
         }
-        if (
-            permission.isRetailDemo &&
-                packageName in knownPackages[KnownPackages.PACKAGE_RETAIL_DEMO]!!
-        ) {
-            // Special permission granted only to the OEM specified retail demo app.
-            // Note that the original code was passing app ID as UID, so this behavior is kept
-            // unchanged.
-            return true
-        }
         if (permission.isRecents && packageName in knownPackages[KnownPackages.PACKAGE_RECENTS]!!) {
             // Special permission for the recents app.
             return true
@@ -1480,12 +1471,15 @@ class AppIdPermissionPolicy : SchemePolicy() {
                     // In any case, don't grant a privileged permission to privileged vendor apps,
                     // if the permission's protectionLevel does not have the extra vendorPrivileged
                     // flag.
-                    if (packageState.isVendor && !permission.isVendorPrivileged) {
+                    if (
+                        (packageState.isVendor || packageState.isOdm) &&
+                            !permission.isVendorPrivileged
+                    ) {
                         Slog.w(
                             LOG_TAG,
                             "Permission $permissionName cannot be granted to privileged" +
-                                " vendor app $packageName because it isn't a vendorPrivileged" +
-                                " permission"
+                                " vendor (or odm) app $packageName because it isn't a" +
+                                " vendorPrivileged permission"
                         )
                         return false
                     }
@@ -1511,27 +1505,6 @@ class AppIdPermissionPolicy : SchemePolicy() {
     }
 
     override fun MutateStateScope.onSystemReady() {
-        // HACK: PACKAGE_USAGE_STATS is the only permission with the retailDemo protection flag,
-        // and we have to wait until DevicePolicyManagerService is started to know whether the
-        // retail demo package is a profile owner so that it can have the permission.
-        // Since there's no simple callback for profile owner change, and we are deprecating and
-        // removing the retailDemo protection flag in favor of a proper role soon, we can just
-        // re-evaluate the permission here, which is also how the old implementation has been
-        // working.
-        // TODO: Partially revert ag/22690114 once we can remove support for the retailDemo
-        //  protection flag.
-        val externalState = newState.externalState
-        for (packageName in externalState.knownPackages[KnownPackages.PACKAGE_RETAIL_DEMO]!!) {
-            val appId = externalState.packageStates[packageName]?.appId ?: continue
-            newState.userStates.forEachIndexed { _, userId, _ ->
-                evaluatePermissionState(
-                    appId,
-                    userId,
-                    Manifest.permission.PACKAGE_USAGE_STATS,
-                    null
-                )
-            }
-        }
         if (!privilegedPermissionAllowlistViolations.isEmpty()) {
             throw IllegalStateException(
                 "Signature|privileged permissions not in privileged" +
@@ -1736,7 +1709,7 @@ class AppIdPermissionPolicy : SchemePolicy() {
     }
 
     /** Listener for permission flags changes. */
-    abstract class OnPermissionFlagsChangedListener {
+    interface OnPermissionFlagsChangedListener {
         /**
          * Called when a permission flags change has been made to the upcoming new state.
          *
@@ -1744,7 +1717,7 @@ class AppIdPermissionPolicy : SchemePolicy() {
          * and only call external code after [onStateMutated] when the new state has actually become
          * the current state visible to external code.
          */
-        abstract fun onPermissionFlagsChanged(
+        fun onPermissionFlagsChanged(
             appId: Int,
             userId: Int,
             permissionName: String,
@@ -1757,6 +1730,6 @@ class AppIdPermissionPolicy : SchemePolicy() {
          *
          * Implementations should keep this method fast to avoid stalling the locked state mutation.
          */
-        abstract fun onStateMutated()
+        fun onStateMutated()
     }
 }

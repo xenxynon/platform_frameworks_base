@@ -24,6 +24,7 @@ import android.tools.common.traces.component.ComponentNameMatcher
 import android.tools.common.traces.component.IComponentMatcher
 import android.tools.common.traces.component.IComponentNameMatcher
 import android.tools.device.apphelpers.StandardAppHelper
+import android.tools.device.flicker.rules.ChangeDisplayOrientationRule
 import android.tools.device.traces.parsers.WindowManagerStateHelper
 import android.tools.device.traces.parsers.toFlickerComponent
 import android.view.InputDevice
@@ -42,7 +43,6 @@ import com.android.server.wm.flicker.helpers.SimpleAppHelper
 import com.android.server.wm.flicker.testapp.ActivityOptions
 import com.android.server.wm.flicker.testapp.ActivityOptions.SplitScreen.Primary
 import org.junit.Assert.assertNotNull
-import android.tools.device.flicker.rules.ChangeDisplayOrientationRule
 
 object SplitScreenUtils {
     private const val TIMEOUT_MS = 3_000L
@@ -135,33 +135,38 @@ object SplitScreenUtils {
             // second task to split.
             val home = tapl.workspace.switchToOverview()
             ChangeDisplayOrientationRule.setRotation(rotation)
-            home.overviewActions.clickSplit()
+            val isGridOnlyOverviewEnabled = tapl.isGridOnlyOverviewEnabled
+            if (isGridOnlyOverviewEnabled) {
+                home.currentTask.tapMenu().tapSplitMenuItem()
+            } else {
+                home.overviewActions.clickSplit()
+            }
             val snapshots = device.wait(Until.findObjects(overviewSnapshotSelector), TIMEOUT_MS)
             if (snapshots == null || snapshots.size < 1) {
                 error("Fail to find a overview snapshot to split.")
             }
 
-            // Find the second task in the upper right corner in split select mode by sorting
-            // 'left' in descending order and 'top' in ascending order.
+            // Find the second task in the upper (or bottom for grid only Overview) right corner in
+            // split select mode by sorting 'left' in descending order and 'top' in ascending (or
+            // descending for grid only Overview) order.
             snapshots.sortWith { t1: UiObject2, t2: UiObject2 ->
                 t2.getVisibleBounds().left - t1.getVisibleBounds().left
             }
             snapshots.sortWith { t1: UiObject2, t2: UiObject2 ->
-                t1.getVisibleBounds().top - t2.getVisibleBounds().top
+                if (isGridOnlyOverviewEnabled) {
+                    t2.getVisibleBounds().top - t1.getVisibleBounds().top
+                } else {
+                    t1.getVisibleBounds().top - t2.getVisibleBounds().top
+                }
             }
             snapshots[0].click()
         } else {
             val rotationCheckEnabled = tapl.getExpectedRotationCheckEnabled()
             tapl.setExpectedRotationCheckEnabled(false) // disable rotation check to enter overview
-            val home = tapl.workspace
-                .switchToOverview()
+            val home = tapl.workspace.switchToOverview()
             tapl.setExpectedRotationCheckEnabled(rotationCheckEnabled) // restore rotation checks
             ChangeDisplayOrientationRule.setRotation(rotation)
-            home.currentTask
-                .tapMenu()
-                .tapSplitMenuItem()
-                .currentTask
-                .open()
+            home.currentTask.tapMenu().tapSplitMenuItem().currentTask.open()
         }
         SystemClock.sleep(TIMEOUT_MS)
     }

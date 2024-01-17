@@ -59,6 +59,7 @@ import android.provider.Settings;
 import android.service.notification.ConversationChannelWrapper;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.RankingHelperProto;
+import android.service.notification.ZenModeConfig;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.ArrayMap;
@@ -146,6 +147,7 @@ public class PreferencesHelper implements RankingConfig {
     private static final String ATT_SENT_INVALID_MESSAGE = "sent_invalid_msg";
     private static final String ATT_SENT_VALID_MESSAGE = "sent_valid_msg";
     private static final String ATT_USER_DEMOTED_INVALID_MSG_APP = "user_demote_msg_app";
+    private static final String ATT_SENT_VALID_BUBBLE = "sent_valid_bubble";
 
     private static final int DEFAULT_PRIORITY = Notification.PRIORITY_DEFAULT;
     private static final int DEFAULT_VISIBILITY = NotificationManager.VISIBILITY_NO_OVERRIDE;
@@ -159,7 +161,6 @@ public class PreferencesHelper implements RankingConfig {
     static final boolean DEFAULT_BUBBLES_ENABLED = true;
     @VisibleForTesting
     static final int DEFAULT_BUBBLE_PREFERENCE = BUBBLE_PREFERENCE_NONE;
-    static final boolean DEFAULT_MEDIA_NOTIFICATION_FILTERING = true;
 
     private static final int NOTIFICATION_UPDATE_LOG_SUBTYPE_FROM_APP = 0;
     private static final int NOTIFICATION_UPDATE_LOG_SUBTYPE_FROM_USER = 1;
@@ -198,7 +199,11 @@ public class PreferencesHelper implements RankingConfig {
     private SparseBooleanArray mBubblesEnabled;
     private SparseBooleanArray mLockScreenShowNotifications;
     private SparseBooleanArray mLockScreenPrivateNotifications;
-    private boolean mIsMediaNotificationFilteringEnabled = DEFAULT_MEDIA_NOTIFICATION_FILTERING;
+    private boolean mIsMediaNotificationFilteringEnabled;
+    // When modes_api flag is enabled, this value only tracks whether the current user has any
+    // channels marked as "priority channels", but not necessarily whether they are permitted
+    // to bypass DND by current zen policy.
+    // TODO: b/310620812 - Rename to be more accurate when modes_api flag is inlined.
     private boolean mCurrentUserHasChannelsBypassingDnd;
     private boolean mHideSilentStatusBarIcons = DEFAULT_HIDE_SILENT_STATUS_BAR_ICONS;
     private final boolean mShowReviewPermissionsNotification;
@@ -218,6 +223,8 @@ public class PreferencesHelper implements RankingConfig {
         mAppOps = appOpsManager;
         mUserProfiles = userProfiles;
         mShowReviewPermissionsNotification = showReviewPermissionsNotification;
+        mIsMediaNotificationFilteringEnabled = context.getResources()
+                .getBoolean(R.bool.config_quickSettingsShowMediaPlayer);
 
         XML_VERSION = 4;
 
@@ -313,6 +320,7 @@ public class PreferencesHelper implements RankingConfig {
             r.hasSentValidMessage = parser.getAttributeBoolean(null, ATT_SENT_VALID_MESSAGE, false);
             r.userDemotedMsgApp = parser.getAttributeBoolean(
                     null, ATT_USER_DEMOTED_INVALID_MSG_APP, false);
+            r.hasSentValidBubble = parser.getAttributeBoolean(null, ATT_SENT_VALID_BUBBLE, false);
 
             final int innerDepth = parser.getDepth();
             int type;
@@ -564,8 +572,7 @@ public class PreferencesHelper implements RankingConfig {
     public void writeXml(TypedXmlSerializer out, boolean forBackup, int userId) throws IOException {
         out.startTag(null, TAG_RANKING);
         out.attributeInt(null, ATT_VERSION, XML_VERSION);
-        if (mHideSilentStatusBarIcons != DEFAULT_HIDE_SILENT_STATUS_BAR_ICONS
-                && (!forBackup || userId == UserHandle.USER_SYSTEM)) {
+        if (mHideSilentStatusBarIcons != DEFAULT_HIDE_SILENT_STATUS_BAR_ICONS) {
             out.startTag(null, TAG_STATUS_ICONS);
             out.attributeBoolean(null, ATT_HIDE_SILENT, mHideSilentStatusBarIcons);
             out.endTag(null, TAG_STATUS_ICONS);
@@ -614,6 +621,7 @@ public class PreferencesHelper implements RankingConfig {
                         r.hasSentValidMessage);
                 out.attributeBoolean(null, ATT_USER_DEMOTED_INVALID_MSG_APP,
                         r.userDemotedMsgApp);
+                out.attributeBoolean(null, ATT_SENT_VALID_BUBBLE, r.hasSentValidBubble);
 
                 if (!forBackup) {
                     out.attributeInt(null, ATT_UID, r.uid);
@@ -1856,14 +1864,19 @@ public class PreferencesHelper implements RankingConfig {
     public void updateZenPolicy(boolean areChannelsBypassingDnd, int callingUid,
             boolean fromSystemOrSystemUi) {
         NotificationManager.Policy policy = mZenModeHelper.getNotificationPolicy();
-        mZenModeHelper.setNotificationPolicy(new NotificationManager.Policy(
-                policy.priorityCategories, policy.priorityCallSenders,
-                policy.priorityMessageSenders, policy.suppressedVisualEffects,
-                (areChannelsBypassingDnd ? NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND
-                        : 0),
-                policy.priorityConversationSenders), callingUid, fromSystemOrSystemUi);
+        mZenModeHelper.setNotificationPolicy(
+                new NotificationManager.Policy(
+                        policy.priorityCategories, policy.priorityCallSenders,
+                        policy.priorityMessageSenders, policy.suppressedVisualEffects,
+                        (areChannelsBypassingDnd
+                                ? NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND : 0),
+                        policy.priorityConversationSenders),
+                fromSystemOrSystemUi ? ZenModeConfig.UPDATE_ORIGIN_SYSTEM_OR_SYSTEMUI
+                        : ZenModeConfig.UPDATE_ORIGIN_APP,
+                callingUid);
     }
 
+    // TODO: b/310620812 - rename to hasPriorityChannels() when modes_api is inlined.
     public boolean areChannelsBypassingDnd() {
         return mCurrentUserHasChannelsBypassingDnd;
     }
@@ -2141,10 +2154,7 @@ public class PreferencesHelper implements RankingConfig {
      * @return State of the full screen intent permission for this package.
      */
     @VisibleForTesting
-    int getFsiState(String pkg, int uid, boolean requestedFSIPermission, boolean isFlagEnabled) {
-        if (!isFlagEnabled) {
-            return 0;
-        }
+    int getFsiState(String pkg, int uid, boolean requestedFSIPermission) {
         if (!requestedFSIPermission) {
             return PACKAGE_NOTIFICATION_PREFERENCES__FSI_STATE__NOT_REQUESTED;
         }
@@ -2165,10 +2175,8 @@ public class PreferencesHelper implements RankingConfig {
      * the user.
      */
     @VisibleForTesting
-    boolean isFsiPermissionUserSet(String pkg, int uid, int fsiState, int currentPermissionFlags,
-                                   boolean isStickyHunFlagEnabled) {
-        if (!isStickyHunFlagEnabled
-                || fsiState == PACKAGE_NOTIFICATION_PREFERENCES__FSI_STATE__NOT_REQUESTED) {
+    boolean isFsiPermissionUserSet(String pkg, int uid, int fsiState, int currentPermissionFlags) {
+        if (fsiState == PACKAGE_NOTIFICATION_PREFERENCES__FSI_STATE__NOT_REQUESTED) {
             return false;
         }
         return (currentPermissionFlags & PackageManager.FLAG_PERMISSION_USER_SET) != 0;
@@ -2211,22 +2219,18 @@ public class PreferencesHelper implements RankingConfig {
                     pkgsWithPermissionsToHandle.remove(key);
                 }
 
-                final boolean isStickyHunFlagEnabled = SystemUiSystemPropertiesFlags.getResolver()
-                        .isEnabled(NotificationFlags.SHOW_STICKY_HUN_FOR_DENIED_FSI);
-
                 final boolean requestedFSIPermission = mPermissionHelper.hasRequestedPermission(
                         android.Manifest.permission.USE_FULL_SCREEN_INTENT, r.pkg, r.uid);
 
-                final int fsiState = getFsiState(r.pkg, r.uid, requestedFSIPermission,
-                        isStickyHunFlagEnabled);
+                final int fsiState = getFsiState(r.pkg, r.uid, requestedFSIPermission);
 
                 final int currentPermissionFlags = mPm.getPermissionFlags(
                         android.Manifest.permission.USE_FULL_SCREEN_INTENT, r.pkg,
                         UserHandle.getUserHandleForUid(r.uid));
 
                 final boolean fsiIsUserSet =
-                        isFsiPermissionUserSet(r.pkg, r.uid, fsiState, currentPermissionFlags,
-                                isStickyHunFlagEnabled);
+                        isFsiPermissionUserSet(r.pkg, r.uid, fsiState,
+                                currentPermissionFlags);
 
                 events.add(FrameworkStatsLog.buildStatsEvent(
                         PACKAGE_NOTIFICATION_PREFERENCES,
@@ -2689,8 +2693,11 @@ public class PreferencesHelper implements RankingConfig {
 
     /** Requests check of the feature setting for showing media notifications in quick settings. */
     public void updateMediaNotificationFilteringEnabled() {
+        // TODO(b/192412820): Consolidate SHOW_MEDIA_ON_QUICK_SETTINGS into compile-time value.
         final boolean newValue = Settings.Global.getInt(mContext.getContentResolver(),
-                Settings.Global.SHOW_MEDIA_ON_QUICK_SETTINGS, 1) > 0;
+                Settings.Global.SHOW_MEDIA_ON_QUICK_SETTINGS, 1) > 0
+                        && mContext.getResources().getBoolean(
+                                R.bool.config_quickSettingsShowMediaPlayer);
         if (newValue != mIsMediaNotificationFilteringEnabled) {
             mIsMediaNotificationFilteringEnabled = newValue;
             updateConfig();

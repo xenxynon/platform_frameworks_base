@@ -26,12 +26,17 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.bouncer.data.repository.FakeKeyguardBouncerRepository
 import com.android.systemui.classifier.FalsingCollectorFake
 import com.android.systemui.common.ui.data.repository.FakeConfigurationRepository
+import com.android.systemui.common.ui.domain.interactor.ConfigurationInteractor
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntryUdfpsInteractor;
 import com.android.systemui.flags.FakeFeatureFlagsClassic
 import com.android.systemui.keyguard.data.repository.FakeCommandQueue
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
+import com.android.systemui.keyguard.data.repository.FakeKeyguardSurfaceBehindRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository
+import com.android.systemui.keyguard.data.repository.InWindowLauncherUnlockAnimationRepository
 import com.android.systemui.keyguard.domain.interactor.FromLockscreenTransitionInteractor
 import com.android.systemui.keyguard.domain.interactor.FromPrimaryBouncerTransitionInteractor
+import com.android.systemui.keyguard.domain.interactor.InWindowLauncherUnlockAnimationInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.plugins.statusbar.StatusBarStateController
@@ -41,12 +46,15 @@ import com.android.systemui.scene.SceneTestUtils
 import com.android.systemui.scene.shared.flag.FakeSceneContainerFlags
 import com.android.systemui.shade.data.repository.FakeShadeRepository
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
+import com.android.systemui.shade.domain.interactor.ShadeInteractorImpl
+import com.android.systemui.shade.domain.interactor.ShadeInteractorLegacyImpl
 import com.android.systemui.statusbar.disableflags.data.repository.FakeDisableFlagsRepository
 import com.android.systemui.statusbar.notification.stack.domain.interactor.SharedNotificationContainerInteractor
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.FakeUserSetupRepository
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController
 import com.android.systemui.statusbar.policy.data.repository.FakeDeviceProvisioningRepository
 import com.android.systemui.util.mockito.mock
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -61,8 +69,8 @@ import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
-import org.mockito.MockitoAnnotations
 import org.mockito.Mockito.`when` as whenever
+import org.mockito.MockitoAnnotations
 
 @SmallTest
 @RunWith(AndroidTestingRunner::class)
@@ -77,6 +85,7 @@ class StatusBarStateControllerImplTest : SysuiTestCase() {
         FromPrimaryBouncerTransitionInteractor
     @Mock lateinit var interactionJankMonitor: InteractionJankMonitor
     @Mock lateinit var mockDarkAnimator: ObjectAnimator
+    @Mock lateinit var deviceEntryUdfpsInteractor: DeviceEntryUdfpsInteractor
 
     private lateinit var controller: StatusBarStateControllerImpl
     private lateinit var uiEventLogger: UiEventLoggerFake
@@ -88,77 +97,102 @@ class StatusBarStateControllerImplTest : SysuiTestCase() {
         whenever(interactionJankMonitor.end(anyInt())).thenReturn(true)
 
         uiEventLogger = UiEventLoggerFake()
-        controller = object : StatusBarStateControllerImpl(
-            uiEventLogger,
-            interactionJankMonitor,
-            mock(),
-            { shadeInteractor }
-        ) {
-            override fun createDarkAnimator(): ObjectAnimator { return mockDarkAnimator }
-        }
+        controller =
+            object :
+                StatusBarStateControllerImpl(
+                    uiEventLogger,
+                    interactionJankMonitor,
+                    mock(),
+                    { shadeInteractor }
+                ) {
+                override fun createDarkAnimator(): ObjectAnimator {
+                    return mockDarkAnimator
+                }
+            }
 
-        val powerInteractor = PowerInteractor(
-            FakePowerRepository(),
-            FalsingCollectorFake(),
-            mock(),
-            controller)
+        val powerInteractor =
+            PowerInteractor(FakePowerRepository(), FalsingCollectorFake(), mock(), controller)
         val keyguardRepository = FakeKeyguardRepository()
         val keyguardTransitionRepository = FakeKeyguardTransitionRepository()
         val featureFlags = FakeFeatureFlagsClassic()
         val shadeRepository = FakeShadeRepository()
         val sceneContainerFlags = FakeSceneContainerFlags()
         val configurationRepository = FakeConfigurationRepository()
-        val keyguardInteractor = KeyguardInteractor(
-            keyguardRepository,
-            FakeCommandQueue(),
-            powerInteractor,
-            featureFlags,
-            sceneContainerFlags,
-            FakeKeyguardBouncerRepository(),
-            configurationRepository,
-            shadeRepository,
-            utils::sceneInteractor)
-        val keyguardTransitionInteractor = KeyguardTransitionInteractor(
-            testScope.backgroundScope,
-            keyguardTransitionRepository,
-            { keyguardInteractor },
-            { fromLockscreenTransitionInteractor },
-            { fromPrimaryBouncerTransitionInteractor })
-        fromLockscreenTransitionInteractor = FromLockscreenTransitionInteractor(
-            keyguardTransitionRepository,
-            keyguardTransitionInteractor,
-            testScope.backgroundScope,
-            keyguardInteractor,
-            featureFlags,
-            shadeRepository,
-            powerInteractor)
-        fromPrimaryBouncerTransitionInteractor = FromPrimaryBouncerTransitionInteractor(
-            keyguardTransitionRepository,
-            keyguardTransitionInteractor,
-            testScope.backgroundScope,
-            keyguardInteractor,
-            featureFlags,
-            mock(),
-            mock(),
-            powerInteractor)
-        shadeInteractor = ShadeInteractor(
-            testScope.backgroundScope,
-            FakeDeviceProvisioningRepository(),
-            FakeDisableFlagsRepository(),
-            mock(),
-            sceneContainerFlags,
-            utils::sceneInteractor,
-            keyguardRepository,
-            keyguardTransitionInteractor,
-            powerInteractor,
-            FakeUserSetupRepository(),
-            mock(),
-            SharedNotificationContainerInteractor(
-                configurationRepository,
-                mContext,
-                ResourcesSplitShadeStateController()),
-            shadeRepository,
-        )
+        val keyguardInteractor =
+            KeyguardInteractor(
+                keyguardRepository,
+                FakeCommandQueue(),
+                powerInteractor,
+                sceneContainerFlags,
+                FakeKeyguardBouncerRepository(),
+                ConfigurationInteractor(configurationRepository),
+                shadeRepository,
+                utils::sceneInteractor
+            )
+        val keyguardTransitionInteractor =
+            KeyguardTransitionInteractor(
+                testScope.backgroundScope,
+                keyguardTransitionRepository,
+                { keyguardInteractor },
+                { fromLockscreenTransitionInteractor },
+                { fromPrimaryBouncerTransitionInteractor }
+            )
+        fromLockscreenTransitionInteractor =
+            FromLockscreenTransitionInteractor(
+                keyguardTransitionRepository,
+                keyguardTransitionInteractor,
+                testScope.backgroundScope,
+                keyguardInteractor,
+                featureFlags,
+                shadeRepository,
+                powerInteractor,
+                {
+                    InWindowLauncherUnlockAnimationInteractor(
+                        InWindowLauncherUnlockAnimationRepository(),
+                        testScope,
+                        keyguardTransitionInteractor,
+                        { FakeKeyguardSurfaceBehindRepository() },
+                        mock(),
+                    )
+                }
+            )
+        fromPrimaryBouncerTransitionInteractor =
+            FromPrimaryBouncerTransitionInteractor(
+                keyguardTransitionRepository,
+                keyguardTransitionInteractor,
+                testScope.backgroundScope,
+                keyguardInteractor,
+                featureFlags,
+                mock(),
+                mock(),
+                powerInteractor
+            )
+
+        whenever(deviceEntryUdfpsInteractor.isUdfpsSupported).thenReturn(emptyFlow())
+        shadeInteractor =
+            ShadeInteractorImpl(
+                testScope.backgroundScope,
+                FakeDeviceProvisioningRepository(),
+                FakeDisableFlagsRepository(),
+                mock(),
+                keyguardRepository,
+                keyguardTransitionInteractor,
+                powerInteractor,
+                FakeUserSetupRepository(),
+                mock(),
+                ShadeInteractorLegacyImpl(
+                    testScope.backgroundScope,
+                    keyguardRepository,
+                    SharedNotificationContainerInteractor(
+                        configurationRepository,
+                        mContext,
+                        ResourcesSplitShadeStateController(),
+                        keyguardInteractor,
+                        deviceEntryUdfpsInteractor,
+                    ),
+                    shadeRepository,
+                )
+            )
     }
 
     @Test

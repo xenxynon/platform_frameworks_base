@@ -16,6 +16,12 @@
 
 package com.android.systemui.qs.tiles.di
 
+import android.content.Context
+import android.content.res.Resources.Theme
+import com.android.systemui.qs.external.CustomTileStatePersister
+import com.android.systemui.qs.external.CustomTileStatePersisterImpl
+import com.android.systemui.qs.tiles.base.actions.QSTileIntentUserInputHandler
+import com.android.systemui.qs.tiles.base.actions.QSTileIntentUserInputHandlerImpl
 import com.android.systemui.qs.tiles.impl.custom.di.CustomTileComponent
 import com.android.systemui.qs.tiles.viewmodel.QSTileConfig
 import com.android.systemui.qs.tiles.viewmodel.QSTileConfigProvider
@@ -23,6 +29,7 @@ import com.android.systemui.qs.tiles.viewmodel.QSTileConfigProviderImpl
 import com.android.systemui.qs.tiles.viewmodel.QSTileViewModel
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.multibindings.Multibinds
 
 /** Module listing subcomponents */
@@ -45,4 +52,17 @@ interface QSTilesModule {
     @Multibinds fun tileViewModelMap(): Map<String, QSTileViewModel>
 
     @Binds fun bindQSTileConfigProvider(impl: QSTileConfigProviderImpl): QSTileConfigProvider
+
+    @Binds
+    fun bindQSTileIntentUserInputHandler(
+        impl: QSTileIntentUserInputHandlerImpl
+    ): QSTileIntentUserInputHandler
+
+    @Binds
+    fun bindCustomTileStatePersister(impl: CustomTileStatePersisterImpl): CustomTileStatePersister
+
+    companion object {
+
+        @Provides fun provideTilesTheme(context: Context): Theme = context.theme
+    }
 }

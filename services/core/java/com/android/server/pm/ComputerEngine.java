@@ -60,6 +60,7 @@ import static com.android.server.pm.PackageManagerService.TAG;
 import static com.android.server.pm.PackageManagerServiceUtils.compareSignatureArrays;
 import static com.android.server.pm.PackageManagerServiceUtils.compareSignatures;
 import static com.android.server.pm.PackageManagerServiceUtils.isSystemOrRootOrShell;
+import static com.android.server.pm.parsing.PackageInfoUtils.getDeprecatedSignatures;
 import static com.android.server.pm.resolution.ComponentResolver.RESOLVE_PRIORITY_SORTER;
 
 import android.Manifest;
@@ -95,6 +96,7 @@ import android.content.pm.Signature;
 import android.content.pm.SigningDetails;
 import android.content.pm.SigningInfo;
 import android.content.pm.UserInfo;
+import android.content.pm.UserPackage;
 import android.content.pm.VersionedPackage;
 import android.os.Binder;
 import android.os.Build;
@@ -122,6 +124,12 @@ import android.util.Xml;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.pm.pkg.component.ParsedActivity;
+import com.android.internal.pm.pkg.component.ParsedInstrumentation;
+import com.android.internal.pm.pkg.component.ParsedIntentInfo;
+import com.android.internal.pm.pkg.component.ParsedMainComponent;
+import com.android.internal.pm.pkg.component.ParsedProvider;
+import com.android.internal.pm.pkg.component.ParsedService;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.IndentingPrintWriter;
@@ -140,12 +148,6 @@ import com.android.server.pm.pkg.PackageStateUtils;
 import com.android.server.pm.pkg.PackageUserStateInternal;
 import com.android.server.pm.pkg.PackageUserStateUtils;
 import com.android.server.pm.pkg.SharedUserApi;
-import com.android.server.pm.pkg.component.ParsedActivity;
-import com.android.server.pm.pkg.component.ParsedInstrumentation;
-import com.android.server.pm.pkg.component.ParsedIntentInfo;
-import com.android.server.pm.pkg.component.ParsedMainComponent;
-import com.android.server.pm.pkg.component.ParsedProvider;
-import com.android.server.pm.pkg.component.ParsedService;
 import com.android.server.pm.resolution.ComponentResolverApi;
 import com.android.server.pm.verify.domain.DomainVerificationManagerInternal;
 import com.android.server.uri.UriGrantsManagerInternal;
@@ -894,6 +896,9 @@ public class ComputerEngine implements Computer {
             @PackageManager.ResolveInfoFlagsBits long flags, int filterCallingUid, int userId) {
         ParsedActivity a = mComponentResolver.getActivity(component);
 
+        // Allow to match activities of quarantined packages.
+        flags |= PackageManager.MATCH_QUARANTINED_COMPONENTS;
+
         if (DEBUG_PACKAGE_INFO) Log.v(TAG, "getActivityInfo " + component + ": " + a);
 
         AndroidPackage pkg = a == null ? null : mPackages.get(a.getPackageName());
@@ -1525,11 +1530,16 @@ public class ComputerEngine implements Computer {
             ai.volumeUuid = ps.getVolumeUuid();
             ai.storageUuid = StorageManager.convert(ai.volumeUuid);
             ai.setVersionCode(ps.getVersionCode());
+            ai.targetSdkVersion = ps.getTargetSdkVersion();
             ai.flags = ps.getFlags();
             ai.privateFlags = ps.getPrivateFlags();
             pi.applicationInfo = PackageInfoUtils.generateDelegateApplicationInfo(
                     ai, flags, state, userId);
             pi.signingInfo = ps.getSigningInfo();
+            pi.signatures = getDeprecatedSignatures(pi.signingInfo.getSigningDetails(), flags);
+            if (state.getArchiveState() != null) {
+                pi.setArchiveTimeMillis(state.getArchiveState().getArchiveTimeMillis());
+            }
 
             if (DEBUG_PACKAGE_INFO) {
                 Log.v(TAG, "ps.pkg is n/a for ["
@@ -2451,7 +2461,8 @@ public class ComputerEngine implements Computer {
      */
     public final boolean shouldFilterApplication(@Nullable PackageStateInternal ps,
             int callingUid, @Nullable ComponentName component,
-            @PackageManager.ComponentType int componentType, int userId, boolean filterUninstall) {
+            @PackageManager.ComponentType int componentType, int userId, boolean filterUninstall,
+            boolean filterArchived) {
         if (Process.isSdkSandboxUid(callingUid)) {
             int clientAppUid = Process.getAppUidForSdkSandboxUid(callingUid);
             // SDK sandbox should be able to see it's client app
@@ -2465,14 +2476,20 @@ public class ComputerEngine implements Computer {
         }
         final String instantAppPkgName = getInstantAppPackageName(callingUid);
         final boolean callerIsInstantApp = instantAppPkgName != null;
+        final boolean packageArchivedForUser = ps != null && PackageArchiver.isArchived(
+                ps.getUserStateOrDefault(userId));
         // Don't treat hiddenUntilInstalled as an uninstalled state, phone app needs to access
         // these hidden application details to customize carrier apps. Also, allowing the system
         // caller accessing to application across users.
         if (ps == null
                 || (filterUninstall
-                        && !isSystemOrRootOrShell(callingUid)
-                        && !ps.isHiddenUntilInstalled()
-                        && !ps.getUserStateOrDefault(userId).isInstalled())) {
+                && !isSystemOrRootOrShell(callingUid)
+                && !ps.isHiddenUntilInstalled()
+                && !ps.getUserStateOrDefault(userId).isInstalled()
+                // Archived packages behave like uninstalled packages. So if filterUninstall is
+                // set to true, we dismiss filtering some uninstalled package only if it is
+                // archived and filterArchived is set as false.
+                && (!packageArchivedForUser || filterArchived))) {
             // If caller is instant app or sdk sandbox and ps is null, pretend the application
             // exists, but, needs to be filtered
             return (callerIsInstantApp || filterUninstall || Process.isSdkSandboxUid(callingUid));
@@ -2520,7 +2537,20 @@ public class ComputerEngine implements Computer {
     }
 
     /**
-     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean)
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
+     */
+    public final boolean shouldFilterApplication(@Nullable PackageStateInternal ps,
+            int callingUid, @Nullable ComponentName component,
+            @PackageManager.ComponentType int componentType, int userId, boolean filterUninstall) {
+        return shouldFilterApplication(
+                ps, callingUid, component, componentType, userId, filterUninstall,
+                true /* filterArchived */);
+    }
+
+    /**
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
      */
     public final boolean shouldFilterApplication(@Nullable PackageStateInternal ps,
             int callingUid, @Nullable ComponentName component,
@@ -2530,7 +2560,8 @@ public class ComputerEngine implements Computer {
     }
 
     /**
-     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean)
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
      */
     public final boolean shouldFilterApplication(
             @Nullable PackageStateInternal ps, int callingUid, int userId) {
@@ -2539,7 +2570,8 @@ public class ComputerEngine implements Computer {
     }
 
     /**
-     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean)
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
      */
     public final boolean shouldFilterApplication(@NonNull SharedUserSetting sus,
             int callingUid, int userId) {
@@ -2554,7 +2586,8 @@ public class ComputerEngine implements Computer {
     }
 
     /**
-     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean)
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
      */
     public final boolean shouldFilterApplicationIncludingUninstalled(
             @Nullable PackageStateInternal ps, int callingUid, int userId) {
@@ -2563,7 +2596,19 @@ public class ComputerEngine implements Computer {
     }
 
     /**
-     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean)
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
+     */
+    public final boolean shouldFilterApplicationIncludingUninstalledNotArchived(
+            @Nullable PackageStateInternal ps, int callingUid, int userId) {
+        return shouldFilterApplication(
+                ps, callingUid, null, TYPE_UNKNOWN, userId, true /* filterUninstall */,
+                false /* filterArchived */);
+    }
+
+    /**
+     * @see #shouldFilterApplication(PackageStateInternal, int, ComponentName, int, int, boolean,
+     * boolean)
      */
     public final boolean shouldFilterApplicationIncludingUninstalled(
             @NonNull SharedUserSetting sus, int callingUid, int userId) {
@@ -3820,17 +3865,15 @@ public class ComputerEngine implements Computer {
                 } finally {
                     Binder.restoreCallingIdentity(identity);
                 }
-
                 SharedLibraryInfo resLibInfo = new SharedLibraryInfo(libInfo.getPath(),
                         libInfo.getPackageName(), libInfo.getAllCodePaths(),
                         libInfo.getName(), libInfo.getLongVersion(),
                         libInfo.getType(), declaringPackage,
-                        getPackagesUsingSharedLibrary(libInfo, flags, callingUid, userId),
                         (libInfo.getDependencies() == null
                                 ? null
                                 : new ArrayList<>(libInfo.getDependencies())),
-                        libInfo.isNative());
-
+                        libInfo.isNative(),
+                        getPackagesUsingSharedLibrary(libInfo, flags, callingUid, userId));
                 if (result == null) {
                     result = new ArrayList<>();
                 }
@@ -3894,13 +3937,15 @@ public class ComputerEngine implements Computer {
         return false;
     }
 
+
     @Override
-    public List<VersionedPackage> getPackagesUsingSharedLibrary(@NonNull SharedLibraryInfo libInfo,
-            @PackageManager.PackageInfoFlagsBits long flags, int callingUid,
-            @UserIdInt int userId) {
+    public Pair<List<VersionedPackage>, List<Boolean>> getPackagesUsingSharedLibrary(
+            @NonNull SharedLibraryInfo libInfo, @PackageManager.PackageInfoFlagsBits long flags,
+            int callingUid, @UserIdInt int userId) {
         List<VersionedPackage> versionedPackages = null;
         final ArrayMap<String, ? extends PackageStateInternal> packageStates = getPackageStates();
         final int packageCount = packageStates.size();
+        List<Boolean> usesLibsOptional = null;
         for (int i = 0; i < packageCount; i++) {
             PackageStateInternal ps = packageStates.valueAt(i);
             if (ps == null) {
@@ -3917,12 +3962,15 @@ public class ComputerEngine implements Computer {
                         libInfo.isStatic() ? ps.getUsesStaticLibraries() : ps.getUsesSdkLibraries();
                 final long[] libsVersions = libInfo.isStatic() ? ps.getUsesStaticLibrariesVersions()
                         : ps.getUsesSdkLibrariesVersionsMajor();
+                final boolean[] libsOptional = libInfo.isSdk()
+                        ? ps.getUsesSdkLibrariesOptional() : null;
 
                 final int libIdx = ArrayUtils.indexOf(libs, libName);
                 if (libIdx < 0) {
                     continue;
                 }
                 if (libsVersions[libIdx] != libInfo.getLongVersion()) {
+                    // Not expected StaticLib/SdkLib version
                     continue;
                 }
                 if (shouldFilterApplication(ps, callingUid, userId)) {
@@ -3931,6 +3979,9 @@ public class ComputerEngine implements Computer {
                 if (versionedPackages == null) {
                     versionedPackages = new ArrayList<>();
                 }
+                if (usesLibsOptional == null) {
+                    usesLibsOptional = new ArrayList<>();
+                }
                 // If the dependent is a static shared lib, use the public package name
                 String dependentPackageName = ps.getPackageName();
                 if (ps.getPkg() != null && ps.getPkg().isStaticSharedLibrary()) {
@@ -3938,6 +3989,7 @@ public class ComputerEngine implements Computer {
                 }
                 versionedPackages.add(new VersionedPackage(dependentPackageName,
                         ps.getVersionCode()));
+                usesLibsOptional.add(libsOptional != null && libsOptional[libIdx]);
             } else if (ps.getPkg() != null) {
                 if (ArrayUtils.contains(ps.getPkg().getUsesLibraries(), libName)
                         || ArrayUtils.contains(ps.getPkg().getUsesOptionalLibraries(), libName)) {
@@ -3953,7 +4005,7 @@ public class ComputerEngine implements Computer {
             }
         }
 
-        return versionedPackages;
+        return new Pair<>(versionedPackages, usesLibsOptional);
     }
 
     @Nullable
@@ -4012,13 +4064,14 @@ public class ComputerEngine implements Computer {
                     Binder.restoreCallingIdentity(identity);
                 }
 
+                var usingSharedLibraryPair =
+                        getPackagesUsingSharedLibrary(libraryInfo, flags, callingUid, userId);
                 SharedLibraryInfo resultLibraryInfo = new SharedLibraryInfo(
                         libraryInfo.getPath(), libraryInfo.getPackageName(),
                         libraryInfo.getAllCodePaths(), libraryInfo.getName(),
                         libraryInfo.getLongVersion(), libraryInfo.getType(),
                         libraryInfo.getDeclaringPackage(),
-                        getPackagesUsingSharedLibrary(
-                                libraryInfo, flags, callingUid, userId),
+                        usingSharedLibraryPair.first,
                         libraryInfo.getDependencies() == null
                                 ? null : new ArrayList<>(libraryInfo.getDependencies()),
                         libraryInfo.isNative());
@@ -4584,7 +4637,7 @@ public class ComputerEngine implements Computer {
     @Override
     public List<ApplicationInfo> getInstalledApplications(
             @PackageManager.ApplicationInfoFlagsBits long flags, @UserIdInt int userId,
-            int callingUid) {
+            int callingUid, boolean forceAllowCrossUser) {
         if (getInstantAppPackageName(callingUid) != null) {
             return Collections.emptyList();
         }
@@ -4594,12 +4647,14 @@ public class ComputerEngine implements Computer {
         final boolean listApex = (flags & MATCH_APEX) != 0;
         final boolean listArchivedOnly = !listUninstalled && (flags & MATCH_ARCHIVED_PACKAGES) != 0;
 
-        enforceCrossUserPermission(
-                callingUid,
-                userId,
-                false /* requireFullPermission */,
-                false /* checkShell */,
-                "get installed application info");
+        if (!forceAllowCrossUser) {
+            enforceCrossUserPermission(
+                    callingUid,
+                    userId,
+                    false /* requireFullPermission */,
+                    false /* checkShell */,
+                    "get installed application info");
+        }
 
         ArrayList<ApplicationInfo> list;
         final ArrayMap<String, ? extends PackageStateInternal> packageStates =
@@ -4922,40 +4977,45 @@ public class ComputerEngine implements Computer {
         }
     }
 
-    private PackageUserStateInternal getUserStageOrDefaultForUser(@NonNull String packageName,
-            int userId) {
+    private PackageUserStateInternal getUserStateOrDefaultForUser(@NonNull String packageName,
+            int userId) throws PackageManager.NameNotFoundException {
         final int callingUid = Binder.getCallingUid();
         enforceCrossUserPermission(callingUid, userId, true /* requireFullPermission */,
                 false /* checkShell */, "when asking about packages for user " + userId);
         final PackageStateInternal ps = mSettings.getPackage(packageName);
         if (ps == null || shouldFilterApplicationIncludingUninstalled(ps, callingUid, userId)) {
-            throw new IllegalArgumentException("Unknown target package: " + packageName);
+            throw new PackageManager.NameNotFoundException(packageName);
         }
         return ps.getUserStateOrDefault(userId);
     }
 
     @Override
-    public boolean isPackageSuspendedForUser(@NonNull String packageName, int userId) {
-        return getUserStageOrDefaultForUser(packageName, userId).isSuspended();
+    public boolean isPackageSuspendedForUser(@NonNull String packageName, int userId)
+            throws PackageManager.NameNotFoundException {
+        return getUserStateOrDefaultForUser(packageName, userId).isSuspended();
     }
 
     @Override
-    public boolean isPackageQuarantinedForUser(@NonNull String packageName, @UserIdInt int userId) {
-        return getUserStageOrDefaultForUser(packageName, userId).isQuarantined();
+    public boolean isPackageQuarantinedForUser(@NonNull String packageName, @UserIdInt int userId)
+            throws PackageManager.NameNotFoundException {
+        return getUserStateOrDefaultForUser(packageName, userId).isQuarantined();
     }
 
     @Override
-    public boolean isPackageStoppedForUser(@NonNull String packageName, @UserIdInt int userId) {
-        return getUserStageOrDefaultForUser(packageName, userId).isStopped();
+    public boolean isPackageStoppedForUser(@NonNull String packageName, @UserIdInt int userId)
+            throws PackageManager.NameNotFoundException {
+        return getUserStateOrDefaultForUser(packageName, userId).isStopped();
     }
 
     @Override
     public boolean isSuspendingAnyPackages(@NonNull String suspendingPackage,
-            @UserIdInt int userId) {
+            @UserIdInt int suspendingUserId, int targetUserId) {
+        final UserPackage suspender = UserPackage.of(suspendingUserId, suspendingPackage);
         for (final PackageStateInternal packageState : getPackageStates().values()) {
-            final PackageUserStateInternal state = packageState.getUserStateOrDefault(userId);
+            final PackageUserStateInternal state =
+                    packageState.getUserStateOrDefault(targetUserId);
             if (state.getSuspendParams() != null
-                    && state.getSuspendParams().containsKey(suspendingPackage)) {
+                    && state.getSuspendParams().containsKey(suspender)) {
                 return true;
             }
         }
@@ -5011,7 +5071,7 @@ public class ComputerEngine implements Computer {
         String installerPackageName = installSource.mInstallerPackageName;
         if (installerPackageName != null) {
             final PackageStateInternal ps = mSettings.getPackage(installerPackageName);
-            if (ps == null || shouldFilterApplicationIncludingUninstalled(ps, callingUid,
+            if (ps == null || shouldFilterApplicationIncludingUninstalledNotArchived(ps, callingUid,
                     UserHandle.getUserId(callingUid))) {
                 installerPackageName = null;
             }
@@ -5029,7 +5089,8 @@ public class ComputerEngine implements Computer {
             return InstallSource.EMPTY;
         }
 
-        if (ps == null || shouldFilterApplicationIncludingUninstalled(ps, callingUid, userId)) {
+        if (ps == null || shouldFilterApplicationIncludingUninstalledNotArchived(ps, callingUid,
+                userId)) {
             return null;
         }
 

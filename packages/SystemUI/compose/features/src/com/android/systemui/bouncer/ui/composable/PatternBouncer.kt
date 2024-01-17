@@ -24,8 +24,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,11 +41,11 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.integerResource
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.Easings
 import com.android.compose.modifiers.thenIf
@@ -59,14 +62,20 @@ import kotlinx.coroutines.launch
  * UI for the input part of a pattern-requiring version of the bouncer.
  *
  * The user can press, hold, and drag their pointer to select dots along a grid of dots.
+ *
+ * If [centerDotsVertically] is `true`, the dots should be centered along the axis of interest; if
+ * `false`, the dots will be pushed towards the end/bottom of the axis.
  */
 @Composable
 internal fun PatternBouncer(
     viewModel: PatternBouncerViewModel,
+    centerDotsVertically: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // Report that the UI is shown to let the view-model run some logic.
-    LaunchedEffect(Unit) { viewModel.onShown() }
+    DisposableEffect(Unit) {
+        viewModel.onShown()
+        onDispose { viewModel.onHidden() }
+    }
 
     val colCount = viewModel.columnCount
     val rowCount = viewModel.rowCount
@@ -75,12 +84,6 @@ internal fun PatternBouncer(
     val dotRadius = with(LocalDensity.current) { (DOT_DIAMETER_DP / 2).dp.toPx() }
     val lineColor = MaterialTheme.colorScheme.primary
     val lineStrokeWidth = with(LocalDensity.current) { LINE_STROKE_WIDTH_DP.dp.toPx() }
-
-    var containerSize: IntSize by remember { mutableStateOf(IntSize(0, 0)) }
-    val horizontalSpacing = containerSize.width / colCount
-    val verticalSpacing = containerSize.height / rowCount
-    val spacing = min(horizontalSpacing, verticalSpacing).toFloat()
-    val verticalOffset = containerSize.height - spacing * rowCount
 
     // All dots that should be rendered on the grid.
     val dots: List<PatternDotViewModel> by viewModel.dots.collectAsState()
@@ -192,13 +195,24 @@ internal fun PatternBouncer(
 
     // This is the position of the input pointer.
     var inputPosition: Offset? by remember { mutableStateOf(null) }
+    var gridCoordinates: LayoutCoordinates? by remember { mutableStateOf(null) }
+    var offset: Offset by remember { mutableStateOf(Offset.Zero) }
+    var scale: Float by remember { mutableStateOf(1f) }
 
     Canvas(
         modifier
+            // Because the width also includes spacing to the left and right of the leftmost and
+            // rightmost dots in the grid and because UX mocks specify the width without that
+            // spacing, the actual width needs to be defined slightly bigger than the UX mock width.
+            .width((262 * colCount / 2).dp)
+            // Because the height also includes spacing above and below the topmost and bottommost
+            // dots in the grid and because UX mocks specify the height without that spacing, the
+            // actual height needs to be defined slightly bigger than the UX mock height.
+            .height((262 * rowCount / 2).dp)
             // Need to clip to bounds to make sure that the lines don't follow the input pointer
             // when it leaves the bounds of the dot grid.
             .clipToBounds()
-            .onSizeChanged { containerSize = it }
+            .onGloballyPositioned { coordinates -> gridCoordinates = coordinates }
             .thenIf(isInputEnabled) {
                 Modifier.pointerInput(Unit) {
                         awaitEachGesture {
@@ -226,65 +240,97 @@ internal fun PatternBouncer(
                             },
                         ) { change, _ ->
                             inputPosition = change.position
-                            viewModel.onDrag(
-                                xPx = change.position.x,
-                                yPx = change.position.y,
-                                containerSizePx = containerSize.width,
-                                verticalOffsetPx = verticalOffset,
-                            )
+                            change.position.minus(offset).div(scale).let {
+                                viewModel.onDrag(
+                                    xPx = it.x,
+                                    yPx = it.y,
+                                    containerSizePx = size.width,
+                                )
+                            }
                         }
                     }
             }
     ) {
-        if (isAnimationEnabled) {
-            // Draw lines between dots.
-            selectedDots.forEachIndexed { index, dot ->
-                if (index > 0) {
-                    val previousDot = selectedDots[index - 1]
-                    val lineFadeOutAnimationProgress = lineFadeOutAnimatables[previousDot]!!.value
-                    val startLerp = 1 - lineFadeOutAnimationProgress
-                    val from = pixelOffset(previousDot, spacing, verticalOffset)
-                    val to = pixelOffset(dot, spacing, verticalOffset)
-                    val lerpedFrom =
-                        Offset(
-                            x = from.x + (to.x - from.x) * startLerp,
-                            y = from.y + (to.y - from.y) * startLerp,
+        gridCoordinates?.let { nonNullCoordinates ->
+            val containerSize = nonNullCoordinates.size
+            if (containerSize.width <= 0 || containerSize.height <= 0) {
+                return@let
+            }
+
+            val horizontalSpacing = containerSize.width.toFloat() / colCount
+            val verticalSpacing = containerSize.height.toFloat() / rowCount
+            val spacing = min(horizontalSpacing, verticalSpacing)
+            val horizontalOffset =
+                offset(
+                    availableSize = containerSize.width,
+                    spacingPerDot = spacing,
+                    dotCount = colCount,
+                    isCentered = true,
+                )
+            val verticalOffset =
+                offset(
+                    availableSize = containerSize.height,
+                    spacingPerDot = spacing,
+                    dotCount = rowCount,
+                    isCentered = centerDotsVertically,
+                )
+            offset = Offset(horizontalOffset, verticalOffset)
+            scale = (colCount * spacing) / containerSize.width
+
+            if (isAnimationEnabled) {
+                // Draw lines between dots.
+                selectedDots.forEachIndexed { index, dot ->
+                    if (index > 0) {
+                        val previousDot = selectedDots[index - 1]
+                        val lineFadeOutAnimationProgress =
+                            lineFadeOutAnimatables[previousDot]!!.value
+                        val startLerp = 1 - lineFadeOutAnimationProgress
+                        val from =
+                            pixelOffset(previousDot, spacing, horizontalOffset, verticalOffset)
+                        val to = pixelOffset(dot, spacing, horizontalOffset, verticalOffset)
+                        val lerpedFrom =
+                            Offset(
+                                x = from.x + (to.x - from.x) * startLerp,
+                                y = from.y + (to.y - from.y) * startLerp,
+                            )
+                        drawLine(
+                            start = lerpedFrom,
+                            end = to,
+                            cap = StrokeCap.Round,
+                            alpha = lineFadeOutAnimationProgress * lineAlpha(spacing),
+                            color = lineColor,
+                            strokeWidth = lineStrokeWidth,
                         )
-                    drawLine(
-                        start = lerpedFrom,
-                        end = to,
-                        cap = StrokeCap.Round,
-                        alpha = lineFadeOutAnimationProgress * lineAlpha(spacing),
-                        color = lineColor,
-                        strokeWidth = lineStrokeWidth,
-                    )
+                    }
+                }
+
+                // Draw the line between the most recently-selected dot and the input pointer
+                // position.
+                inputPosition?.let { lineEnd ->
+                    currentDot?.let { dot ->
+                        val from = pixelOffset(dot, spacing, horizontalOffset, verticalOffset)
+                        val lineLength =
+                            sqrt((from.y - lineEnd.y).pow(2) + (from.x - lineEnd.x).pow(2))
+                        drawLine(
+                            start = from,
+                            end = lineEnd,
+                            cap = StrokeCap.Round,
+                            alpha = lineAlpha(spacing, lineLength),
+                            color = lineColor,
+                            strokeWidth = lineStrokeWidth,
+                        )
+                    }
                 }
             }
 
-            // Draw the line between the most recently-selected dot and the input pointer position.
-            inputPosition?.let { lineEnd ->
-                currentDot?.let { dot ->
-                    val from = pixelOffset(dot, spacing, verticalOffset)
-                    val lineLength = sqrt((from.y - lineEnd.y).pow(2) + (from.x - lineEnd.x).pow(2))
-                    drawLine(
-                        start = from,
-                        end = lineEnd,
-                        cap = StrokeCap.Round,
-                        alpha = lineAlpha(spacing, lineLength),
-                        color = lineColor,
-                        strokeWidth = lineStrokeWidth,
-                    )
-                }
+            // Draw each dot on the grid.
+            dots.forEach { dot ->
+                drawCircle(
+                    center = pixelOffset(dot, spacing, horizontalOffset, verticalOffset),
+                    color = dotColor,
+                    radius = dotRadius * (dotScalingAnimatables[dot]?.value ?: 1f),
+                )
             }
-        }
-
-        // Draw each dot on the grid.
-        dots.forEach { dot ->
-            drawCircle(
-                center = pixelOffset(dot, spacing, verticalOffset),
-                color = dotColor,
-                radius = dotRadius * (dotScalingAnimatables[dot]?.value ?: 1f),
-            )
         }
     }
 }
@@ -293,10 +339,11 @@ internal fun PatternBouncer(
 private fun pixelOffset(
     dot: PatternDotViewModel,
     spacing: Float,
+    horizontalOffset: Float,
     verticalOffset: Float,
 ): Offset {
     return Offset(
-        x = dot.x * spacing + spacing / 2,
+        x = dot.x * spacing + spacing / 2 + horizontalOffset,
         y = dot.y * spacing + spacing / 2 + verticalOffset,
     )
 }
@@ -360,6 +407,31 @@ private suspend fun showFailureAnimation(
                 }
             }
         }
+    }
+}
+
+/**
+ * Returns the amount of offset along the axis, in pixels, that should be applied to all dots.
+ *
+ * @param availableSize The size of the container, along the axis of interest.
+ * @param spacingPerDot The amount of pixels that each dot should take (including the area around
+ *   that dot).
+ * @param dotCount The number of dots along the axis (e.g. if the axis of interest is the
+ *   horizontal/x axis, this is the number of columns in the dot grid).
+ * @param isCentered Whether the dots should be centered along the axis of interest; if `false`, the
+ *   dots will be pushed towards to end/bottom of the axis.
+ */
+private fun offset(
+    availableSize: Int,
+    spacingPerDot: Float,
+    dotCount: Int,
+    isCentered: Boolean = false,
+): Float {
+    val default = availableSize - spacingPerDot * dotCount
+    return if (isCentered) {
+        default / 2
+    } else {
+        default
     }
 }
 

@@ -636,6 +636,7 @@ public class TransitionTests extends WindowTestsBase {
         transition.collect(app);
         controller.requestStartTransition(transition, null /* startTask */, remoteTransition,
                 null /* displayChange */);
+        assertTrue(delegateProc.isRunningRemoteTransition());
         testPlayer.startTransition();
         app.onStartingWindowDrawn();
         // The task appeared event should be deferred until transition ready.
@@ -643,7 +644,6 @@ public class TransitionTests extends WindowTestsBase {
         testPlayer.onTransactionReady(app.getSyncTransaction());
         assertTrue(task.taskAppearedReady());
         assertTrue(playerProc.isRunningRemoteTransition());
-        assertTrue(delegateProc.isRunningRemoteTransition());
         assertTrue(controller.mRemotePlayer.reportRunning(delegateProc.getThread()));
         assertTrue(app.isVisible());
 
@@ -1115,6 +1115,12 @@ public class TransitionTests extends WindowTestsBase {
         assertFalse(asyncRotationController.handleFinishDrawing(statusBar, mMockT));
         assertTrue(asyncRotationController.isTargetToken(statusBar.mToken));
 
+        // Window surface position is frozen while seamless rotation state is active.
+        final Point prevPos = new Point(screenDecor.mLastSurfacePosition);
+        screenDecor.getFrame().left += 1;
+        screenDecor.updateSurfacePosition(mMockT);
+        assertEquals(prevPos, screenDecor.mLastSurfacePosition);
+
         final SurfaceControl.Transaction startTransaction = mock(SurfaceControl.Transaction.class);
         final SurfaceControl.TransactionCommittedListener transactionCommittedListener =
                 onRotationTransactionReady(player, startTransaction);
@@ -1439,6 +1445,7 @@ public class TransitionTests extends WindowTestsBase {
         activity1.setVisibleRequested(true);
         activity1.setVisible(true);
         activity2.setVisibleRequested(false);
+        activity1.setState(ActivityRecord.State.RESUMED, "test");
 
         // Using abort to force-finish the sync (since we can't wait for drawing in unit test).
         // We didn't call abort on the transition itself, so it will still run onTransactionReady
@@ -1517,6 +1524,8 @@ public class TransitionTests extends WindowTestsBase {
         // Make sure activity1 visibility was committed
         assertFalse(activity1.isVisible());
         assertFalse(activity1.app.hasActivityInVisibleTask());
+        // Make sure the userLeaving is true and the resuming activity is given,
+        verify(task1).startPausing(eq(true), anyBoolean(), eq(activity2), any());
 
         verify(taskSnapshotController, times(1)).recordSnapshot(eq(task1));
         assertTrue(enteringAnimReports.contains(activity2));
@@ -2006,6 +2015,9 @@ public class TransitionTests extends WindowTestsBase {
         transition.collect(leafTaskA);
         rootTaskA.moveToFront("test", leafTaskA);
 
+        // Test has order changes, a shallow check of order changes
+        assertTrue(transition.hasOrderChanges());
+
         // All the tasks were already visible, so there shouldn't be any changes
         ArrayList<Transition.ChangeInfo> targets = Transition.calculateTargets(
                 participants, changes);
@@ -2438,41 +2450,37 @@ public class TransitionTests extends WindowTestsBase {
 
     @Test
     public void testTransitionsTriggerPerformanceHints() {
-        assumeTrue(explicitRefreshRateHints());
-        SystemPerformanceHinter systemPerformanceHinter = mock(SystemPerformanceHinter.class);
-        final TransitionController controller = new TestTransitionController(mAtm);
+        final boolean explicitRefreshRateHints = explicitRefreshRateHints();
+        final var session = new SystemPerformanceHinter.HighPerfSession[1];
+        if (explicitRefreshRateHints) {
+            final SystemPerformanceHinter perfHinter = mWm.mSystemPerformanceHinter;
+            spyOn(perfHinter);
+            doAnswer(invocation -> {
+                session[0] = (SystemPerformanceHinter.HighPerfSession) invocation.callRealMethod();
+                spyOn(session[0]);
+                return session[0];
+            }).when(perfHinter).createSession(anyInt(), anyInt(), anyString());
+        }
+        final TransitionController controller = mDisplayContent.mTransitionController;
         final TestTransitionPlayer player = registerTestTransitionPlayer();
-
-        mSyncEngine = createTestBLASTSyncEngine();
-        controller.setSyncEngine(mSyncEngine);
-        controller.setSystemPerformanceHinter(systemPerformanceHinter);
-        SystemPerformanceHinter.HighPerfSession session = mock(
-                SystemPerformanceHinter.HighPerfSession.class);
-        doReturn(session).when(systemPerformanceHinter).startSession(anyInt(), anyInt(),
-                anyString());
-
+        final ActivityRecord app = new ActivityBuilder(mAtm).setCreateTask(true).build();
         final Transition transitA = createTestTransition(TRANSIT_OPEN, controller);
-        final Task task = createTask(mDisplayContent,
-                WINDOWING_MODE_FREEFORM, ACTIVITY_TYPE_STANDARD);
-        final ActivityRecord act = createActivityRecord(task);
-        act.setVisibleRequested(true);
-        act.setVisible(true);
+        controller.moveToCollecting(transitA);
+        transitA.collectExistenceChange(app);
+        controller.requestStartTransition(transitA, app.getTask(),
+                null /* remoteTransition */, null /* displayChange */);
+        player.start();
 
-        controller.startCollectOrQueue(transitA, (deferred) -> {
-        });
-        transitA.collect(act);
+        verify(mDisplayContent).enableHighPerfTransition(true);
+        if (explicitRefreshRateHints) {
+            verify(session[0]).start();
+        }
 
-        verify(systemPerformanceHinter).startSession(
-                eq(SystemPerformanceHinter.HINT_SF), anyInt(), eq("Transition collected"));
-
-        transitA.start();
-        transitA.setAllReady();
-
-        // Aborting here doesn't abort the transition, it aborts the sync allowing the transition to
-        // finish successfully.
-        mSyncEngine.abort(transitA.getSyncId());
-        controller.finishTransition(transitA);
-        verify(session).close();
+        player.finish();
+        verify(mDisplayContent).enableHighPerfTransition(false);
+        if (explicitRefreshRateHints) {
+            verify(session[0]).close();
+        }
     }
 
     @Test

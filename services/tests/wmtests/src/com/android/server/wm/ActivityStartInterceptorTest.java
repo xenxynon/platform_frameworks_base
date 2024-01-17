@@ -49,6 +49,7 @@ import android.content.pm.IPackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.SuspendDialogInfo;
 import android.content.pm.UserInfo;
+import android.content.pm.UserPackage;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -195,7 +196,7 @@ public class ActivityStartInterceptorTest {
         mAInfo.applicationInfo.flags = FLAG_SUSPENDED;
 
         when(mPackageManagerInternal.getSuspendingPackage(TEST_PACKAGE_NAME, TEST_USER_ID))
-                .thenReturn(PLATFORM_PACKAGE_NAME);
+                .thenReturn(UserPackage.of(TEST_USER_ID, PLATFORM_PACKAGE_NAME));
 
         // THEN calling intercept returns true
         assertTrue(mInterceptor.intercept(null, null, mAInfo, null, null, null, 0, 0, null, null));
@@ -227,9 +228,10 @@ public class ActivityStartInterceptorTest {
                 .setMessage("Test Message")
                 .setIcon(0x11110001)
                 .build();
+        UserPackage suspender = UserPackage.of(TEST_USER_ID, suspendingPackage);
         when(mPackageManagerInternal.getSuspendingPackage(TEST_PACKAGE_NAME, TEST_USER_ID))
-                .thenReturn(suspendingPackage);
-        when(mPackageManagerInternal.getSuspendedDialogInfo(TEST_PACKAGE_NAME, suspendingPackage,
+                .thenReturn(suspender);
+        when(mPackageManagerInternal.getSuspendedDialogInfo(TEST_PACKAGE_NAME, suspender,
                 TEST_USER_ID)).thenReturn(dialogInfo);
         return dialogInfo;
     }
@@ -247,39 +249,9 @@ public class ActivityStartInterceptorTest {
     }
 
     @Test
-    public void testInterceptQuietProfile_keepProfilesRunningEnabled() {
-        // GIVEN that the user the activity is starting as is currently in quiet mode and
-        // profiles are kept running when in quiet mode.
+    public void testInterceptQuietProfile() {
+        // GIVEN that the user the activity is starting as is currently in quiet mode
         when(mUserManager.isQuietModeEnabled(eq(UserHandle.of(TEST_USER_ID)))).thenReturn(true);
-        when(mDevicePolicyManager.isKeepProfilesRunningEnabled()).thenReturn(true);
-
-        // THEN calling intercept returns false because package also has to be suspended.
-        assertFalse(
-                mInterceptor.intercept(null, null, mAInfo, null, null,  null, 0, 0, null, null));
-    }
-
-    @Test
-    public void testInterceptQuietProfile_keepProfilesRunningDisabled() {
-        // GIVEN that the user the activity is starting as is currently in quiet mode and
-        // profiles are stopped when in quiet mode (pre-U behavior, no profile app suspension).
-        when(mUserManager.isQuietModeEnabled(eq(UserHandle.of(TEST_USER_ID)))).thenReturn(true);
-        when(mDevicePolicyManager.isKeepProfilesRunningEnabled()).thenReturn(false);
-
-        // THEN calling intercept returns true
-        assertTrue(mInterceptor.intercept(null, null, mAInfo, null, null,  null, 0, 0, null, null));
-
-        // THEN the returned intent is the quiet mode intent
-        assertTrue(UnlaunchableAppActivity.createInQuietModeDialogIntent(TEST_USER_ID)
-                .filterEquals(mInterceptor.mIntent));
-    }
-
-    @Test
-    public void testInterceptQuietProfileWhenPackageSuspended_keepProfilesRunningEnabled() {
-        // GIVEN that the user the activity is starting as is currently in quiet mode,
-        // the package is suspended and profiles are kept running while in quiet mode.
-        suspendPackage("com.test.suspending.package");
-        when(mUserManager.isQuietModeEnabled(eq(UserHandle.of(TEST_USER_ID)))).thenReturn(true);
-        when(mDevicePolicyManager.isKeepProfilesRunningEnabled()).thenReturn(true);
 
         // THEN calling intercept returns true
         assertTrue(mInterceptor.intercept(null, null, mAInfo, null, null, null, 0, 0, null, null));
@@ -290,12 +262,10 @@ public class ActivityStartInterceptorTest {
     }
 
     @Test
-    public void testInterceptQuietProfileWhenPackageSuspended_keepProfilesRunningDisabled() {
-        // GIVEN that the user the activity is starting as is currently in quiet mode,
-        // the package is suspended and profiles are stopped while in quiet mode.
+    public void testInterceptQuietProfileWhenPackageSuspended() {
         suspendPackage("com.test.suspending.package");
+        // GIVEN that the user the activity is starting as is currently in quiet mode
         when(mUserManager.isQuietModeEnabled(eq(UserHandle.of(TEST_USER_ID)))).thenReturn(true);
-        when(mDevicePolicyManager.isKeepProfilesRunningEnabled()).thenReturn(false);
 
         // THEN calling intercept returns true
         assertTrue(mInterceptor.intercept(null, null, mAInfo, null, null, null, 0, 0, null, null));

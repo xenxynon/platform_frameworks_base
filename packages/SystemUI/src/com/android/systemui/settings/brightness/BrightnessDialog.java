@@ -39,6 +39,7 @@ import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.res.R;
+import com.android.systemui.shade.domain.interactor.ShadeInteractor;
 import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 
@@ -58,18 +59,21 @@ public class BrightnessDialog extends Activity {
     private final DelayableExecutor mMainExecutor;
     private final AccessibilityManagerWrapper mAccessibilityMgr;
     private Runnable mCancelTimeoutRunnable;
+    private final ShadeInteractor mShadeInteractor;
 
     @Inject
     public BrightnessDialog(
             BrightnessSliderController.Factory brightnessSliderfactory,
             BrightnessController.Factory brightnessControllerFactory,
             @Main DelayableExecutor mainExecutor,
-            AccessibilityManagerWrapper accessibilityMgr
+            AccessibilityManagerWrapper accessibilityMgr,
+            ShadeInteractor shadeInteractor
     ) {
         mToggleSliderFactory = brightnessSliderfactory;
         mBrightnessControllerFactory = brightnessControllerFactory;
         mMainExecutor = mainExecutor;
         mAccessibilityMgr = accessibilityMgr;
+        mShadeInteractor = shadeInteractor;
     }
 
 
@@ -79,6 +83,10 @@ public class BrightnessDialog extends Activity {
         setWindowAttributes();
         setContentView(R.layout.brightness_mirror_container);
         setBrightnessDialogViewAttributes();
+
+        if (mShadeInteractor.isQsExpanded().getValue()) {
+            finish();
+        }
     }
 
     private void setWindowAttributes() {
@@ -181,10 +189,14 @@ public class BrightnessDialog extends Activity {
             if (mCancelTimeoutRunnable != null) {
                 mCancelTimeoutRunnable.run();
             }
-            finish();
+            requestFinish();
         }
 
         return super.onKeyDown(keyCode, event);
+    }
+
+    protected void requestFinish() {
+        finish();
     }
 
     private boolean triggeredByBrightnessKey() {
@@ -197,6 +209,6 @@ public class BrightnessDialog extends Activity {
         }
         final int timeout = mAccessibilityMgr.getRecommendedTimeoutMillis(DIALOG_TIMEOUT_MILLIS,
                 AccessibilityManager.FLAG_CONTENT_CONTROLS);
-        mCancelTimeoutRunnable = mMainExecutor.executeDelayed(this::finish, timeout);
+        mCancelTimeoutRunnable = mMainExecutor.executeDelayed(this::requestFinish, timeout);
     }
 }

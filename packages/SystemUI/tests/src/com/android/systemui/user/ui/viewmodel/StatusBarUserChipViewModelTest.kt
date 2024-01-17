@@ -233,11 +233,7 @@ class StatusBarUserChipViewModelTest : SysuiTestCase() {
         }
 
     private fun viewModel(): StatusBarUserChipViewModel {
-        val featureFlags =
-            FakeFeatureFlags().apply {
-                set(Flags.FULL_SCREEN_USER_SWITCHER, false)
-                set(Flags.FACE_AUTH_REFACTOR, true)
-            }
+        val featureFlags = FakeFeatureFlags().apply { set(Flags.FULL_SCREEN_USER_SWITCHER, false) }
         runBlocking {
             userRepository.setUserInfos(listOf(USER_0))
             userRepository.setSelectedUserInfo(USER_0)
@@ -262,6 +258,7 @@ class StatusBarUserChipViewModelTest : SysuiTestCase() {
                     broadcastDispatcher = fakeBroadcastDispatcher,
                     keyguardUpdateMonitor = keyguardUpdateMonitor,
                     backgroundDispatcher = testDispatcher,
+                    mainDispatcher = testDispatcher,
                     activityManager = activityManager,
                     refreshUsersScheduler = refreshUsersScheduler,
                     guestUserInteractor = guestUserInteractor,

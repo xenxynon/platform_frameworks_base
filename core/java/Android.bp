@@ -226,7 +226,6 @@ filegroup {
         "com/android/internal/util/ConcurrentUtils.java",
         "com/android/internal/util/DumpUtils.java",
         "com/android/internal/util/FastPrintWriter.java",
-        "com/android/internal/util/FastXmlSerializer.java",
         "com/android/internal/util/FunctionalUtils.java",
         "com/android/internal/util/ParseUtils.java",
         "com/android/internal/util/RingBufferIndices.java",
@@ -414,6 +413,10 @@ aidl_interface {
     backend: {
         rust: {
             enabled: true,
+            apex_available: [
+                "//apex_available:platform",
+                "com.android.virt",
+            ],
         },
     },
 }
@@ -465,7 +468,6 @@ filegroup {
         "com/android/internal/util/AsyncChannel.java",
         "com/android/internal/util/AsyncService.java",
         "com/android/internal/util/BitwiseInputStream.java",
-        "com/android/internal/util/FastXmlSerializer.java",
         "com/android/internal/util/HexDump.java",
         "com/android/internal/util/IndentingPrintWriter.java",
         "com/android/internal/util/UserIcons.java",
@@ -515,7 +517,6 @@ filegroup {
         "android/net/InterfaceConfiguration.java",
         "android/util/BackupUtils.java",
         "android/util/Rational.java",
-        "com/android/internal/util/FastXmlSerializer.java",
         "com/android/internal/util/HexDump.java",
         "com/android/internal/util/MessageUtils.java",
         "com/android/internal/util/WakeupMessage.java",
@@ -542,6 +543,15 @@ filegroup {
     ],
     exclude_srcs: [
         "com/android/internal/protolog/common/ProtoLog.java",
+    ],
+}
+
+// PackageManager common
+filegroup {
+    name: "framework-pm-common-shared-srcs",
+    srcs: [
+        "com/android/server/pm/pkg/AndroidPackage.java",
+        "com/android/server/pm/pkg/AndroidPackageSplit.java",
     ],
 }
 

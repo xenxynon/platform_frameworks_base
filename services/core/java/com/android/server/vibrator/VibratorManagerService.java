@@ -63,7 +63,6 @@ import android.util.IndentingPrintWriter;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
-import android.view.Display;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -92,6 +91,8 @@ import java.util.function.Function;
 public class VibratorManagerService extends IVibratorManagerService.Stub {
     private static final String TAG = "VibratorManagerService";
     private static final String EXTERNAL_VIBRATOR_SERVICE = "external_vibrator_service";
+    private static final String VIBRATOR_CONTROL_SERVICE =
+            "android.frameworks.vibrator.IVibratorControlService/default";
     private static final boolean DEBUG = false;
     private static final VibrationAttributes DEFAULT_ATTRIBUTES =
             new VibrationAttributes.Builder().build();
@@ -270,6 +271,11 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         context.registerReceiver(mIntentReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
 
         injector.addService(EXTERNAL_VIBRATOR_SERVICE, new ExternalVibratorService());
+        if (ServiceManager.isDeclared(VIBRATOR_CONTROL_SERVICE)) {
+            injector.addService(VIBRATOR_CONTROL_SERVICE,
+                    new VibratorControlService(new VibratorControllerHolder(), mLock));
+        }
+
     }
 
     /** Finish initialization at boot phase {@link SystemService#PHASE_SYSTEM_SERVICES_READY}. */
@@ -385,7 +391,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
                     return false;
                 }
                 AlwaysOnVibration alwaysOnVibration = new AlwaysOnVibration(alwaysOnId,
-                        new Vibration.CallerInfo(attrs, uid, Display.DEFAULT_DISPLAY, opPkg,
+                        new Vibration.CallerInfo(attrs, uid, Context.DEVICE_ID_DEFAULT, opPkg,
                                 null), effects);
                 mAlwaysOnEffects.put(alwaysOnId, alwaysOnVibration);
                 updateAlwaysOnLocked(alwaysOnVibration);
@@ -397,16 +403,20 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     }
 
     @Override // Binder call
-    public void vibrate(int uid, int displayId, String opPkg, @NonNull CombinedVibration effect,
+    public void vibrate(int uid, int deviceId, String opPkg, @NonNull CombinedVibration effect,
             @Nullable VibrationAttributes attrs, String reason, IBinder token) {
-        vibrateWithPermissionCheck(uid, displayId, opPkg, effect, attrs, reason, token);
+        vibrateWithPermissionCheck(uid, deviceId, opPkg, effect, attrs, reason, token);
     }
 
     @Override // Binder call
     public void performHapticFeedback(
-            int uid, int displayId, String opPkg, int constant, boolean always, String reason,
-            IBinder token) {
-        performHapticFeedbackInternal(uid, displayId, opPkg, constant, always, reason, token);
+            int uid, int deviceId, String opPkg, int constant, boolean always, String reason) {
+        // Note that the `performHapticFeedback` method does not take a token argument from the
+        // caller, and instead, uses this service as the token. This is to mitigate performance
+        // impact that would otherwise be caused due to marshal latency. Haptic feedback effects are
+        // short-lived, so we don't need to cancel when the process dies.
+        performHapticFeedbackInternal(
+                uid, deviceId, opPkg, constant, always, reason, /* token= */ this);
     }
 
     /**
@@ -417,7 +427,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
     @VisibleForTesting
     @Nullable
     HalVibration performHapticFeedbackInternal(
-            int uid, int displayId, String opPkg, int constant, boolean always, String reason,
+            int uid, int deviceId, String opPkg, int constant, boolean always, String reason,
             IBinder token) {
         HapticFeedbackVibrationProvider hapticVibrationProvider = getHapticVibrationProvider();
         if (hapticVibrationProvider == null) {
@@ -433,7 +443,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         VibrationAttributes attrs =
                 hapticVibrationProvider.getVibrationAttributesForHapticFeedback(
                         constant, /* bypassVibrationIntensitySetting= */ always);
-        return vibrateWithoutPermissionCheck(uid, displayId, opPkg, combinedVibration, attrs,
+        return vibrateWithoutPermissionCheck(uid, deviceId, opPkg, combinedVibration, attrs,
                 "performHapticFeedback: " + reason, token);
     }
 
@@ -444,7 +454,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
      */
     @VisibleForTesting
     @Nullable
-    HalVibration vibrateWithPermissionCheck(int uid, int displayId, String opPkg,
+    HalVibration vibrateWithPermissionCheck(int uid, int deviceId, String opPkg,
             @NonNull CombinedVibration effect, @Nullable VibrationAttributes attrs,
             String reason, IBinder token) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "vibrate, reason = " + reason);
@@ -452,24 +462,24 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             attrs = fixupVibrationAttributes(attrs, effect);
             mContext.enforceCallingOrSelfPermission(
                     android.Manifest.permission.VIBRATE, "vibrate");
-            return vibrateInternal(uid, displayId, opPkg, effect, attrs, reason, token);
+            return vibrateInternal(uid, deviceId, opPkg, effect, attrs, reason, token);
         } finally {
             Trace.traceEnd(Trace.TRACE_TAG_VIBRATOR);
         }
     }
 
-    HalVibration vibrateWithoutPermissionCheck(int uid, int displayId, String opPkg,
+    HalVibration vibrateWithoutPermissionCheck(int uid, int deviceId, String opPkg,
             @NonNull CombinedVibration effect, @NonNull VibrationAttributes attrs,
             String reason, IBinder token) {
         Trace.traceBegin(Trace.TRACE_TAG_VIBRATOR, "vibrate no perm check, reason = " + reason);
         try {
-            return vibrateInternal(uid, displayId, opPkg, effect, attrs, reason, token);
+            return vibrateInternal(uid, deviceId, opPkg, effect, attrs, reason, token);
         } finally {
             Trace.traceEnd(Trace.TRACE_TAG_VIBRATOR);
         }
     }
 
-    private HalVibration vibrateInternal(int uid, int displayId, String opPkg,
+    private HalVibration vibrateInternal(int uid, int deviceId, String opPkg,
             @NonNull CombinedVibration effect, @NonNull VibrationAttributes attrs,
             String reason, IBinder token) {
         if (token == null) {
@@ -482,7 +492,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         }
         // Create Vibration.Stats as close to the received request as possible, for tracking.
         HalVibration vib = new HalVibration(token, effect,
-                new Vibration.CallerInfo(attrs, uid, displayId, opPkg, reason));
+                new Vibration.CallerInfo(attrs, uid, deviceId, opPkg, reason));
         fillVibrationFallbacks(vib, effect);
 
         if (attrs.isFlagSet(VibrationAttributes.FLAG_INVALIDATE_SETTINGS_CACHE)) {
@@ -1558,10 +1568,9 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
         private ExternalVibrationHolder(ExternalVibration externalVibration) {
             super(externalVibration.getToken(), new Vibration.CallerInfo(
                     externalVibration.getVibrationAttributes(), externalVibration.getUid(),
-                    // TODO(b/243604888): propagating displayID from IExternalVibration instead of
-                    //  using INVALID_DISPLAY for all external vibrations.
-                    Display.INVALID_DISPLAY,
-                    externalVibration.getPackage(), null));
+                    // TODO(b/249785241): Find a way to link ExternalVibration to a VirtualDevice
+                    // instead of using DEVICE_ID_INVALID here and relying on the UID checks.
+                    Context.DEVICE_ID_INVALID, externalVibration.getPackage(), null));
             this.externalVibration = externalVibration;
             this.scale = IExternalVibratorService.SCALE_NONE;
             mStatus = Vibration.Status.RUNNING;
@@ -1974,8 +1983,6 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             boolean alreadyUnderExternalControl = false;
             boolean waitForCompletion = false;
             synchronized (mLock) {
-                // TODO(b/243604888): propagating displayID from IExternalVibration instead of
-                // using INVALID_DISPLAY for all external vibrations.
                 Vibration.EndInfo vibrationEndInfo = shouldIgnoreVibrationLocked(
                         vibHolder.callerInfo);
 
@@ -2184,7 +2191,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             IBinder deathBinder = commonOptions.background ? VibratorManagerService.this
                     : mShellCallbacksToken;
             HalVibration vib = vibrateWithPermissionCheck(Binder.getCallingUid(),
-                    Display.DEFAULT_DISPLAY, SHELL_PACKAGE_NAME, combined, attrs,
+                    Context.DEVICE_ID_DEFAULT, SHELL_PACKAGE_NAME, combined, attrs,
                     commonOptions.description, deathBinder);
             maybeWaitOnVibration(vib, commonOptions);
         }
@@ -2241,7 +2248,7 @@ public class VibratorManagerService extends IVibratorManagerService.Stub {
             IBinder deathBinder = commonOptions.background ? VibratorManagerService.this
                     : mShellCallbacksToken;
             HalVibration vib = performHapticFeedbackInternal(Binder.getCallingUid(),
-                    Display.DEFAULT_DISPLAY, SHELL_PACKAGE_NAME, constant,
+                    Context.DEVICE_ID_DEFAULT, SHELL_PACKAGE_NAME, constant,
                     /* always= */ commonOptions.force, /* reason= */ commonOptions.description,
                     deathBinder);
             maybeWaitOnVibration(vib, commonOptions);

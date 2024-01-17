@@ -43,6 +43,7 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.TestLooperManager;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -66,6 +67,8 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.StringJoiner;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -98,6 +101,10 @@ public class Instrumentation {
     private static final long CONNECT_TIMEOUT_MILLIS = 60_000;
 
     private static final boolean VERBOSE = Log.isLoggable(TAG, Log.VERBOSE);
+
+    // If set, will print the stack trace for activity starts within the process
+    static final boolean DEBUG_START_ACTIVITY = Build.IS_DEBUGGABLE &&
+            SystemProperties.getBoolean("persist.wm.debug.start_activity", false);
 
     /**
      * @hide
@@ -577,6 +584,9 @@ public class Instrumentation {
     @NonNull
     public Activity startActivitySync(@NonNull Intent intent, @Nullable Bundle options) {
         android.util.SeempLog.record_str(376, intent.toString());
+        if (DEBUG_START_ACTIVITY) {
+            Log.d(TAG, "startActivity: intent=" + intent + " options=" + options, new Throwable());
+        }
         validateNotAppThread();
 
         final Activity activity;
@@ -1892,6 +1902,11 @@ public class Instrumentation {
             Context who, IBinder contextThread, IBinder token, Activity target,
             Intent intent, int requestCode, Bundle options) {
         android.util.SeempLog.record_str(377, intent.toString());
+        if (DEBUG_START_ACTIVITY) {
+            Log.d(TAG, "startActivity: who=" + who + " source=" + target + " intent=" + intent
+                    + " requestCode=" + requestCode + " options=" + options, new Throwable());
+        }
+        Objects.requireNonNull(intent);
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         Uri referrer = target != null ? target.onProvideReferrer() : null;
         if (referrer != null) {
@@ -1972,6 +1987,18 @@ public class Instrumentation {
             IBinder token, Activity target, Intent[] intents, Bundle options,
             int userId) {
         android.util.SeempLog.record_str(378, intents.toString());
+        if (DEBUG_START_ACTIVITY) {
+            StringJoiner joiner = new StringJoiner(", ");
+            for (Intent i : intents) {
+                joiner.add(i.toString());
+            }
+            Log.d(TAG, "startActivities: who=" + who + " source=" + target + " userId=" + userId
+                    + " intents=[" + joiner + "] options=" + options, new Throwable());
+        }
+        Objects.requireNonNull(intents);
+        for (int i = intents.length - 1; i >= 0; i--) {
+            Objects.requireNonNull(intents[i]);
+        }
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (isSdkSandboxAllowedToStartActivities()) {
             for (Intent intent : intents) {
@@ -2025,27 +2052,27 @@ public class Instrumentation {
      * Like {@link #execStartActivity(android.content.Context, android.os.IBinder,
      * android.os.IBinder, String, android.content.Intent, int, android.os.Bundle)},
      * but for calls from a {@link Fragment}.
-     * 
+     *
      * @param who The Context from which the activity is being started.
      * @param contextThread The main thread of the Context from which the activity
      *                      is being started.
-     * @param token Internal token identifying to the system who is starting 
+     * @param token Internal token identifying to the system who is starting
      *              the activity; may be null.
-     * @param target Which element is performing the start (and thus receiving 
+     * @param target Which element is performing the start (and thus receiving
      *               any result).
      * @param intent The actual Intent to start.
-     * @param requestCode Identifier for this request's result; less than zero 
+     * @param requestCode Identifier for this request's result; less than zero
      *                    if the caller is not expecting a result.
-     * 
-     * @return To force the return of a particular result, return an 
+     *
+     * @return To force the return of a particular result, return an
      *         ActivityResult object containing the desired data; otherwise
      *         return null.  The default implementation always returns null.
-     *  
+     *
      * @throws android.content.ActivityNotFoundException
-     * 
+     *
      * @see Activity#startActivity(Intent)
      * @see Activity#startActivityForResult(Intent, int)
-     * 
+     *
      * {@hide}
      */
     @UnsupportedAppUsage
@@ -2053,6 +2080,12 @@ public class Instrumentation {
         Context who, IBinder contextThread, IBinder token, String target,
         Intent intent, int requestCode, Bundle options) {
         android.util.SeempLog.record_str(377, intent.toString());
+        if (DEBUG_START_ACTIVITY) {
+            Log.d(TAG, "startActivity: who=" + who + " target=" + target
+                    + " intent=" + intent + " requestCode=" + requestCode
+                    + " options=" + options, new Throwable());
+        }
+        Objects.requireNonNull(intent);
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (isSdkSandboxAllowedToStartActivities()) {
             adjustIntentForCtsInSdkSandboxInstrumentation(intent);
@@ -2128,6 +2161,12 @@ public class Instrumentation {
             Context who, IBinder contextThread, IBinder token, String resultWho,
             Intent intent, int requestCode, Bundle options, UserHandle user) {
         android.util.SeempLog.record_str(377, intent.toString());
+        if (DEBUG_START_ACTIVITY) {
+            Log.d(TAG, "startActivity: who=" + who + " user=" + user + " intent=" + intent
+                    + " requestCode=" + requestCode + " resultWho=" + resultWho
+                    + " options=" + options, new Throwable());
+        }
+        Objects.requireNonNull(intent);
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (isSdkSandboxAllowedToStartActivities()) {
             adjustIntentForCtsInSdkSandboxInstrumentation(intent);
@@ -2181,6 +2220,13 @@ public class Instrumentation {
             Context who, IBinder contextThread, IBinder token, Activity target,
             Intent intent, int requestCode, Bundle options,
             boolean ignoreTargetSecurity, int userId) {
+        if (DEBUG_START_ACTIVITY) {
+            Log.d(TAG, "startActivity: who=" + who + " source=" + target + " userId=" + userId
+                    + " intent=" + intent + " requestCode=" + requestCode
+                    + " ignoreTargetSecurity=" + ignoreTargetSecurity + " options=" + options,
+                    new Throwable());
+        }
+        Objects.requireNonNull(intent);
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (isSdkSandboxAllowedToStartActivities()) {
             adjustIntentForCtsInSdkSandboxInstrumentation(intent);
@@ -2236,6 +2282,11 @@ public class Instrumentation {
             Context who, IBinder contextThread, IAppTask appTask,
             Intent intent, Bundle options) {
         android.util.SeempLog.record_str(380, intent.toString());
+        if (DEBUG_START_ACTIVITY) {
+            Log.d(TAG, "startActivity: who=" + who + " intent=" + intent
+                    + " options=" + options, new Throwable());
+        }
+        Objects.requireNonNull(intent);
         IApplicationThread whoThread = (IApplicationThread) contextThread;
         if (isSdkSandboxAllowedToStartActivities()) {
             adjustIntentForCtsInSdkSandboxInstrumentation(intent);

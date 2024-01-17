@@ -15,13 +15,12 @@
  */
 package com.android.systemui.statusbar.phone;
 
-import static com.android.systemui.flags.SetFlagsRuleExtensionsKt.setFlagDefault;
-
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.platform.test.annotations.DisableFlags;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
@@ -30,7 +29,6 @@ import androidx.test.filters.SmallTest;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.demomode.DemoModeController;
 import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.SetFlagsRuleExtensionsKt;
 import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.statusbar.NotificationListener;
@@ -52,6 +50,7 @@ import java.util.Optional;
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
 @TestableLooper.RunWithLooper
+@DisableFlags(NotificationIconContainerRefactor.FLAG_NAME)
 public class LegacyNotificationIconAreaControllerImplTest extends SysuiTestCase {
 
     @Mock
@@ -86,7 +85,6 @@ public class LegacyNotificationIconAreaControllerImplTest extends SysuiTestCase 
     @Before
     public void setup() {
         MockitoAnnotations.initMocks(this);
-        mSetFlagsRule.disableFlags(NotificationIconContainerRefactor.FLAG_NAME);
         mController = new LegacyNotificationIconAreaControllerImpl(
                 mContext,
                 mStatusBarStateController,

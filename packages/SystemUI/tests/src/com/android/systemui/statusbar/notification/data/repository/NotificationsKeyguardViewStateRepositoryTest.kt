@@ -13,84 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-@file:OptIn(ExperimentalCoroutinesApi::class)
 
 package com.android.systemui.statusbar.notification.data.repository
 
 import androidx.test.filters.SmallTest
-import com.android.SysUITestModule
+import com.android.systemui.SysUITestComponent
+import com.android.systemui.SysUITestModule
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.collectLastValue
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.runCurrent
+import com.android.systemui.runTest
 import com.android.systemui.statusbar.notification.NotificationWakeUpCoordinator
 import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.mockito.withArgCaptor
 import com.google.common.truth.Truth.assertThat
 import dagger.BindsInstance
 import dagger.Component
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runCurrent
-import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.mockito.Mockito.verify
 
 @SmallTest
 class NotificationsKeyguardViewStateRepositoryTest : SysuiTestCase() {
 
-    private val testComponent: TestComponent =
-        DaggerNotificationsKeyguardViewStateRepositoryTest_TestComponent.factory()
-            .create(test = this)
-
-    @Test
-    fun areNotifsFullyHidden_reflectsWakeUpCoordinator() =
-        with(testComponent) {
-            testScope.runTest {
-                whenever(mockWakeUpCoordinator.notificationsFullyHidden).thenReturn(false)
-                val notifsFullyHidden by collectLastValue(underTest.areNotificationsFullyHidden)
-                runCurrent()
-
-                assertThat(notifsFullyHidden).isFalse()
-
-                withArgCaptor { verify(mockWakeUpCoordinator).addListener(capture()) }
-                    .onFullyHiddenChanged(true)
-                runCurrent()
-
-                assertThat(notifsFullyHidden).isTrue()
-            }
-        }
-
-    @Test
-    fun isPulseExpanding_reflectsWakeUpCoordinator() =
-        with(testComponent) {
-            testScope.runTest {
-                whenever(mockWakeUpCoordinator.isPulseExpanding()).thenReturn(false)
-                val isPulseExpanding by collectLastValue(underTest.isPulseExpanding)
-                runCurrent()
-
-                assertThat(isPulseExpanding).isFalse()
-
-                withArgCaptor { verify(mockWakeUpCoordinator).addListener(capture()) }
-                    .onPulseExpansionChanged(true)
-                runCurrent()
-
-                assertThat(isPulseExpanding).isTrue()
-            }
-        }
-
     @SysUISingleton
-    @Component(
-        modules =
-            [
-                SysUITestModule::class,
-            ]
-    )
-    interface TestComponent {
-
-        val underTest: NotificationsKeyguardViewStateRepositoryImpl
+    @Component(modules = [SysUITestModule::class])
+    interface TestComponent : SysUITestComponent<NotificationsKeyguardViewStateRepositoryImpl> {
 
         val mockWakeUpCoordinator: NotificationWakeUpCoordinator
-        val testScope: TestScope
 
         @Component.Factory
         interface Factory {
@@ -99,4 +49,40 @@ class NotificationsKeyguardViewStateRepositoryTest : SysuiTestCase() {
             ): TestComponent
         }
     }
+
+    private val testComponent: TestComponent =
+        DaggerNotificationsKeyguardViewStateRepositoryTest_TestComponent.factory()
+            .create(test = this)
+
+    @Test
+    fun areNotifsFullyHidden_reflectsWakeUpCoordinator() =
+        testComponent.runTest {
+            whenever(mockWakeUpCoordinator.notificationsFullyHidden).thenReturn(false)
+            val notifsFullyHidden by collectLastValue(underTest.areNotificationsFullyHidden)
+            runCurrent()
+
+            assertThat(notifsFullyHidden).isFalse()
+
+            withArgCaptor { verify(mockWakeUpCoordinator).addListener(capture()) }
+                .onFullyHiddenChanged(true)
+            runCurrent()
+
+            assertThat(notifsFullyHidden).isTrue()
+        }
+
+    @Test
+    fun isPulseExpanding_reflectsWakeUpCoordinator() =
+        testComponent.runTest {
+            whenever(mockWakeUpCoordinator.isPulseExpanding()).thenReturn(false)
+            val isPulseExpanding by collectLastValue(underTest.isPulseExpanding)
+            runCurrent()
+
+            assertThat(isPulseExpanding).isFalse()
+
+            withArgCaptor { verify(mockWakeUpCoordinator).addListener(capture()) }
+                .onPulseExpandingChanged(true)
+            runCurrent()
+
+            assertThat(isPulseExpanding).isTrue()
+        }
 }

@@ -23,16 +23,15 @@ import android.hardware.display.DisplayManager.EVENT_FLAG_DISPLAY_ADDED
 import android.hardware.display.DisplayManager.EVENT_FLAG_DISPLAY_CHANGED
 import android.hardware.display.DisplayManager.EVENT_FLAG_DISPLAY_REMOVED
 import android.os.Handler
-import android.os.Trace
 import android.util.Log
 import android.view.Display
+import com.android.app.tracing.FlowTracing.traceEach
+import com.android.app.tracing.traceSection
 import com.android.systemui.common.coroutine.ConflatedCallbackFlow.conflatedCallbackFlow
 import com.android.systemui.dagger.SysUISingleton
-import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.display.data.DisplayEvent
 import com.android.systemui.util.Compile
-import com.android.systemui.util.traceSection
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -43,10 +42,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -55,6 +53,9 @@ import kotlinx.coroutines.flow.stateIn
 interface DisplayRepository {
     /** Display change event indicating a change to the given displayId has occurred. */
     val displayChangeEvent: Flow<Int>
+
+    /** Display addition event indicating a new display has been added. */
+    val displayAdditionEvent: Flow<Display?>
 
     /** Provides the current set of displays. */
     val displays: Flow<Set<Display>>
@@ -91,10 +92,9 @@ class DisplayRepositoryImpl
 constructor(
     private val displayManager: DisplayManager,
     @Background backgroundHandler: Handler,
-    @Application applicationScope: CoroutineScope,
+    @Background bgApplicationScope: CoroutineScope,
     @Background backgroundCoroutineDispatcher: CoroutineDispatcher
 ) : DisplayRepository {
-    // Displays are enabled only after receiving them in [onDisplayAdded]
     private val allDisplayEvents: Flow<DisplayEvent> =
         conflatedCallbackFlow {
                 val callback =
@@ -121,23 +121,31 @@ constructor(
                 awaitClose { displayManager.unregisterDisplayListener(callback) }
             }
             .onStart { emit(DisplayEvent.Changed(Display.DEFAULT_DISPLAY)) }
+            .debugLog("allDisplayEvents")
             .flowOn(backgroundCoroutineDispatcher)
 
     override val displayChangeEvent: Flow<Int> =
-        allDisplayEvents.filter { it is DisplayEvent.Changed }.map { it.displayId }
+        allDisplayEvents.filterIsInstance<DisplayEvent.Changed>().map { event -> event.displayId }
 
+    override val displayAdditionEvent: Flow<Display?> =
+        allDisplayEvents.filterIsInstance<DisplayEvent.Added>().map {
+            displayManager.getDisplay(it.displayId)
+        }
+
+    /**
+     * Represents displays that went though the [DisplayListener.onDisplayAdded] callback.
+     *
+     * Those are commonly the ones provided by [DisplayManager.getDisplays] by default.
+     */
     private val enabledDisplays =
         allDisplayEvents
             .map { getDisplays() }
-            .flowOn(backgroundCoroutineDispatcher)
-            .shareIn(applicationScope, started = SharingStarted.WhileSubscribed(), replay = 1)
+            .shareIn(bgApplicationScope, started = SharingStarted.WhileSubscribed(), replay = 1)
 
     override val displays: Flow<Set<Display>> = enabledDisplays
 
     private fun getDisplays(): Set<Display> =
-        traceSection("DisplayRepository#getDisplays()") {
-            displayManager.displays?.toSet() ?: emptySet()
-        }
+        traceSection("$TAG#getDisplays()") { displayManager.displays?.toSet() ?: emptySet() }
 
     /** Propagate to the listeners only enabled displays */
     private val enabledDisplayIds: Flow<Set<Int>> =
@@ -145,7 +153,8 @@ constructor(
             .map { enabledDisplaysSet -> enabledDisplaysSet.map { it.displayId }.toSet() }
             .debugLog("enabledDisplayIds")
 
-    private val ignoredDisplayIds = MutableStateFlow<Set<Int>>(emptySet())
+    private val _ignoredDisplayIds = MutableStateFlow<Set<Int>>(emptySet())
+    private val ignoredDisplayIds: Flow<Set<Int>> = _ignoredDisplayIds.debugLog("ignoredDisplayIds")
 
     private fun getInitialConnectedDisplays(): Set<Int> =
         displayManager
@@ -169,7 +178,7 @@ constructor(
                                 Log.d(TAG, "display with id=$id connected.")
                             }
                             connectedIds += id
-                            ignoredDisplayIds.value -= id
+                            _ignoredDisplayIds.value -= id
                             trySend(connectedIds.toSet())
                         }
 
@@ -178,7 +187,7 @@ constructor(
                             if (DEBUG) {
                                 Log.d(TAG, "display with id=$id disconnected.")
                             }
-                            ignoredDisplayIds.value -= id
+                            _ignoredDisplayIds.value -= id
                             trySend(connectedIds.toSet())
                         }
                     }
@@ -192,9 +201,8 @@ constructor(
             }
             .distinctUntilChanged()
             .debugLog("connectedDisplayIds")
-            .flowOn(backgroundCoroutineDispatcher)
             .stateIn(
-                applicationScope,
+                bgApplicationScope,
                 started = SharingStarted.WhileSubscribed(),
                 // The initial value is set to empty, but connected displays are gathered as soon as
                 // the flow starts being collected. This is to ensure the call to get displays (an
@@ -206,17 +214,23 @@ constructor(
     private val connectedExternalDisplayIds: Flow<Set<Int>> =
         connectedDisplayIds
             .map { connectedDisplayIds ->
-                connectedDisplayIds
-                    .filter { id -> displayManager.getDisplay(id)?.type == Display.TYPE_EXTERNAL }
-                    .toSet()
+                traceSection("$TAG#filteringExternalDisplays") {
+                    connectedDisplayIds
+                        .filter { id -> getDisplayType(id) == Display.TYPE_EXTERNAL }
+                        .toSet()
+                }
             }
             .flowOn(backgroundCoroutineDispatcher)
             .debugLog("connectedExternalDisplayIds")
 
+    private fun getDisplayType(displayId: Int): Int? =
+        traceSection("$TAG#getDisplayType") { displayManager.getDisplay(displayId)?.type }
+
     /**
-     * Pending displays are the ones connected, but not enabled and not ignored. A connected display
-     * is ignored after the user makes the decision to use it or not. For now, the initial decision
-     * from the user is final and not reversible.
+     * Pending displays are the ones connected, but not enabled and not ignored.
+     *
+     * A connected display is ignored after the user makes the decision to use it or not. For now,
+     * the initial decision from the user is final and not reversible.
      */
     private val pendingDisplayIds: Flow<Set<Int>> =
         combine(enabledDisplayIds, connectedExternalDisplayIds, ignoredDisplayIds) {
@@ -233,12 +247,16 @@ constructor(
                 }
                 connectedExternalDisplayIds - enabledDisplaysIds - ignoredDisplayIds
             }
-            .debugLog("pendingDisplayIds")
+            .debugLog("allPendingDisplayIds")
+
+    /** Which display id should be enabled among the pending ones. */
+    private val pendingDisplayId: Flow<Int?> =
+        pendingDisplayIds.map { it.maxOrNull() }.distinctUntilChanged().debugLog("pendingDisplayId")
 
     override val pendingDisplay: Flow<DisplayRepository.PendingDisplay?> =
-        pendingDisplayIds
-            .map { pendingDisplayIds ->
-                val id = pendingDisplayIds.maxOrNull() ?: return@map null
+        pendingDisplayId
+            .map { displayId ->
+                val id = displayId ?: return@map null
                 object : DisplayRepository.PendingDisplay {
                     override val id = id
 
@@ -255,7 +273,7 @@ constructor(
 
                     override suspend fun ignore() {
                         traceSection("DisplayRepository#ignore($id)") {
-                            ignoredDisplayIds.value += id
+                            _ignoredDisplayIds.value += id
                         }
                     }
 
@@ -274,11 +292,7 @@ constructor(
 
     private fun <T> Flow<T>.debugLog(flowName: String): Flow<T> {
         return if (DEBUG) {
-            this.onEach {
-                Log.d(TAG, "$flowName: $it")
-                Trace.asyncTraceForTrackEnd(Trace.TRACE_TAG_APP, "$TAG#$flowName", 0)
-                Trace.asyncTraceForTrackBegin(Trace.TRACE_TAG_APP, "$TAG#$flowName", "$it", 0)
-            }
+            traceEach(flowName, logcat = true)
         } else {
             this
         }

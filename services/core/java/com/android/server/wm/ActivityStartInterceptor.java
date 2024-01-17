@@ -48,6 +48,7 @@ import android.content.pm.PackageManagerInternal;
 import android.content.pm.ResolveInfo;
 import android.content.pm.SuspendDialogInfo;
 import android.content.pm.UserInfo;
+import android.content.pm.UserPackage;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
@@ -223,7 +224,7 @@ class ActivityStartInterceptor {
             // before issuing the work challenge.
             return true;
         }
-        if (interceptLockedManagedProfileIfNeeded()) {
+        if (interceptLockedProfileIfNeeded()) {
             return true;
         }
         if (interceptHomeIfNeeded()) {
@@ -285,10 +286,6 @@ class ActivityStartInterceptor {
             return false;
         }
 
-        if (isKeepProfilesRunningEnabled() && !isPackageSuspended()) {
-            return false;
-        }
-
         IntentSender target = createIntentSenderForOriginalIntent(mCallingUid,
                 FLAG_CANCEL_CURRENT | FLAG_ONE_SHOT);
 
@@ -339,19 +336,19 @@ class ActivityStartInterceptor {
             return false;
         }
         final String suspendedPackage = mAInfo.applicationInfo.packageName;
-        final String suspendingPackage = pmi.getSuspendingPackage(suspendedPackage, mUserId);
-        if (PLATFORM_PACKAGE_NAME.equals(suspendingPackage)) {
+        final UserPackage suspender = pmi.getSuspendingPackage(suspendedPackage, mUserId);
+        if (suspender != null && PLATFORM_PACKAGE_NAME.equals(suspender.packageName)) {
             return interceptSuspendedByAdminPackage();
         }
         final SuspendDialogInfo dialogInfo = pmi.getSuspendedDialogInfo(suspendedPackage,
-                suspendingPackage, mUserId);
+                suspender, mUserId);
         final Bundle crossProfileOptions = hasCrossProfileAnimation()
                 ? ActivityOptions.makeOpenCrossProfileAppsAnimation().toBundle()
                 : null;
         final IntentSender target = createIntentSenderForOriginalIntent(mCallingUid,
                 FLAG_IMMUTABLE);
         mIntent = SuspendedAppActivity.createSuspendedAppInterceptIntent(suspendedPackage,
-                suspendingPackage, dialogInfo, crossProfileOptions, target, mUserId);
+                suspender, dialogInfo, crossProfileOptions, target, mUserId);
         mCallingPid = mRealCallingPid;
         mCallingUid = mRealCallingUid;
         mResolvedType = null;
@@ -381,7 +378,7 @@ class ActivityStartInterceptor {
         return true;
     }
 
-    private boolean interceptLockedManagedProfileIfNeeded() {
+    private boolean interceptLockedProfileIfNeeded() {
         final Intent interceptingIntent = interceptWithConfirmCredentialsIfNeeded(mAInfo, mUserId);
         if (interceptingIntent == null) {
             return false;
@@ -519,12 +516,6 @@ class ActivityStartInterceptor {
     private boolean isPackageSuspended() {
         return mAInfo != null && mAInfo.applicationInfo != null
                 && (mAInfo.applicationInfo.flags & FLAG_SUSPENDED) != 0;
-    }
-
-    private static boolean isKeepProfilesRunningEnabled() {
-        DevicePolicyManagerInternal dpmi =
-                LocalServices.getService(DevicePolicyManagerInternal.class);
-        return dpmi == null || dpmi.isKeepProfilesRunningEnabled();
     }
 
     /**

@@ -17,6 +17,9 @@
 package com.android.systemui.qs;
 
 
+import static com.android.systemui.Flags.FLAG_QS_NEW_PIPELINE;
+import static com.android.systemui.Flags.FLAG_QS_NEW_TILES;
+
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertTrue;
@@ -25,7 +28,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,12 +50,10 @@ import androidx.test.filters.SmallTest;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.util.CollectionUtils;
-import com.android.systemui.res.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.classifier.FalsingManagerFake;
 import com.android.systemui.dump.nano.SystemUIProtoDump;
 import com.android.systemui.flags.FakeFeatureFlags;
-import com.android.systemui.flags.Flags;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.PluginManager;
 import com.android.systemui.plugins.qs.QSFactory;
@@ -67,6 +67,7 @@ import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.pipeline.shared.QSPipelineFlagsRepository;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.qs.tiles.di.NewQSTileFactory;
+import com.android.systemui.res.R;
 import com.android.systemui.settings.UserFileManager;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.ShadeController;
@@ -103,7 +104,6 @@ public class QSTileHostTest extends SysuiTestCase {
             ComponentName.unflattenFromString("TEST_PKG/.TEST_CLS");
     private static final String CUSTOM_TILE_SPEC = CustomTile.toSpec(CUSTOM_TILE);
     private static final String SETTING = QSHost.TILES_SETTING;
-
     @Mock
     private PluginManager mPluginManager;
     @Mock
@@ -146,11 +146,9 @@ public class QSTileHostTest extends SysuiTestCase {
         MockitoAnnotations.initMocks(this);
         mFeatureFlags = new FakeFeatureFlags();
 
-        mFeatureFlags.set(Flags.QS_PIPELINE_NEW_HOST, false);
-        mFeatureFlags.set(Flags.QS_PIPELINE_AUTO_ADD, false);
-        // TODO(b/299909337): Add test checking the new factory is used when the flag is on
-        mFeatureFlags.set(Flags.QS_PIPELINE_NEW_TILES, false);
-        mQSPipelineFlagsRepository = new QSPipelineFlagsRepository(mFeatureFlags);
+        mSetFlagsRule.disableFlags(FLAG_QS_NEW_PIPELINE);
+        mSetFlagsRule.disableFlags(FLAG_QS_NEW_TILES);
+        mQSPipelineFlagsRepository = new QSPipelineFlagsRepository();
 
         mMainExecutor = new FakeExecutor(new FakeSystemClock());
 
@@ -449,10 +447,6 @@ public class QSTileHostTest extends SysuiTestCase {
         mContext.getOrCreateTestableResources()
                 .addOverride(R.string.quick_settings_tiles_default, "spec1,spec1");
         List<String> specs = QSTileHost.loadTileSpecs(mContext, "default");
-
-        // Remove spurious tiles, like dbg:mem
-        specs.removeIf(spec -> !"spec1".equals(spec));
-        assertEquals(1, specs.size());
     }
 
     @Test
@@ -460,10 +454,6 @@ public class QSTileHostTest extends SysuiTestCase {
         mContext.getOrCreateTestableResources()
                 .addOverride(R.string.quick_settings_tiles_default, "spec1");
         List<String> specs = QSTileHost.loadTileSpecs(mContext, "default,spec1");
-
-        // Remove spurious tiles, like dbg:mem
-        specs.removeIf(spec -> !"spec1".equals(spec));
-        assertEquals(1, specs.size());
     }
 
     @Test
@@ -690,17 +680,6 @@ public class QSTileHostTest extends SysuiTestCase {
         assertEquals(CUSTOM_TILE.getClassName(), proto.tiles[1].getComponentName().className);
     }
 
-    @Test
-    public void testUserChange_flagOn_autoTileManagerNotified() {
-        mFeatureFlags.set(Flags.QS_PIPELINE_NEW_HOST, true);
-        int currentUser = mUserTracker.getUserId();
-        clearInvocations(mAutoTiles);
-        when(mUserTracker.getUserId()).thenReturn(currentUser + 1);
-
-        mQSTileHost.onTuningChanged(SETTING, "a,b");
-        verify(mAutoTiles).changeUser(UserHandle.of(currentUser + 1));
-    }
-
     private SharedPreferences getSharedPreferencesForUser(int user) {
         return mUserFileManager.getSharedPreferences(QSTileHost.TILES, 0, user);
     }
@@ -716,7 +695,7 @@ public class QSTileHostTest extends SysuiTestCase {
                 TileLifecycleManager.Factory tileLifecycleManagerFactory,
                 UserFileManager userFileManager, QSPipelineFlagsRepository featureFlags) {
             super(context, newQSTileFactoryProvider, defaultFactory, mainExecutor, pluginManager,
-                    tunerService, autoTiles,  shadeController, qsLogger,
+                    tunerService, autoTiles, shadeController, qsLogger,
                     userTracker, secureSettings, customTileStatePersister,
                     tileLifecycleManagerFactory, userFileManager, featureFlags);
         }

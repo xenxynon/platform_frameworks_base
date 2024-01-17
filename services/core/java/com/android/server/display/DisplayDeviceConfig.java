@@ -49,6 +49,7 @@ import com.android.server.display.config.BrightnessThresholds;
 import com.android.server.display.config.BrightnessThrottlingMap;
 import com.android.server.display.config.BrightnessThrottlingPoint;
 import com.android.server.display.config.Density;
+import com.android.server.display.config.DisplayBrightnessMappingConfig;
 import com.android.server.display.config.DisplayBrightnessPoint;
 import com.android.server.display.config.DisplayConfiguration;
 import com.android.server.display.config.DisplayQuirks;
@@ -71,12 +72,13 @@ import com.android.server.display.config.RefreshRateThrottlingPoint;
 import com.android.server.display.config.RefreshRateZone;
 import com.android.server.display.config.SdrHdrRatioMap;
 import com.android.server.display.config.SdrHdrRatioPoint;
-import com.android.server.display.config.SensorDetails;
+import com.android.server.display.config.SensorData;
 import com.android.server.display.config.ThermalStatus;
 import com.android.server.display.config.ThermalThrottling;
 import com.android.server.display.config.ThresholdPoint;
 import com.android.server.display.config.UsiVersion;
 import com.android.server.display.config.XmlParser;
+import com.android.server.display.feature.DisplayManagerFlags;
 import com.android.server.display.utils.DebugUtils;
 
 import org.xmlpull.v1.XmlPullParserException;
@@ -310,16 +312,33 @@ import javax.xml.datatype.DatatypeConfigurationException;
  *          <darkeningLightDebounceIdleMillis>
  *              1000
  *          </darkeningLightDebounceIdleMillis>
- *          <displayBrightnessMapping>
- *              <displayBrightnessPoint>
- *                  <lux>50</lux>
- *                  <nits>45.32</nits>
- *              </displayBrightnessPoint>
- *              <displayBrightnessPoint>
- *                  <lux>80</lux>
- *                  <nits>75.43</nits>
- *              </displayBrightnessPoint>
- *          </displayBrightnessMapping>
+ *          <luxToBrightnessMapping>
+ *            <mode>default</mode>
+ *            <map>
+ *              <point>
+ *                <first>0</first>
+ *                <second>0.2</second>
+ *              </point>
+ *              <point>
+ *                <first>80</first>
+ *                <second>0.3</second>
+ *              </point>
+ *            </map>
+ *          </luxToBrightnessMapping>
+ *          <luxToBrightnessMapping>
+ *            <mode>doze</mode>
+ *            <setting>dim</setting>
+ *            <map>
+ *              <point>
+ *                <first>0</first>
+ *                <second>0.2</second>
+ *              </point>
+ *              <point>
+ *                <first>80</first>
+ *                <second>0.3</second>
+ *              </point>
+ *            </map>
+ *          </luxToBrightnessMapping>
  *      </autoBrightness>
  *
  *      <screenBrightnessRampFastDecrease>0.01</screenBrightnessRampFastDecrease>
@@ -349,6 +368,20 @@ import javax.xml.datatype.DatatypeConfigurationException;
  *      <proxSensor>
  *        <type>android.sensor.proximity</type>
  *        <name>1234 Proximity Sensor</name>
+ *        <refreshRate>
+ *             <minimum>60</minimum>
+ *             <maximum>60</maximum>
+ *         </refreshRate>
+ *         <supportedModes>
+ *             <point>
+ *                 <first>60</first>   // refreshRate
+ *                 <second>60</second> //vsyncRate
+ *             </point>
+ *             <point>
+ *                 <first>120</first>   // refreshRate
+ *                 <second>120</second> //vsyncRate
+ *             </point>
+ *          </supportedModes>
  *      </proxSensor>
  *
  *      <ambientLightHorizonLong>10001</ambientLightHorizonLong>
@@ -514,6 +547,7 @@ import javax.xml.datatype.DatatypeConfigurationException;
  *         <majorVersion>2</majorVersion>
  *         <minorVersion>0</minorVersion>
  *     </usiVersion>
+ *     <screenBrightnessCapForWearBedtimeMode>0.1</screenBrightnessCapForWearBedtimeMode>
  *    </displayConfiguration>
  *  }
  *  </pre>
@@ -581,15 +615,15 @@ public class DisplayDeviceConfig {
     private final Context mContext;
 
     // The details of the ambient light sensor associated with this display.
-    private final SensorData mAmbientLightSensor = new SensorData();
+    private SensorData mAmbientLightSensor;
 
     // The details of the doze brightness sensor associated with this display.
-    private final SensorData mScreenOffBrightnessSensor = new SensorData();
+    private SensorData mScreenOffBrightnessSensor;
 
     // The details of the proximity sensor associated with this display.
     // Is null when no sensor should be used for that display
     @Nullable
-    private SensorData mProximitySensor = new SensorData();
+    private SensorData mProximitySensor;
 
     private final List<RefreshRateLimitation> mRefreshRateLimitations =
             new ArrayList<>(2 /*initialCapacity*/);
@@ -615,32 +649,8 @@ public class DisplayDeviceConfig {
     // for the corresponding values above
     private float[] mBrightness;
 
-
-    /**
-     * Array of desired screen brightness in nits corresponding to the lux values
-     * in the mBrightnessLevelsLux array. The display brightness is defined as the
-     * measured brightness of an all-white image. The brightness values must be non-negative and
-     * non-decreasing. This must be overridden in platform specific overlays
-     */
-    private float[] mBrightnessLevelsNits;
-
-    /**
-     * Array of light sensor lux values to define our levels for auto backlight
-     * brightness support.
-     *
-     * The N + 1 entries of this array define N control points defined in mBrightnessLevelsNits,
-     * with first value always being 0 lux
-     *
-     * The control points must be strictly increasing.  Each control point
-     * corresponds to an entry in the brightness backlight values arrays.
-     * For example, if lux == level[1] (second element of the levels array)
-     * then the brightness will be determined by value[0] (first element
-     * of the brightness values array).
-     *
-     * Spline interpolation is used to determine the auto-brightness
-     * backlight values for lux levels between these control points.
-     */
-    private float[] mBrightnessLevelsLux;
+    @Nullable
+    private DisplayBrightnessMappingConfig mDisplayBrightnessMapping;
 
     private float mBacklightMinimum = Float.NaN;
     private float mBacklightMaximum = Float.NaN;
@@ -829,9 +839,17 @@ public class DisplayDeviceConfig {
     @Nullable
     private HdrBrightnessData mHdrBrightnessData;
 
+    /**
+     * Maximum screen brightness setting when screen brightness capped in Wear Bedtime mode.
+     */
+    private float mBrightnessCapForWearBedtimeMode;
+
+    private final DisplayManagerFlags mFlags;
+
     @VisibleForTesting
-    DisplayDeviceConfig(Context context) {
+    DisplayDeviceConfig(Context context, DisplayManagerFlags flags) {
         mContext = context;
+        mFlags = flags;
     }
 
     /**
@@ -847,9 +865,9 @@ public class DisplayDeviceConfig {
      * @return A configuration instance for the specified display.
      */
     public static DisplayDeviceConfig create(Context context, long physicalDisplayId,
-            boolean isFirstDisplay) {
+            boolean isFirstDisplay, DisplayManagerFlags flags) {
         final DisplayDeviceConfig config = createWithoutDefaultValues(context, physicalDisplayId,
-                isFirstDisplay);
+                isFirstDisplay, flags);
 
         config.copyUninitializedValuesFromSecondaryConfig(loadDefaultConfigurationXml(context));
         return config;
@@ -864,28 +882,29 @@ public class DisplayDeviceConfig {
      *                     or the default values.
      * @return A configuration instance.
      */
-    public static DisplayDeviceConfig create(Context context, boolean useConfigXml) {
+    public static DisplayDeviceConfig create(Context context, boolean useConfigXml,
+            DisplayManagerFlags flags) {
         final DisplayDeviceConfig config;
         if (useConfigXml) {
-            config = getConfigFromGlobalXml(context);
+            config = getConfigFromGlobalXml(context, flags);
         } else {
-            config = getConfigFromPmValues(context);
+            config = getConfigFromPmValues(context, flags);
         }
         return config;
     }
 
     private static DisplayDeviceConfig createWithoutDefaultValues(Context context,
-            long physicalDisplayId, boolean isFirstDisplay) {
+            long physicalDisplayId, boolean isFirstDisplay, DisplayManagerFlags flags) {
         DisplayDeviceConfig config;
 
         config = loadConfigFromDirectory(context, Environment.getProductDirectory(),
-                physicalDisplayId);
+                physicalDisplayId, flags);
         if (config != null) {
             return config;
         }
 
         config = loadConfigFromDirectory(context, Environment.getVendorDirectory(),
-                physicalDisplayId);
+                physicalDisplayId, flags);
         if (config != null) {
             return config;
         }
@@ -893,7 +912,7 @@ public class DisplayDeviceConfig {
         // If no config can be loaded from any ddc xml at all,
         // prepare a whole config using the global config.xml.
         // Guaranteed not null
-        return create(context, isFirstDisplay);
+        return create(context, isFirstDisplay, flags);
     }
 
     private static DisplayConfiguration loadDefaultConfigurationXml(Context context) {
@@ -946,18 +965,19 @@ public class DisplayDeviceConfig {
     }
 
     private static DisplayDeviceConfig loadConfigFromDirectory(Context context,
-            File baseDirectory, long physicalDisplayId) {
+            File baseDirectory, long physicalDisplayId, DisplayManagerFlags flags) {
         DisplayDeviceConfig config;
         // Create config using filename from physical ID (including "stable" bit).
         config = getConfigFromSuffix(context, baseDirectory, STABLE_ID_SUFFIX_FORMAT,
-                physicalDisplayId);
+                physicalDisplayId, flags);
         if (config != null) {
             return config;
         }
 
         // Create config using filename from physical ID (excluding "stable" bit).
         final long withoutStableFlag = physicalDisplayId & ~STABLE_FLAG;
-        config = getConfigFromSuffix(context, baseDirectory, NO_SUFFIX_FORMAT, withoutStableFlag);
+        config = getConfigFromSuffix(context, baseDirectory, NO_SUFFIX_FORMAT, withoutStableFlag,
+                flags);
         if (config != null) {
             return config;
         }
@@ -966,7 +986,7 @@ public class DisplayDeviceConfig {
         final DisplayAddress.Physical physicalAddress =
                 DisplayAddress.fromPhysicalDisplayId(physicalDisplayId);
         int port = physicalAddress.getPort();
-        config = getConfigFromSuffix(context, baseDirectory, PORT_SUFFIX_FORMAT, port);
+        config = getConfigFromSuffix(context, baseDirectory, PORT_SUFFIX_FORMAT, port, flags);
         return config;
     }
 
@@ -1571,17 +1591,57 @@ public class DisplayDeviceConfig {
     }
 
     /**
-     * @return Auto brightness brightening ambient lux levels
+     * @return The default auto-brightness brightening ambient lux levels
      */
     public float[] getAutoBrightnessBrighteningLevelsLux() {
-        return mBrightnessLevelsLux;
+        if (mDisplayBrightnessMapping == null) {
+            return null;
+        }
+        return mDisplayBrightnessMapping.getLuxArray();
+    }
+
+    /**
+     * @param mode The auto-brightness mode
+     * @param setting The brightness setting
+     * @return Auto brightness brightening ambient lux levels for the specified mode and setting
+     */
+    public float[] getAutoBrightnessBrighteningLevelsLux(String mode, String setting) {
+        if (mDisplayBrightnessMapping == null) {
+            return null;
+        }
+        return mDisplayBrightnessMapping.getLuxArray(mode, setting);
     }
 
     /**
      * @return Auto brightness brightening nits levels
      */
     public float[] getAutoBrightnessBrighteningLevelsNits() {
-        return mBrightnessLevelsNits;
+        if (mDisplayBrightnessMapping == null) {
+            return null;
+        }
+        return mDisplayBrightnessMapping.getNitsArray();
+    }
+
+    /**
+     * @return The default auto-brightness brightening levels
+     */
+    public float[] getAutoBrightnessBrighteningLevels() {
+        if (mDisplayBrightnessMapping == null) {
+            return null;
+        }
+        return mDisplayBrightnessMapping.getBrightnessArray();
+    }
+
+    /**
+     * @param mode The auto-brightness mode
+     * @param setting The brightness setting
+     * @return Auto brightness brightening backlight levels for the specified mode and setting
+     */
+    public float[] getAutoBrightnessBrighteningLevels(String mode, String setting) {
+        if (mDisplayBrightnessMapping == null) {
+            return null;
+        }
+        return mDisplayBrightnessMapping.getBrightnessArray(mode, setting);
     }
 
     /**
@@ -1727,6 +1787,13 @@ public class DisplayDeviceConfig {
         return mHostUsiVersion;
     }
 
+    /**
+     * @return Maximum screen brightness setting when screen brightness capped in Wear Bedtime mode.
+     */
+    public float getBrightnessCapForWearBedtimeMode() {
+        return mBrightnessCapForWearBedtimeMode;
+    }
+
     @Override
     public String toString() {
         return "DisplayDeviceConfig{"
@@ -1828,8 +1895,7 @@ public class DisplayDeviceConfig {
                 + mAutoBrightnessBrighteningLightDebounceIdle
                 + ", mAutoBrightnessDarkeningLightDebounceIdle= "
                 + mAutoBrightnessDarkeningLightDebounceIdle
-                + ", mBrightnessLevelsLux= " + Arrays.toString(mBrightnessLevelsLux)
-                + ", mBrightnessLevelsNits= " + Arrays.toString(mBrightnessLevelsNits)
+                + ", mDisplayBrightnessMapping= " + mDisplayBrightnessMapping
                 + ", mDdcAutoBrightnessAvailable= " + mDdcAutoBrightnessAvailable
                 + ", mAutoBrightnessAvailable= " + mAutoBrightnessAvailable
                 + "\n"
@@ -1853,36 +1919,39 @@ public class DisplayDeviceConfig {
                 + ", mHighAmbientBrightnessThresholds= "
                 + Arrays.toString(mHighAmbientBrightnessThresholds)
                 + "\n"
-                + "mScreenOffBrightnessSensorValueToLux=" + Arrays.toString(
+                + "mScreenOffBrightnessSensorValueToLux= " + Arrays.toString(
                 mScreenOffBrightnessSensorValueToLux)
                 + "\n"
                 + "mUsiVersion= " + mHostUsiVersion + "\n"
-                + "mHdrBrightnessData" + mHdrBrightnessData
+                + "mHdrBrightnessData= " + mHdrBrightnessData + "\n"
+                + "mBrightnessCapForWearBedtimeMode= " + mBrightnessCapForWearBedtimeMode
                 + "}";
     }
 
     private static DisplayDeviceConfig getConfigFromSuffix(Context context, File baseDirectory,
-            String suffixFormat, long idNumber) {
+            String suffixFormat, long idNumber, DisplayManagerFlags flags) {
 
         final String suffix = String.format(Locale.ROOT, suffixFormat, idNumber);
         final String filename = String.format(Locale.ROOT, CONFIG_FILE_FORMAT, suffix);
         final File filePath = Environment.buildPath(
                 baseDirectory, ETC_DIR, DISPLAY_CONFIG_DIR, filename);
-        final DisplayDeviceConfig config = new DisplayDeviceConfig(context);
+        final DisplayDeviceConfig config = new DisplayDeviceConfig(context, flags);
         if (config.initFromFile(filePath)) {
             return config;
         }
         return null;
     }
 
-    private static DisplayDeviceConfig getConfigFromGlobalXml(Context context) {
-        DisplayDeviceConfig config = new DisplayDeviceConfig(context);
+    private static DisplayDeviceConfig getConfigFromGlobalXml(Context context,
+            DisplayManagerFlags flags) {
+        DisplayDeviceConfig config = new DisplayDeviceConfig(context, flags);
         config.initFromGlobalXml();
         return config;
     }
 
-    private static DisplayDeviceConfig getConfigFromPmValues(Context context) {
-        DisplayDeviceConfig config = new DisplayDeviceConfig(context);
+    private static DisplayDeviceConfig getConfigFromPmValues(Context context,
+            DisplayManagerFlags flags) {
+        DisplayDeviceConfig config = new DisplayDeviceConfig(context, flags);
         config.initFromDefaultValues();
         return config;
     }
@@ -1913,9 +1982,10 @@ public class DisplayDeviceConfig {
                 loadLuxThrottling(config);
                 loadQuirks(config);
                 loadBrightnessRamps(config);
-                loadAmbientLightSensorFromDdc(config);
-                loadScreenOffBrightnessSensorFromDdc(config);
-                loadProxSensorFromDdc(config);
+                mAmbientLightSensor = SensorData.loadAmbientLightSensorConfig(config,
+                        mContext.getResources());
+                mScreenOffBrightnessSensor = SensorData.loadScreenOffBrightnessSensorConfig(config);
+                mProximitySensor = SensorData.loadProxSensorConfig(config);
                 loadAmbientHorizonFromDdc(config);
                 loadBrightnessChangeThresholds(config);
                 loadAutoBrightnessConfigValues(config);
@@ -1923,6 +1993,7 @@ public class DisplayDeviceConfig {
                 loadScreenOffBrightnessSensorValueToLuxFromDdc(config);
                 loadUsiVersion(config);
                 mHdrBrightnessData = HdrBrightnessData.loadConfig(config);
+                loadBrightnessCapForWearBedtimeMode(config);
             } else {
                 Slog.w(TAG, "DisplayDeviceConfig file is null");
             }
@@ -1940,12 +2011,13 @@ public class DisplayDeviceConfig {
         loadBrightnessConstraintsFromConfigXml();
         loadBrightnessMapFromConfigXml();
         loadBrightnessRampsFromConfigXml();
-        loadAmbientLightSensorFromConfigXml();
+        mAmbientLightSensor = SensorData.loadAmbientLightSensorConfig(mContext.getResources());
+        mProximitySensor = SensorData.loadSensorUnspecifiedConfig();
         loadBrightnessChangeThresholdsFromXml();
-        setProxSensorUnspecified();
         loadAutoBrightnessConfigsFromConfigXml();
         loadAutoBrightnessAvailableFromConfigXml();
         loadRefreshRateSetting(null);
+        loadBrightnessCapForWearBedtimeModeFromConfigXml();
         mLoadedFrom = "<config.xml>";
     }
 
@@ -1966,8 +2038,8 @@ public class DisplayDeviceConfig {
         mBrightnessRampDecreaseMaxIdleMillis = 0;
         mBrightnessRampIncreaseMaxIdleMillis = 0;
         setSimpleMappingStrategyValues();
-        loadAmbientLightSensorFromConfigXml();
-        setProxSensorUnspecified();
+        mAmbientLightSensor = SensorData.loadAmbientLightSensorConfig(mContext.getResources());
+        mProximitySensor = SensorData.loadSensorUnspecifiedConfig();
         loadAutoBrightnessAvailableFromConfigXml();
     }
 
@@ -2514,7 +2586,8 @@ public class DisplayDeviceConfig {
         // Idle must be called after interactive, since we fall back to it if needed.
         loadAutoBrightnessBrighteningLightDebounceIdle(autoBrightness);
         loadAutoBrightnessDarkeningLightDebounceIdle(autoBrightness);
-        loadAutoBrightnessDisplayBrightnessMapping(autoBrightness);
+        mDisplayBrightnessMapping = new DisplayBrightnessMappingConfig(mContext, mFlags,
+                autoBrightness, mBacklightToBrightnessSpline);
         loadEnableAutoBrightness(autoBrightness);
     }
 
@@ -2576,35 +2649,6 @@ public class DisplayDeviceConfig {
         } else {
             mAutoBrightnessDarkeningLightDebounceIdle =
                     autoBrightnessConfig.getDarkeningLightDebounceIdleMillis().intValue();
-        }
-    }
-
-    /**
-     * Loads the auto-brightness display brightness mappings. Internally, this takes care of
-     * loading the value from the display config, and if not present, falls back to config.xml.
-     */
-    private void loadAutoBrightnessDisplayBrightnessMapping(AutoBrightness autoBrightnessConfig) {
-        if (autoBrightnessConfig == null
-                || autoBrightnessConfig.getDisplayBrightnessMapping() == null) {
-            mBrightnessLevelsNits = getFloatArray(mContext.getResources()
-                    .obtainTypedArray(com.android.internal.R.array
-                            .config_autoBrightnessDisplayValuesNits), PowerManager
-                    .BRIGHTNESS_OFF_FLOAT);
-            mBrightnessLevelsLux = getLuxLevels(mContext.getResources()
-                    .getIntArray(com.android.internal.R.array
-                            .config_autoBrightnessLevels));
-        } else {
-            final int size = autoBrightnessConfig.getDisplayBrightnessMapping()
-                    .getDisplayBrightnessPoint().size();
-            mBrightnessLevelsNits = new float[size];
-            // The first control point is implicit and always at 0 lux.
-            mBrightnessLevelsLux = new float[size + 1];
-            for (int i = 0; i < size; i++) {
-                mBrightnessLevelsNits[i] = autoBrightnessConfig.getDisplayBrightnessMapping()
-                        .getDisplayBrightnessPoint().get(i).getNits().floatValue();
-                mBrightnessLevelsLux[i + 1] = autoBrightnessConfig.getDisplayBrightnessMapping()
-                        .getDisplayBrightnessPoint().get(i).getLux().floatValue();
-            }
         }
     }
 
@@ -2919,62 +2963,9 @@ public class DisplayDeviceConfig {
         mBrightnessRampSlowDecrease = mBrightnessRampSlowIncrease;
     }
 
-    private void loadAmbientLightSensorFromConfigXml() {
-        mAmbientLightSensor.name = "";
-        mAmbientLightSensor.type = mContext.getResources().getString(
-                com.android.internal.R.string.config_displayLightSensorType);
-    }
-
     private void loadAutoBrightnessConfigsFromConfigXml() {
-        loadAutoBrightnessDisplayBrightnessMapping(null /*AutoBrightnessConfig*/);
-    }
-
-    private void loadAmbientLightSensorFromDdc(DisplayConfiguration config) {
-        final SensorDetails sensorDetails = config.getLightSensor();
-        if (sensorDetails != null) {
-            loadSensorData(sensorDetails, mAmbientLightSensor);
-        } else {
-            loadAmbientLightSensorFromConfigXml();
-        }
-    }
-
-    private void setProxSensorUnspecified() {
-        mProximitySensor = new SensorData();
-    }
-
-    private void loadScreenOffBrightnessSensorFromDdc(DisplayConfiguration config) {
-        final SensorDetails sensorDetails = config.getScreenOffBrightnessSensor();
-        if (sensorDetails != null) {
-            loadSensorData(sensorDetails, mScreenOffBrightnessSensor);
-        }
-    }
-
-    private void loadProxSensorFromDdc(DisplayConfiguration config) {
-        SensorDetails sensorDetails = config.getProxSensor();
-        if (sensorDetails != null) {
-            String name = sensorDetails.getName();
-            String type = sensorDetails.getType();
-            if ("".equals(name) && "".equals(type)) {
-                // <proxSensor> with empty values to the config means no sensor should be used
-                mProximitySensor = null;
-            } else {
-                mProximitySensor = new SensorData();
-                loadSensorData(sensorDetails, mProximitySensor);
-            }
-        } else {
-            setProxSensorUnspecified();
-        }
-    }
-
-    private void loadSensorData(@NonNull SensorDetails sensorDetails,
-            @NonNull SensorData sensorData) {
-        sensorData.name = sensorDetails.getName();
-        sensorData.type = sensorDetails.getType();
-        final RefreshRateRange rr = sensorDetails.getRefreshRate();
-        if (rr != null) {
-            sensorData.minRefreshRate = rr.getMinimum().floatValue();
-            sensorData.maxRefreshRate = rr.getMaximum().floatValue();
-        }
+        mDisplayBrightnessMapping = new DisplayBrightnessMappingConfig(mContext, mFlags,
+                /* autoBrightnessConfig= */ null, mBacklightToBrightnessSpline);
     }
 
     private void loadBrightnessChangeThresholdsFromXml() {
@@ -3344,7 +3335,12 @@ public class DisplayDeviceConfig {
         return vals;
     }
 
-    private static float[] getLuxLevels(int[] lux) {
+    /**
+     * @param lux The lux array
+     * @return The lux array with 0 appended at the beginning - the first lux value should always
+     * be 0
+     */
+    public static float[] getLuxLevels(int[] lux) {
         // The first control point is implicit and always at 0 lux.
         float[] levels = new float[lux.length + 1];
         for (int i = 0; i < lux.length; i++) {
@@ -3389,35 +3385,21 @@ public class DisplayDeviceConfig {
                 : null;
     }
 
-    /**
-     * Uniquely identifies a Sensor, with the combination of Type and Name.
-     */
-    public static class SensorData {
-        public String type;
-        public String name;
-        public float minRefreshRate = 0.0f;
-        public float maxRefreshRate = Float.POSITIVE_INFINITY;
-
-        @Override
-        public String toString() {
-            return "Sensor{"
-                    + "type: " + type
-                    + ", name: " + name
-                    + ", refreshRateRange: [" + minRefreshRate + ", " + maxRefreshRate + "]"
-                    + "} ";
+    private void loadBrightnessCapForWearBedtimeMode(DisplayConfiguration config) {
+        if (config != null) {
+            BigDecimal configBrightnessCap = config.getScreenBrightnessCapForWearBedtimeMode();
+            if (configBrightnessCap != null) {
+                mBrightnessCapForWearBedtimeMode = configBrightnessCap.floatValue();
+            } else {
+                loadBrightnessCapForWearBedtimeModeFromConfigXml();
+            }
         }
+    }
 
-        /**
-         * @return True if the sensor matches both the specified name and type, or one if only one
-         * is specified (not-empty). Always returns false if both parameters are null or empty.
-         */
-        public boolean matches(String sensorName, String sensorType) {
-            final boolean isNameSpecified = !TextUtils.isEmpty(sensorName);
-            final boolean isTypeSpecified = !TextUtils.isEmpty(sensorType);
-            return (isNameSpecified || isTypeSpecified)
-                    && (!isNameSpecified || sensorName.equals(name))
-                    && (!isTypeSpecified || sensorType.equals(type));
-        }
+    private void loadBrightnessCapForWearBedtimeModeFromConfigXml() {
+        mBrightnessCapForWearBedtimeMode = BrightnessSynchronizer.brightnessIntToFloat(
+                mContext.getResources().getInteger(com.android.internal.R.integer
+                        .config_screenBrightnessCapForWearBedtimeMode));
     }
 
     /**

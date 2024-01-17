@@ -33,6 +33,7 @@ import static org.junit.Assert.assertThrows;
 
 import android.app.compat.CompatChanges;
 import android.graphics.Bitmap;
+import android.hardware.broadcastradio.ConfigFlag;
 import android.hardware.broadcastradio.IBroadcastRadio;
 import android.hardware.broadcastradio.ITunerCallback;
 import android.hardware.broadcastradio.IdentifierType;
@@ -41,6 +42,7 @@ import android.hardware.broadcastradio.ProgramInfo;
 import android.hardware.broadcastradio.ProgramListChunk;
 import android.hardware.broadcastradio.Result;
 import android.hardware.broadcastradio.VendorKeyValue;
+import android.hardware.radio.Flags;
 import android.hardware.radio.ProgramList;
 import android.hardware.radio.ProgramSelector;
 import android.hardware.radio.RadioManager;
@@ -51,6 +53,7 @@ import android.os.ParcelableException;
 import android.os.RemoteException;
 import android.os.ServiceSpecificException;
 import android.os.UserHandle;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 
@@ -157,6 +160,8 @@ public final class TunerSessionTest extends ExtendedRadioMockitoTestCase {
 
     @Rule
     public final Expect expect = Expect.create();
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
 
     @Override
     protected void initializeSession(StaticMockitoSessionBuilder builder) {
@@ -1223,7 +1228,30 @@ public final class TunerSessionTest extends ExtendedRadioMockitoTestCase {
     }
 
     @Test
-    public void onConfigFlagUpdated_forTunerCallback() throws Exception {
+    public void onConfigFlagUpdated_withRequiredFlagEnabled_invokesCallbacks() throws Exception {
+        mSetFlagsRule.enableFlags(Flags.FLAG_HD_RADIO_IMPROVED);
+        openAidlClients(/* numClients= */ 1);
+
+        mHalTunerCallback.onConfigFlagUpdated(ConfigFlag.FORCE_ANALOG_FM, true);
+
+        verify(mAidlTunerCallbackMocks[0], CALLBACK_TIMEOUT)
+                .onConfigFlagUpdated(RadioManager.CONFIG_FORCE_ANALOG_FM, true);
+    }
+
+    @Test
+    public void onConfigFlagUpdated_withRequiredFlagDisabled_doesNotInvokeCallbacks()
+            throws Exception {
+        mSetFlagsRule.disableFlags(Flags.FLAG_HD_RADIO_IMPROVED);
+        openAidlClients(/* numClients= */ 1);
+
+        mHalTunerCallback.onConfigFlagUpdated(ConfigFlag.FORCE_ANALOG_FM, true);
+
+        verify(mAidlTunerCallbackMocks[0], after(CALLBACK_TIMEOUT_MS).never())
+                .onConfigFlagUpdated(RadioManager.CONFIG_FORCE_ANALOG_FM, true);
+    }
+
+    @Test
+    public void onConfigFlagUpdated_withMultipleTunerSessions() throws Exception {
         int numSessions = 3;
         openAidlClients(numSessions);
         int flag = UNSUPPORTED_CONFIG_FLAG + 1;

@@ -54,12 +54,14 @@ public class ClientTransaction implements Parcelable, ObjectPoolItem {
 
     /** A list of individual callbacks to a client. */
     @UnsupportedAppUsage
+    @Nullable
     private List<ClientTransactionItem> mActivityCallbacks;
 
     /**
      * Final lifecycle state in which the client activity should be after the transaction is
      * executed.
      */
+    @Nullable
     private ActivityLifecycleItem mLifecycleStateRequest;
 
     /** Target client. */
@@ -73,7 +75,6 @@ public class ClientTransaction implements Parcelable, ObjectPoolItem {
     /**
      * Adds a message to the end of the sequence of transaction items.
      * @param item A single message that can contain a client activity/window request/callback.
-     * TODO(b/260873529): replace both {@link #addCallback} and {@link #setLifecycleStateRequest}.
      */
     public void addTransactionItem(@NonNull ClientTransactionItem item) {
         if (mTransactionItems == null) {
@@ -123,6 +124,7 @@ public class ClientTransaction implements Parcelable, ObjectPoolItem {
     @VisibleForTesting(visibility = PACKAGE)
     @UnsupportedAppUsage
     @Deprecated
+    @Nullable
     public ActivityLifecycleItem getLifecycleStateRequest() {
         return mLifecycleStateRequest;
     }
@@ -207,7 +209,7 @@ public class ClientTransaction implements Parcelable, ObjectPoolItem {
             for (int i = 0; i < size; i++) {
                 mActivityCallbacks.get(i).recycle();
             }
-            mActivityCallbacks.clear();
+            mActivityCallbacks = null;
         }
         if (mLifecycleStateRequest != null) {
             mLifecycleStateRequest.recycle();

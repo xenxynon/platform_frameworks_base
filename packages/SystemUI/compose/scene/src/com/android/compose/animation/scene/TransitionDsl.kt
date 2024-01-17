@@ -17,8 +17,7 @@
 package com.android.compose.animation.scene
 
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -130,19 +129,6 @@ interface TransitionBuilder : PropertyTransformationBuilder {
     )
 
     /**
-     * Punch a hole in the element(s) matching [matcher] that has the same bounds as [bounds] and
-     * using the given [shape].
-     *
-     * Punching a hole in an element will "remove" any pixel drawn by that element in the hole area.
-     * This can be used to make content drawn below an opaque element visible. For example, if we
-     * have [this lockscreen scene](http://shortn/_VYySFnJDhN) drawn below
-     * [this shade scene](http://shortn/_fpxGUk0Rg7) and punch a hole in the latter using the big
-     * clock time bounds and a RoundedCornerShape(10dp), [this](http://shortn/_qt80IvORFj) would be
-     * the result.
-     */
-    fun punchHole(matcher: ElementMatcher, bounds: ElementKey, shape: Shape = RectangleShape)
-
-    /**
      * Adds the transformations in [builder] but in reversed order. This allows you to partially
      * reuse the definition of the transition from scene `Foo` to scene `Bar` inside the definition
      * of the transition from scene `Bar` to scene `Foo`.
@@ -224,18 +210,33 @@ interface PropertyTransformationBuilder {
     /**
      * Scale the [width] and [height] of the element(s) matching [matcher]. Note that this scaling
      * is done during layout, so it will potentially impact the size and position of other elements.
-     *
-     * TODO(b/290184746): Also provide a scaleDrawing() to scale an element at drawing time.
      */
     fun scaleSize(matcher: ElementMatcher, width: Float = 1f, height: Float = 1f)
 
     /**
-     * Scale the element(s) matching [matcher] so that it grows/shrinks to the same size as [anchor]
-     * .
+     * Scale the drawing with [scaleX] and [scaleY] of the element(s) matching [matcher]. Note this
+     * will only scale the draw inside of an element, therefore it won't impact layout of elements
+     * around it.
+     */
+    fun scaleDraw(
+        matcher: ElementMatcher,
+        scaleX: Float = 1f,
+        scaleY: Float = 1f,
+        pivot: Offset = Offset.Unspecified
+    )
+
+    /**
+     * Scale the element(s) matching [matcher] so that it grows/shrinks to the same size as
+     * [anchor].
      *
      * Note: This currently only works if [anchor] is a shared element of this transition.
      */
-    fun anchoredSize(matcher: ElementMatcher, anchor: ElementKey)
+    fun anchoredSize(
+        matcher: ElementMatcher,
+        anchor: ElementKey,
+        anchorWidth: Boolean = true,
+        anchorHeight: Boolean = true,
+    )
 }
 
 /** The edge of a [SceneTransitionLayout]. */

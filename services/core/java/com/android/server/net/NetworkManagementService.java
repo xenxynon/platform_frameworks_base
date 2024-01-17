@@ -327,10 +327,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
     /**
      * Notify our observers of a change in the data activity state of the interface
      */
-    private void notifyInterfaceClassActivity(int type, boolean isActive, long tsNanos,
+    private void notifyInterfaceClassActivity(int label, boolean isActive, long tsNanos,
             int uid) {
         invokeForAllObservers(o -> o.interfaceClassDataActivityChanged(
-                type, isActive, tsNanos, uid));
+                label, isActive, tsNanos, uid));
     }
 
     // Sync the state of the given chain with the native daemon.
@@ -1059,17 +1059,25 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
                 Log.w(TAG, "setDataSaverMode(): already " + mDataSaverMode);
                 return true;
             }
-            Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "bandwidthEnableDataSaver");
+            Trace.traceBegin(Trace.TRACE_TAG_NETWORK, "setDataSaverModeEnabled");
             try {
-                final boolean changed = mNetdService.bandwidthEnableDataSaver(enable);
-                if (changed) {
+                if (SdkLevel.isAtLeastV()) {
+                    // setDataSaverEnabled throws if it fails to set data saver.
+                    mContext.getSystemService(ConnectivityManager.class)
+                            .setDataSaverEnabled(enable);
                     mDataSaverMode = enable;
+                    return true;
                 } else {
-                    Log.w(TAG, "setDataSaverMode(" + enable + "): netd command silently failed");
+                    final boolean changed = mNetdService.bandwidthEnableDataSaver(enable);
+                    if (changed) {
+                        mDataSaverMode = enable;
+                    } else {
+                        Log.e(TAG, "setDataSaverMode(" + enable + "): failed to set iptables");
+                    }
+                    return changed;
                 }
-                return changed;
-            } catch (RemoteException e) {
-                Log.w(TAG, "setDataSaverMode(" + enable + "): netd command failed", e);
+            } catch (RemoteException | IllegalStateException e) {
+                Log.e(TAG, "setDataSaverMode(" + enable + "): failed with exception", e);
                 return false;
             } finally {
                 Trace.traceEnd(Trace.TRACE_TAG_NETWORK);

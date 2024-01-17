@@ -73,9 +73,6 @@ public class UdfpsKeyguardViewLegacy extends UdfpsAnimationView {
     // AOD anti-burn-in offsets
     private final int mMaxBurnInOffsetX;
     private final int mMaxBurnInOffsetY;
-    private float mBurnInOffsetX;
-    private float mBurnInOffsetY;
-    private float mBurnInProgress;
     private float mInterpolatedDarkAmount;
     private int mAnimationType = ANIMATION_NONE;
     private boolean mFullyInflated;
@@ -136,22 +133,24 @@ public class UdfpsKeyguardViewLegacy extends UdfpsAnimationView {
 
         // if we're animating from screen off, we can immediately place the icon in the
         // AoD-burn in location, else we need to translate the icon from LS => AoD.
-        final float darkAmountForAnimation = mAnimationType == ANIMATION_UNLOCKED_SCREEN_OFF
+        final float darkAmountForAnimation = mAnimationType == ANIMATE_APPEAR_ON_SCREEN_OFF
                 ? 1f : mInterpolatedDarkAmount;
-        mBurnInOffsetX = MathUtils.lerp(0f,
+        final float burnInOffsetX = MathUtils.lerp(0f,
             getBurnInOffset(mMaxBurnInOffsetX * 2, true /* xAxis */)
                 - mMaxBurnInOffsetX, darkAmountForAnimation);
-        mBurnInOffsetY = MathUtils.lerp(0f,
+        final float burnInOffsetY = MathUtils.lerp(0f,
             getBurnInOffset(mMaxBurnInOffsetY * 2, false /* xAxis */)
                 - mMaxBurnInOffsetY, darkAmountForAnimation);
-        mBurnInProgress = MathUtils.lerp(0f, getBurnInProgressOffset(), darkAmountForAnimation);
+        final float burnInProgress = MathUtils.lerp(0f, getBurnInProgressOffset(),
+                darkAmountForAnimation);
 
         if (mAnimationType == ANIMATION_BETWEEN_AOD_AND_LOCKSCREEN && !mPauseAuth) {
-            mLockScreenFp.setTranslationX(mBurnInOffsetX);
-            mLockScreenFp.setTranslationY(mBurnInOffsetY);
+            mLockScreenFp.setTranslationX(burnInOffsetX);
+            mLockScreenFp.setTranslationY(burnInOffsetY);
             mBgProtection.setAlpha(1f - mInterpolatedDarkAmount);
             mLockScreenFp.setAlpha(1f - mInterpolatedDarkAmount);
         } else if (darkAmountForAnimation == 0f) {
+            // we're on the lockscreen and should use mAlpha (changes based on shade expansion)
             mLockScreenFp.setTranslationX(0);
             mLockScreenFp.setTranslationY(0);
             mBgProtection.setAlpha(mAlpha / 255f);
@@ -162,9 +161,9 @@ public class UdfpsKeyguardViewLegacy extends UdfpsAnimationView {
         }
         mLockScreenFp.setProgress(1f - mInterpolatedDarkAmount);
 
-        mAodFp.setTranslationX(mBurnInOffsetX);
-        mAodFp.setTranslationY(mBurnInOffsetY);
-        mAodFp.setProgress(mBurnInProgress);
+        mAodFp.setTranslationX(burnInOffsetX);
+        mAodFp.setTranslationY(burnInOffsetY);
+        mAodFp.setProgress(burnInProgress);
         mAodFp.setAlpha(mInterpolatedDarkAmount);
 
         // done animating
@@ -172,7 +171,7 @@ public class UdfpsKeyguardViewLegacy extends UdfpsAnimationView {
                 mAnimationType == ANIMATION_BETWEEN_AOD_AND_LOCKSCREEN
                         && (mInterpolatedDarkAmount == 0f || mInterpolatedDarkAmount == 1f);
         final boolean doneAnimatingUnlockedScreenOff =
-                mAnimationType == ANIMATION_UNLOCKED_SCREEN_OFF
+                mAnimationType == ANIMATE_APPEAR_ON_SCREEN_OFF
                         && (mInterpolatedDarkAmount == 1f);
         if (doneAnimatingBetweenAodAndLS || doneAnimatingUnlockedScreenOff) {
             mAnimationType = ANIMATION_NONE;
@@ -244,10 +243,10 @@ public class UdfpsKeyguardViewLegacy extends UdfpsAnimationView {
 
     static final int ANIMATION_NONE = 0;
     static final int ANIMATION_BETWEEN_AOD_AND_LOCKSCREEN = 1;
-    static final int ANIMATION_UNLOCKED_SCREEN_OFF = 2;
+    static final int ANIMATE_APPEAR_ON_SCREEN_OFF = 2;
 
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef({ANIMATION_NONE, ANIMATION_BETWEEN_AOD_AND_LOCKSCREEN, ANIMATION_UNLOCKED_SCREEN_OFF})
+    @IntDef({ANIMATION_NONE, ANIMATION_BETWEEN_AOD_AND_LOCKSCREEN, ANIMATE_APPEAR_ON_SCREEN_OFF})
     private @interface AnimationType {}
 
     void onDozeAmountChanged(float linear, float eased, @AnimationType int animationType) {

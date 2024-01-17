@@ -29,6 +29,7 @@ import static com.android.server.am.ProcessRecord.TAG;
 import android.annotation.ElapsedRealtimeLong;
 import android.app.ActivityManager;
 import android.content.ComponentName;
+import android.os.Flags;
 import android.os.SystemClock;
 import android.os.Trace;
 import android.util.Slog;
@@ -376,12 +377,6 @@ final class ProcessStateRecord {
      */
     @GuardedBy("mService")
     private boolean mReachable;
-
-    /**
-     * Whether or not this process is reversed reachable from given process.
-     */
-    @GuardedBy("mService")
-    private boolean mReversedReachable;
 
     /**
      * The most recent time when the last visible activity within this process became invisible.
@@ -996,16 +991,6 @@ final class ProcessStateRecord {
     }
 
     @GuardedBy("mService")
-    boolean isReversedReachable() {
-        return mReversedReachable;
-    }
-
-    @GuardedBy("mService")
-    void setReversedReachable(boolean reversedReachable) {
-        mReversedReachable = reversedReachable;
-    }
-
-    @GuardedBy("mService")
     void resetCachedInfo() {
         mCachedHasActivities = VALUE_INVALID;
         mCachedIsHeavyWeight = VALUE_INVALID;
@@ -1366,7 +1351,12 @@ final class ProcessStateRecord {
         }
         if (mNotCachedSinceIdle) {
             pw.print(prefix); pw.print("notCachedSinceIdle="); pw.print(mNotCachedSinceIdle);
-            pw.print(" initialIdlePss="); pw.println(mApp.mProfile.getInitialIdlePss());
+            if (!Flags.removeAppProfilerPssCollection()) {
+                pw.print(" initialIdlePss=");
+            } else {
+                pw.print(" initialIdleRss=");
+            }
+            pw.println(mApp.mProfile.getInitialIdlePssOrRss());
         }
         if (hasTopUi() || hasOverlayUi() || mRunningRemoteAnimation) {
             pw.print(prefix); pw.print("hasTopUi="); pw.print(hasTopUi());

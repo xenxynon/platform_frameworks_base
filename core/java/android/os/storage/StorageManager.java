@@ -1738,23 +1738,6 @@ public class StorageManager {
         return RoSystemProperties.CRYPTO_FILE_ENCRYPTED;
     }
 
-    /** {@hide}
-     * @deprecated Use {@link #isFileEncrypted} instead, since emulated FBE is no longer supported.
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    @Deprecated
-    public static boolean isFileEncryptedNativeOnly() {
-        return isFileEncrypted();
-    }
-
-    /** {@hide}
-     * @deprecated Use {@link #isFileEncrypted} instead, since emulated FBE is no longer supported.
-     */
-    @Deprecated
-    public static boolean isFileEncryptedNativeOrEmulated() {
-        return isFileEncrypted();
-    }
-
     /** {@hide} */
     public static boolean hasAdoptable() {
         switch (SystemProperties.get(PROP_ADOPTABLE)) {
@@ -2133,6 +2116,7 @@ public class StorageManager {
             MOUNT_MODE_EXTERNAL_PASS_THROUGH,
             MOUNT_MODE_EXTERNAL_ANDROID_WRITABLE
     })
+    @Retention(RetentionPolicy.SOURCE)
     /** @hide */
     public @interface MountMode {}
 

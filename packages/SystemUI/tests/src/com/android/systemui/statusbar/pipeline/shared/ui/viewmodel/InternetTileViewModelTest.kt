@@ -21,7 +21,10 @@ import com.android.settingslib.AccessibilityContentDescriptions.WIFI_OTHER_DEVIC
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.common.shared.model.ContentDescription.Companion.loadContentDescription
 import com.android.systemui.common.shared.model.Text
+import com.android.systemui.common.shared.model.Text.Companion.loadText
 import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.flags.FakeFeatureFlagsClassic
+import com.android.systemui.flags.Flags
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.qs.tileimpl.QSTileImpl.ResourceIcon
 import com.android.systemui.res.R
@@ -75,6 +78,11 @@ class InternetTileViewModelTest : SysuiTestCase() {
     private val mobileConnectionRepository =
         FakeMobileConnectionRepository(SUB_1_ID, tableLogBuffer)
 
+    private val flags =
+        FakeFeatureFlagsClassic().also {
+            it.set(Flags.FILTER_PROVISIONING_NETWORK_SUBSCRIPTIONS, true)
+        }
+
     private val internet = context.getString(R.string.quick_settings_internet_label)
 
     @Before
@@ -101,6 +109,7 @@ class InternetTileViewModelTest : SysuiTestCase() {
                 userSetupRepo,
                 testScope.backgroundScope,
                 context,
+                flags,
             )
 
         underTest =
@@ -329,12 +338,12 @@ class InternetTileViewModelTest : SysuiTestCase() {
                 networkName.value = NetworkNameModel.Default("test network")
             }
 
-            assertThat(latest?.secondaryTitle).contains("test network")
+            assertThat(latest?.secondaryTitle.toString()).contains("test network")
             assertThat(latest?.secondaryLabel).isNull()
             assertThat(latest?.icon).isInstanceOf(SignalIcon::class.java)
             assertThat(latest?.iconId).isNull()
             assertThat(latest?.stateDescription.loadContentDescription(context))
-                .isEqualTo(latest?.secondaryTitle)
+                .isEqualTo(latest?.secondaryTitle.toString())
             assertThat(latest?.contentDescription.loadContentDescription(context))
                 .isEqualTo(internet)
         }
@@ -347,14 +356,14 @@ class InternetTileViewModelTest : SysuiTestCase() {
 
             connectivityRepository.setEthernetConnected(default = true, validated = true)
 
-            assertThat(latest?.secondaryLabel).isNull()
-            assertThat(latest?.secondaryTitle)
-                .isEqualTo(ethernetIcon!!.contentDescription.toString())
+            assertThat(latest?.secondaryLabel.loadText(context))
+                .isEqualTo(ethernetIcon!!.contentDescription.loadContentDescription(context))
+            assertThat(latest?.secondaryTitle).isNull()
             assertThat(latest?.iconId).isEqualTo(R.drawable.stat_sys_ethernet_fully)
             assertThat(latest?.icon).isNull()
             assertThat(latest?.stateDescription).isNull()
             assertThat(latest?.contentDescription.loadContentDescription(context))
-                .isEqualTo(latest?.secondaryTitle)
+                .isEqualTo(latest?.secondaryLabel.loadText(context))
         }
 
     @Test
@@ -365,14 +374,14 @@ class InternetTileViewModelTest : SysuiTestCase() {
 
             connectivityRepository.setEthernetConnected(default = true, validated = false)
 
-            assertThat(latest?.secondaryLabel).isNull()
-            assertThat(latest?.secondaryTitle)
-                .isEqualTo(ethernetIcon!!.contentDescription.toString())
+            assertThat(latest?.secondaryLabel.loadText(context))
+                .isEqualTo(ethernetIcon!!.contentDescription.loadContentDescription(context))
+            assertThat(latest?.secondaryTitle).isNull()
             assertThat(latest?.iconId).isEqualTo(R.drawable.stat_sys_ethernet)
             assertThat(latest?.icon).isNull()
             assertThat(latest?.stateDescription).isNull()
             assertThat(latest?.contentDescription.loadContentDescription(context))
-                .isEqualTo(latest?.secondaryTitle)
+                .isEqualTo(latest?.secondaryLabel.loadText(context))
         }
 
     private fun setWifiNetworkWithHotspot(hotspot: WifiNetworkModel.HotspotDeviceType) {

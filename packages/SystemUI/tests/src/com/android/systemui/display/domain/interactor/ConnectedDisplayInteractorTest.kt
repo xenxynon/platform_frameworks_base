@@ -16,29 +16,42 @@
 
 package com.android.systemui.display.domain.interactor
 
+import android.companion.virtual.VirtualDeviceManager
+import android.companion.virtual.flags.Flags.FLAG_INTERACTIVE_SCREEN_MIRROR
+import android.platform.test.annotations.EnableFlags
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
 import android.view.Display
 import android.view.Display.TYPE_EXTERNAL
 import android.view.Display.TYPE_INTERNAL
+import android.view.Display.TYPE_VIRTUAL
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.FlowValue
 import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.display.data.repository.DeviceStateRepository
+import com.android.systemui.display.data.repository.DeviceStateRepository.DeviceState.CONCURRENT_DISPLAY
+import com.android.systemui.display.data.repository.FakeDeviceStateRepository
 import com.android.systemui.display.data.repository.FakeDisplayRepository
 import com.android.systemui.display.data.repository.createPendingDisplay
 import com.android.systemui.display.data.repository.display
 import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor.PendingDisplay
 import com.android.systemui.display.domain.interactor.ConnectedDisplayInteractor.State
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
+import com.android.systemui.util.mockito.mock
+import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.anyInt
 
 @RunWith(AndroidTestingRunner::class)
 @TestableLooper.RunWithLooper
@@ -46,14 +59,24 @@ import org.junit.runner.RunWith
 @SmallTest
 class ConnectedDisplayInteractorTest : SysuiTestCase() {
 
+    private val virtualDeviceManager = mock<VirtualDeviceManager>()
+
     private val fakeDisplayRepository = FakeDisplayRepository()
     private val fakeKeyguardRepository = FakeKeyguardRepository()
+    private val fakeDeviceStateRepository = FakeDeviceStateRepository()
     private val connectedDisplayStateProvider: ConnectedDisplayInteractor =
-        ConnectedDisplayInteractorImpl(fakeKeyguardRepository, fakeDisplayRepository)
+        ConnectedDisplayInteractorImpl(
+            virtualDeviceManager,
+            fakeKeyguardRepository,
+            fakeDisplayRepository,
+            fakeDeviceStateRepository,
+            UnconfinedTestDispatcher(),
+        )
     private val testScope = TestScope(UnconfinedTestDispatcher())
 
     @Before
     fun setup() {
+        whenever(virtualDeviceManager.isVirtualDeviceOwnedMirrorDisplay(anyInt())).thenReturn(false)
         fakeKeyguardRepository.setKeyguardShowing(false)
     }
 
@@ -137,6 +160,96 @@ class ConnectedDisplayInteractorTest : SysuiTestCase() {
         }
 
     @Test
+    @EnableFlags(FLAG_INTERACTIVE_SCREEN_MIRROR)
+    fun displayState_virtualDeviceOwnedMirrorVirtualDisplay_connected() =
+        testScope.runTest {
+            whenever(virtualDeviceManager.isVirtualDeviceOwnedMirrorDisplay(anyInt()))
+                .thenReturn(true)
+            val value by lastValue()
+
+            fakeDisplayRepository.emit(setOf(display(type = TYPE_VIRTUAL)))
+
+            assertThat(value).isEqualTo(State.CONNECTED)
+        }
+
+    @Test
+    fun displayState_virtualDeviceUnownedMirrorVirtualDisplay_disconnected() =
+        testScope.runTest {
+            val value by lastValue()
+
+            fakeDisplayRepository.emit(setOf(display(type = TYPE_VIRTUAL)))
+
+            assertThat(value).isEqualTo(State.DISCONNECTED)
+        }
+
+    @Test
+    @EnableFlags(FLAG_INTERACTIVE_SCREEN_MIRROR)
+    fun virtualDeviceOwnedMirrorVirtualDisplay_emitsConnectedDisplayAddition() =
+        testScope.runTest {
+            whenever(virtualDeviceManager.isVirtualDeviceOwnedMirrorDisplay(anyInt()))
+                .thenReturn(true)
+            var count = 0
+            val job =
+                connectedDisplayStateProvider.connectedDisplayAddition
+                    .onEach { count++ }
+                    .launchIn(this)
+
+            fakeDisplayRepository.emit(display(type = TYPE_VIRTUAL))
+
+            runCurrent()
+            assertThat(count).isEqualTo(1)
+            job.cancel()
+        }
+
+    @Test
+    fun virtualDeviceUnownedMirrorVirtualDisplay_doesNotEmitConnectedDisplayAddition() =
+        testScope.runTest {
+            var count = 0
+            val job =
+                connectedDisplayStateProvider.connectedDisplayAddition
+                    .onEach { count++ }
+                    .launchIn(this)
+
+            fakeDisplayRepository.emit(display(type = TYPE_VIRTUAL))
+
+            runCurrent()
+            assertThat(count).isEqualTo(0)
+            job.cancel()
+        }
+
+    @Test
+    fun externalDisplay_emitsConnectedDisplayAddition() =
+        testScope.runTest {
+            var count = 0
+            val job =
+                connectedDisplayStateProvider.connectedDisplayAddition
+                    .onEach { count++ }
+                    .launchIn(this)
+
+            fakeDisplayRepository.emit(display(type = TYPE_EXTERNAL))
+
+            runCurrent()
+            assertThat(count).isEqualTo(1)
+            job.cancel()
+        }
+
+    @Test
+    fun internalDisplay_doesNotEmitConnectedDisplayAddition() =
+        testScope.runTest {
+            var count = 0
+            val job =
+                connectedDisplayStateProvider.connectedDisplayAddition
+                    .onEach { count++ }
+                    .launchIn(this)
+
+            fakeDisplayRepository.emit(display(type = TYPE_INTERNAL))
+
+            runCurrent()
+            assertThat(count).isEqualTo(0)
+            job.cancel()
+        }
+
+    @Test
     fun pendingDisplay_propagated() =
         testScope.runTest {
             val value by lastPendingDisplay()
@@ -173,6 +286,44 @@ class ConnectedDisplayInteractorTest : SysuiTestCase() {
             fakeKeyguardRepository.setKeyguardShowing(true)
 
             assertThat(pendingDisplay).isNull()
+        }
+
+    @Test
+    fun concurrentDisplaysInProgress_started_returnsTrue() =
+        testScope.runTest {
+            val concurrentDisplaysInProgress =
+                collectLastValue(connectedDisplayStateProvider.concurrentDisplaysInProgress)
+
+            fakeDeviceStateRepository.emit(CONCURRENT_DISPLAY)
+
+            assertThat(concurrentDisplaysInProgress()).isTrue()
+        }
+
+    @Test
+    fun concurrentDisplaysInProgress_stopped_returnsFalse() =
+        testScope.runTest {
+            val concurrentDisplaysInProgress =
+                collectLastValue(connectedDisplayStateProvider.concurrentDisplaysInProgress)
+
+            fakeDeviceStateRepository.emit(CONCURRENT_DISPLAY)
+            fakeDeviceStateRepository.emit(DeviceStateRepository.DeviceState.UNKNOWN)
+
+            assertThat(concurrentDisplaysInProgress()).isFalse()
+        }
+
+    @Test
+    fun concurrentDisplaysInProgress_otherStates_returnsFalse() =
+        testScope.runTest {
+            val concurrentDisplaysInProgress =
+                collectLastValue(connectedDisplayStateProvider.concurrentDisplaysInProgress)
+
+            DeviceStateRepository.DeviceState.entries
+                .filter { it != CONCURRENT_DISPLAY }
+                .forEach { deviceState ->
+                    fakeDeviceStateRepository.emit(deviceState)
+
+                    assertThat(concurrentDisplaysInProgress()).isFalse()
+                }
         }
 
     private fun TestScope.lastValue(): FlowValue<State?> =

@@ -96,30 +96,14 @@ genrule {
     out: ["com/android/server/location/contexthub/ContextHubStatsLog.java"],
 }
 
-/*
- * This module is used to refer aconfig flag libraries that are
- * added to the framework via static_libs.
- * These libraries are referred here via libs prevent duplication of classes in both
- * the framework and the system server.
-*/
-java_defaults {
-    name: "shared-framework-aconfig-libs",
-    libs: [
-        "display_flags_lib",
-        "camera_platform_flags_core_java_lib",
-    ],
-}
-
 java_library_static {
     name: "services.core.unboosted",
     defaults: [
         "framework-wifi-vendor-hide-access-defaults",
         "platform_service_defaults",
-        "android.hardware.power-java_static",
-        "shared-framework-aconfig-libs",
+        "android.hardware.power-java_shared",
     ],
     srcs: [
-        ":android.hardware.biometrics.face-V3-java-source",
         ":android.hardware.tv.hdmi.connection-V1-java-source",
         ":android.hardware.tv.hdmi.earc-V1-java-source",
         ":statslog-art-java-gen",
@@ -141,6 +125,9 @@ java_library_static {
         "java/com/android/server/am/EventLogTags.logtags",
         "java/com/android/server/wm/EventLogTags.logtags",
         "java/com/android/server/policy/EventLogTags.logtags",
+
+        // Java/AIDL sources to be moved out to CrashRecovery module
+        ":services-crashrecovery-sources",
     ],
 
     libs: [
@@ -149,7 +136,6 @@ java_library_static {
         "android.hardware.light-V2.0-java",
         "android.hardware.gnss-V2-java",
         "android.hardware.vibrator-V2-java",
-        "android.nfc.flags-aconfig-java",
         "app-compat-annotations",
         "framework-tethering.stubs.module_lib",
         "service-art.stubs.system_server",
@@ -167,7 +153,8 @@ java_library_static {
     ],
 
     static_libs: [
-        "android.frameworks.location.altitude-V1-java", // AIDL
+        "android.frameworks.location.altitude-V2-java", // AIDL
+        "android.frameworks.vibrator-V1-java", // AIDL
         "android.hardware.authsecret-V1.0-java",
         "android.hardware.authsecret-V1-java",
         "android.hardware.boot-V1.0-java", // HIDL
@@ -175,11 +162,11 @@ java_library_static {
         "android.hardware.boot-V1.2-java", // HIDL
         "android.hardware.boot-V1-java", // AIDL
         "android.hardware.broadcastradio-V2.0-java", // HIDL
-        "android.hardware.broadcastradio-V1-java", // AIDL
+        "android.hardware.broadcastradio-V2-java", // AIDL
         "android.hardware.health-V1.0-java", // HIDL
         "android.hardware.health-V2.0-java", // HIDL
         "android.hardware.health-V2.1-java", // HIDL
-        "android.hardware.health-V2-java", // AIDL
+        "android.hardware.health-V3-java", // AIDL
         "android.hardware.health-translate-java",
         "android.hardware.light-V1-java",
         "android.hardware.security.rkp-V3-java",
@@ -199,6 +186,7 @@ java_library_static {
         "android.hardware.power.stats-V2-java",
         "android.hidl.manager-V1.2-java",
         "cbor-java",
+        "com.android.media.audio-aconfig-java",
         "dropbox_flags_lib",
         "icu4j_calendar_astronomer",
         "android.security.aaid_aidl-java",
@@ -206,17 +194,19 @@ java_library_static {
         "overlayable_policy_aidl-java",
         "SurfaceFlingerProperties",
         "com.android.sysprop.watchdog",
-        "ImmutabilityAnnotation",
         "securebox",
         "vendor.qti.hardware.servicetracker-V1.0-java",
         "vendor.qti.hardware.servicetracker-V1.2-java",
         "vendor.qti.hardware.servicetrackeraidl-V1-java",
-        "android.content.pm.flags-aconfig-java",
         "apache-commons-math",
         "backstage_power_flags_lib",
         "notification_flags_lib",
         "biometrics_flags_lib",
         "am_flags_lib",
+        "com_android_systemui_shared_flags_lib",
+        "com_android_wm_shell_flags_lib",
+        "com.android.server.utils_aconfig-java",
+        "service-jobscheduler-deviceidle.flags-aconfig-java",
     ],
     javac_shard_size: 50,
     javacflags: [
@@ -230,6 +220,7 @@ java_library_static {
       "//frameworks/base/services",
       "//frameworks/base/tests/Input",
       "//frameworks/base/tests/InputScreenshotTest",
+      "//packages/modules/AdServices/adservices/apk/unittest",
       "//packages/modules/AdServices/adservices/tests/unittest/adservices-test-utility",
       "//packages/modules/AdServices/adservices/tests/unittest/service-core",
       "//packages/modules/AdServices/adservices/tests/unittest/system-service",

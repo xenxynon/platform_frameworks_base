@@ -322,6 +322,14 @@ public interface PackageState {
     long[] getUsesSdkLibrariesVersionsMajor();
 
     /**
+     * @see R.styleable#AndroidManifestUsesSdkLibrary_optional
+     * @hide
+     */
+    @Immutable.Ignore
+    @NonNull
+    boolean[] getUsesSdkLibrariesOptional();
+
+    /**
      * @see R.styleable#AndroidManifestUsesStaticLibrary
      * @hide
      */
@@ -456,4 +464,12 @@ public interface PackageState {
     @Immutable.Ignore
     @Nullable
     byte[] getRestrictUpdateHash();
+
+    /**
+     * whether the package has been scanned as a stopped system app. A package will be
+     * scanned in the stopped state if it is a system app that has a launcher entry and is
+     * <b>not</b> exempted by {@code <initial-package-state>} tag, and is not an APEX
+     * @hide
+     */
+    boolean isScannedAsStoppedSystemApp();
 }

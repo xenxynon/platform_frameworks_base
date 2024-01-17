@@ -16,8 +16,9 @@
 package com.android.systemui.keyguard.data
 
 import com.android.systemui.keyguard.data.repository.FakeCommandQueueModule
-import com.android.systemui.keyguard.data.repository.FakeDeviceEntryFaceAuthRepositoryModule
+import com.android.systemui.keyguard.data.repository.FakeKeyguardClockRepositoryModule
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepositoryModule
+import com.android.systemui.keyguard.data.repository.FakeKeyguardSurfaceBehindRepositoryModule
 import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepositoryModule
 import dagger.Module
 
@@ -25,9 +26,10 @@ import dagger.Module
     includes =
         [
             FakeCommandQueueModule::class,
-            FakeDeviceEntryFaceAuthRepositoryModule::class,
             FakeKeyguardRepositoryModule::class,
             FakeKeyguardTransitionRepositoryModule::class,
+            FakeKeyguardSurfaceBehindRepositoryModule::class,
+            FakeKeyguardClockRepositoryModule::class,
         ]
 )
 object FakeKeyguardDataLayerModule

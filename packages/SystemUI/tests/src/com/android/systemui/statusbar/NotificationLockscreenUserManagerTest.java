@@ -26,14 +26,10 @@ import static android.os.Flags.FLAG_ALLOW_PRIVATE_PROFILE;
 import static android.os.UserHandle.USER_ALL;
 import static android.provider.Settings.Secure.LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS;
 import static android.provider.Settings.Secure.LOCK_SCREEN_SHOW_NOTIFICATIONS;
-
+import static com.android.systemui.util.concurrency.MockExecutorHandlerKt.mockExecutorHandler;
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
-import static junit.framework.Assert.assertNotNull;
 import static junit.framework.Assert.assertTrue;
-
-import static org.junit.Assume.assumeFalse;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -57,13 +53,14 @@ import android.content.pm.UserInfo;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.UserHandle;
 import android.os.UserManager;
+import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
+import android.platform.test.flag.junit.FlagsParameterization;
 import android.provider.Settings;
-import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
+import android.util.SparseArray;
 
 import androidx.test.filters.SmallTest;
 
@@ -74,6 +71,7 @@ import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FakeFeatureFlagsClassic;
 import com.android.systemui.flags.Flags;
+import com.android.systemui.log.LogWtfHandlerRule;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.recents.OverviewProxyService;
 import com.android.systemui.settings.UserTracker;
@@ -84,11 +82,14 @@ import com.android.systemui.statusbar.notification.collection.notifcollection.Co
 import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
+import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.settings.FakeSettings;
-
+import com.android.systemui.util.time.FakeSystemClock;
 import com.google.android.collect.Lists;
 
+import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
@@ -97,12 +98,26 @@ import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.Executor;
 
+import platform.test.runner.parameterized.ParameterizedAndroidJunit4;
+import platform.test.runner.parameterized.Parameters;
+
 @SmallTest
-@RunWith(AndroidTestingRunner.class)
+@RunWith(ParameterizedAndroidJunit4.class)
 @TestableLooper.RunWithLooper
 public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
+
+    @Parameters(name = "{0}")
+    public static List<FlagsParameterization> getParams() {
+        return FlagsParameterization.allCombinationsOf(FLAG_ALLOW_PRIVATE_PROFILE);
+    }
+
+    public NotificationLockscreenUserManagerTest(FlagsParameterization flags) {
+        mSetFlagsRule.setFlagsParameterization(flags);
+    }
+
     private static final int TEST_PROFILE_USERHANDLE = 12;
     @Mock
     private NotificationPresenter mPresenter;
@@ -136,13 +151,18 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
     private UserInfo mCurrentUser;
     private UserInfo mSecondaryUser;
     private UserInfo mWorkUser;
+    private UserInfo mCommunalUser;
     private FakeSettings mSettings;
     private TestNotificationLockscreenUserManager mLockscreenUserManager;
     private NotificationEntry mCurrentUserNotif;
     private NotificationEntry mSecondaryUserNotif;
     private NotificationEntry mWorkProfileNotif;
     private final FakeFeatureFlagsClassic mFakeFeatureFlags = new FakeFeatureFlagsClassic();
-    private Executor mBackgroundExecutor = Runnable::run; // Direct executor
+    private final FakeSystemClock mFakeSystemClock = new FakeSystemClock();
+    private final FakeExecutor mBackgroundExecutor = new FakeExecutor(mFakeSystemClock);
+    private final Executor mMainExecutor = Runnable::run; // Direct executor
+
+    @Rule public final LogWtfHandlerRule wtfHandlerRule = new LogWtfHandlerRule();
 
     @Before
     public void setUp() {
@@ -158,16 +178,22 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
         mSecondaryUser = new UserInfo(currentUserId + 1, "", 0);
         mWorkUser = new UserInfo(currentUserId + 2, "" /* name */, null /* iconPath */, 0,
                 UserManager.USER_TYPE_PROFILE_MANAGED);
+        mCommunalUser = new UserInfo(currentUserId + 3, "" /* name */, null /* iconPath */, 0,
+                UserManager.USER_TYPE_PROFILE_COMMUNAL);
 
         when(mKeyguardManager.getPrivateNotificationsAllowed()).thenReturn(true);
         when(mUserManager.getProfiles(currentUserId)).thenReturn(Lists.newArrayList(
                 mCurrentUser, mWorkUser));
+        when(mUserManager.getProfilesIncludingCommunal(currentUserId)).thenReturn(
+                Lists.newArrayList(mCurrentUser, mWorkUser, mCommunalUser));
         when(mUserManager.getUsers()).thenReturn(Lists.newArrayList(
-                mCurrentUser, mWorkUser, mSecondaryUser));
+                mCurrentUser, mWorkUser, mSecondaryUser, mCommunalUser));
         when(mUserManager.getProfiles(mSecondaryUser.id)).thenReturn(Lists.newArrayList(
                 mSecondaryUser));
+        when(mUserManager.getProfilesIncludingCommunal(mSecondaryUser.id)).thenReturn(
+                Lists.newArrayList(mSecondaryUser, mCommunalUser));
         mDependency.injectTestDependency(Dependency.MAIN_HANDLER,
-                Handler.createAsync(Looper.myLooper()));
+                mockExecutorHandler(mMainExecutor));
 
         Notification notifWithPrivateVisibility = new Notification();
         notifWithPrivateVisibility.visibility = VISIBILITY_PRIVATE;
@@ -201,6 +227,14 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
 
         mLockscreenUserManager = new TestNotificationLockscreenUserManager(mContext);
         mLockscreenUserManager.setUpWithPresenter(mPresenter);
+
+        mBackgroundExecutor.runAllReady();
+    }
+
+    @After
+    public void tearDown() {
+        // Validate that all tests processed all background posted code
+        assertEquals(0, mBackgroundExecutor.numPending());
     }
 
     private void changeSetting(String setting) {
@@ -208,6 +242,26 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
         lockScreenUris.add(Settings.Secure.getUriFor(setting));
         mLockscreenUserManager.getLockscreenSettingsObserverForTest().onChange(false,
             lockScreenUris, 0);
+    }
+
+    @Test
+    public void testGetCurrentProfiles() {
+        final SparseArray<UserInfo> expectedCurProfiles = new SparseArray<>();
+        expectedCurProfiles.put(mCurrentUser.id, mCurrentUser);
+        expectedCurProfiles.put(mWorkUser.id, mWorkUser);
+        if (android.multiuser.Flags.supportCommunalProfile()) {
+            expectedCurProfiles.put(mCommunalUser.id, mCommunalUser);
+        }
+        assertTrue(mLockscreenUserManager.getCurrentProfiles().contentEquals(expectedCurProfiles));
+
+        mLockscreenUserManager.mUserChangedCallback.onUserChanging(mSecondaryUser.id, mContext);
+
+        final SparseArray<UserInfo> expectedSecProfiles = new SparseArray<>();
+        expectedSecProfiles.put(mSecondaryUser.id, mSecondaryUser);
+        if (android.multiuser.Flags.supportCommunalProfile()) {
+            expectedSecProfiles.put(mCommunalUser.id, mCommunalUser);
+        }
+        assertTrue(mLockscreenUserManager.getCurrentProfiles().contentEquals(expectedSecProfiles));
     }
 
     @Test
@@ -292,6 +346,20 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
                 .setVisibilityOverride(VISIBILITY_NO_OVERRIDE).build());
         // THEN the notification is redacted
         assertTrue(mLockscreenUserManager.needsRedaction(mCurrentUserNotif));
+    }
+
+    @Test
+    public void testCurrentUserPrivateNotificationsNullChannel() {
+        // GIVEN current user allows private notifications to show
+        mSettings.putIntForUser(LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS, 1,
+                mCurrentUser.id);
+        changeSetting(LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS);
+
+        mCurrentUserNotif.setRanking(new RankingBuilder(mCurrentUserNotif.getRanking())
+                .setChannel(null)
+                .setVisibilityOverride(VISIBILITY_NO_OVERRIDE).build());
+        // THEN the notification is not redacted
+        assertFalse(mLockscreenUserManager.needsRedaction(mCurrentUserNotif));
     }
 
     @Test
@@ -401,28 +469,28 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
 
         // first call explicitly sets user 0 to not public; notifies
         mLockscreenUserManager.updatePublicMode();
-        TestableLooper.get(this).processAllMessages();
+        mBackgroundExecutor.runAllReady();
         assertFalse(mLockscreenUserManager.isLockscreenPublicMode(0));
         verify(listener).onNotificationStateChanged();
         clearInvocations(listener);
 
         // calling again has no changes; does not notify
         mLockscreenUserManager.updatePublicMode();
-        TestableLooper.get(this).processAllMessages();
+        mBackgroundExecutor.runAllReady();
         assertFalse(mLockscreenUserManager.isLockscreenPublicMode(0));
         verify(listener, never()).onNotificationStateChanged();
 
         // Calling again with keyguard now showing makes user 0 public; notifies
         when(mKeyguardStateController.isShowing()).thenReturn(true);
         mLockscreenUserManager.updatePublicMode();
-        TestableLooper.get(this).processAllMessages();
+        mBackgroundExecutor.runAllReady();
         assertTrue(mLockscreenUserManager.isLockscreenPublicMode(0));
         verify(listener).onNotificationStateChanged();
         clearInvocations(listener);
 
         // calling again has no changes; does not notify
         mLockscreenUserManager.updatePublicMode();
-        TestableLooper.get(this).processAllMessages();
+        mBackgroundExecutor.runAllReady();
         assertTrue(mLockscreenUserManager.isLockscreenPublicMode(0));
         verify(listener, never()).onNotificationStateChanged();
     }
@@ -444,6 +512,29 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
                 new Intent(ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED));
 
         assertFalse(mLockscreenUserManager.userAllowsNotificationsInPublic(mCurrentUser.id));
+    }
+
+    @Test
+    public void testDevicePolicyDoesNotAllowNotifications_deviceOwnerSetsForUserAll() {
+        // User allows them
+        mSettings.putIntForUser(LOCK_SCREEN_SHOW_NOTIFICATIONS, 1, mCurrentUser.id);
+        mSettings.putIntForUser(LOCK_SCREEN_SHOW_NOTIFICATIONS, 1, mSecondaryUser.id);
+        changeSetting(LOCK_SCREEN_SHOW_NOTIFICATIONS);
+
+        // DevicePolicy hides notifs on lockscreen
+        when(mDevicePolicyManager.getKeyguardDisabledFeatures(null, mCurrentUser.id))
+                .thenReturn(KEYGUARD_DISABLE_SECURE_NOTIFICATIONS);
+        when(mDevicePolicyManager.getKeyguardDisabledFeatures(null, mSecondaryUser.id))
+                .thenReturn(KEYGUARD_DISABLE_SECURE_NOTIFICATIONS);
+
+        BroadcastReceiver.PendingResult pr = new BroadcastReceiver.PendingResult(
+                0, null, null, 0, true, false, null, USER_ALL, 0);
+        mLockscreenUserManager.mAllUsersReceiver.setPendingResult(pr);
+        mLockscreenUserManager.mAllUsersReceiver.onReceive(mContext,
+                new Intent(ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED));
+
+        assertFalse(mLockscreenUserManager.userAllowsNotificationsInPublic(mCurrentUser.id));
+        assertFalse(mLockscreenUserManager.userAllowsNotificationsInPublic(mSecondaryUser.id));
     }
 
     @Test
@@ -700,6 +791,9 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
         intent.putExtra(Intent.EXTRA_USER_HANDLE, newUserId);
         broadcastReceiver.onReceive(mContext, intent);
 
+        // One background task to run which will setup the new user
+        assertEquals(1, mBackgroundExecutor.runAllReady());
+
         verify(mDevicePolicyManager, atMost(1)).getKeyguardDisabledFeatures(any(), eq(newUserId));
 
         assertTrue(mLockscreenUserManager.userAllowsNotificationsInPublic(newUserId));
@@ -707,48 +801,52 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
     }
 
     @Test
+    @EnableFlags(FLAG_ALLOW_PRIVATE_PROFILE)
     public void testProfileAvailabilityIntent() {
-        mSetFlagsRule.enableFlags(FLAG_ALLOW_PRIVATE_PROFILE);
         mLockscreenUserManager.mCurrentProfiles.clear();
         assertEquals(0, mLockscreenUserManager.mCurrentProfiles.size());
         mLockscreenUserManager.mCurrentProfiles.append(0, mock(UserInfo.class));
         simulateProfileAvailabilityActions(Intent.ACTION_PROFILE_AVAILABLE);
-        assertEquals(2, mLockscreenUserManager.mCurrentProfiles.size());
+        int numProfiles = android.multiuser.Flags.supportCommunalProfile() ? 3 : 2;
+        assertEquals(numProfiles, mLockscreenUserManager.mCurrentProfiles.size());
     }
 
     @Test
+    @EnableFlags(FLAG_ALLOW_PRIVATE_PROFILE)
     public void testProfileUnAvailabilityIntent() {
-        mSetFlagsRule.enableFlags(FLAG_ALLOW_PRIVATE_PROFILE);
         mLockscreenUserManager.mCurrentProfiles.clear();
         assertEquals(0, mLockscreenUserManager.mCurrentProfiles.size());
         mLockscreenUserManager.mCurrentProfiles.append(0, mock(UserInfo.class));
         simulateProfileAvailabilityActions(Intent.ACTION_PROFILE_UNAVAILABLE);
-        assertEquals(2, mLockscreenUserManager.mCurrentProfiles.size());
+        int numProfiles = android.multiuser.Flags.supportCommunalProfile() ? 3 : 2;
+        assertEquals(numProfiles, mLockscreenUserManager.mCurrentProfiles.size());
     }
 
     @Test
+    @DisableFlags(FLAG_ALLOW_PRIVATE_PROFILE)
     public void testManagedProfileAvailabilityIntent() {
-        mSetFlagsRule.disableFlags(FLAG_ALLOW_PRIVATE_PROFILE);
         mLockscreenUserManager.mCurrentProfiles.clear();
         mLockscreenUserManager.mCurrentManagedProfiles.clear();
         assertEquals(0, mLockscreenUserManager.mCurrentProfiles.size());
         assertEquals(0, mLockscreenUserManager.mCurrentManagedProfiles.size());
         mLockscreenUserManager.mCurrentProfiles.append(0, mock(UserInfo.class));
         simulateProfileAvailabilityActions(Intent.ACTION_MANAGED_PROFILE_AVAILABLE);
-        assertEquals(2, mLockscreenUserManager.mCurrentProfiles.size());
+        int numProfiles = android.multiuser.Flags.supportCommunalProfile() ? 3 : 2;
+        assertEquals(numProfiles, mLockscreenUserManager.mCurrentProfiles.size());
         assertEquals(1, mLockscreenUserManager.mCurrentManagedProfiles.size());
     }
 
     @Test
+    @DisableFlags(FLAG_ALLOW_PRIVATE_PROFILE)
     public void testManagedProfileUnAvailabilityIntent() {
-        mSetFlagsRule.disableFlags(FLAG_ALLOW_PRIVATE_PROFILE);
         mLockscreenUserManager.mCurrentProfiles.clear();
         mLockscreenUserManager.mCurrentManagedProfiles.clear();
         assertEquals(0, mLockscreenUserManager.mCurrentProfiles.size());
         assertEquals(0, mLockscreenUserManager.mCurrentManagedProfiles.size());
         mLockscreenUserManager.mCurrentProfiles.append(0, mock(UserInfo.class));
         simulateProfileAvailabilityActions(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE);
-        assertEquals(2, mLockscreenUserManager.mCurrentProfiles.size());
+        int numProfiles = android.multiuser.Flags.supportCommunalProfile() ? 3 : 2;
+        assertEquals(numProfiles, mLockscreenUserManager.mCurrentProfiles.size());
         assertEquals(1, mLockscreenUserManager.mCurrentManagedProfiles.size());
     }
 
@@ -775,10 +873,8 @@ public class NotificationLockscreenUserManagerTest extends SysuiTestCase {
                     (() -> mOverviewProxyService),
                     NotificationLockscreenUserManagerTest.this.mKeyguardManager,
                     mStatusBarStateController,
-                    Handler.createAsync(TestableLooper.get(
-                            NotificationLockscreenUserManagerTest.this).getLooper()),
-                    Handler.createAsync(TestableLooper.get(
-                            NotificationLockscreenUserManagerTest.this).getLooper()),
+                    mockExecutorHandler(mMainExecutor),
+                    mockExecutorHandler(mBackgroundExecutor),
                     mBackgroundExecutor,
                     mDeviceProvisionedController,
                     mKeyguardStateController,

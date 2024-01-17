@@ -100,6 +100,22 @@ public final class BroadcastHelper {
         mAppsFilter = injector.getAppsFilter();
     }
 
+    /**
+     * Sends a broadcast to registered clients on userId for the given Intent.
+     */
+    void sendPackageBroadcastWithIntent(Intent intent, int userId, boolean isInstantApp,
+            @Intent.Flags int flags,
+            int[] visibilityAllowList,
+            final IIntentReceiver finishedReceiver,
+            @Nullable BiFunction<Integer, Bundle, Bundle> filterExtrasForReceiver,
+            @Nullable Bundle bOptions) {
+        intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT | flags);
+        SparseArray<int[]> broadcastAllowList = new SparseArray<>();
+        broadcastAllowList.put(userId, visibilityAllowList);
+        broadcastIntent(intent, finishedReceiver, isInstantApp, userId, broadcastAllowList,
+                filterExtrasForReceiver, bOptions);
+    }
+
     void sendPackageBroadcast(final String action, final String pkg, final Bundle extras,
             final int flags, final String targetPkg, final IIntentReceiver finishedReceiver,
             final int[] userIds, int[] instantUserIds,
@@ -152,8 +168,6 @@ public final class BroadcastHelper {
         for (int userId : userIds) {
             final Intent intent = new Intent(action,
                     pkg != null ? Uri.fromParts(PACKAGE_SCHEME, pkg, null) : null);
-            final String[] requiredPermissions =
-                    isInstantApp ? INSTANT_APP_BROADCAST_PERMISSION : null;
             if (extras != null) {
                 intent.putExtras(extras);
             }
@@ -172,28 +186,39 @@ public final class BroadcastHelper {
             }
             intent.putExtra(Intent.EXTRA_USER_HANDLE, userId);
             intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT | flags);
-            if (DEBUG_BROADCASTS) {
-                RuntimeException here = new RuntimeException("here");
-                here.fillInStackTrace();
-                Slog.d(TAG, "Sending to user " + userId + ": "
-                        + intent.toShortString(false, true, false, false)
-                        + " " + intent.getExtras(), here);
-            }
-            final boolean ordered;
-            if (mAmInternal.isModernQueueEnabled()) {
-                // When the modern broadcast stack is enabled, deliver all our
-                // broadcasts as unordered, since the modern stack has better
-                // support for sequencing cold-starts, and it supports
-                // delivering resultTo for non-ordered broadcasts
-                ordered = false;
-            } else {
-                ordered = (finishedReceiver != null);
-            }
-            mAmInternal.broadcastIntent(
-                    intent, finishedReceiver, requiredPermissions, ordered, userId,
-                    broadcastAllowList == null ? null : broadcastAllowList.get(userId),
+            broadcastIntent(intent, finishedReceiver, isInstantApp, userId, broadcastAllowList,
                     filterExtrasForReceiver, bOptions);
         }
+    }
+
+
+    private void broadcastIntent(Intent intent, IIntentReceiver finishedReceiver,
+            boolean isInstantApp, int userId, @Nullable SparseArray<int[]> broadcastAllowList,
+            @Nullable BiFunction<Integer, Bundle, Bundle> filterExtrasForReceiver,
+            @Nullable Bundle bOptions) {
+        final String[] requiredPermissions =
+                isInstantApp ? INSTANT_APP_BROADCAST_PERMISSION : null;
+        if (DEBUG_BROADCASTS) {
+            RuntimeException here = new RuntimeException("here");
+            here.fillInStackTrace();
+            Slog.d(TAG, "Sending to user " + userId + ": "
+                    + intent.toShortString(false, true, false, false)
+                    + " " + intent.getExtras(), here);
+        }
+        final boolean ordered;
+        if (mAmInternal.isModernQueueEnabled()) {
+            // When the modern broadcast stack is enabled, deliver all our
+            // broadcasts as unordered, since the modern stack has better
+            // support for sequencing cold-starts, and it supports
+            // delivering resultTo for non-ordered broadcasts
+            ordered = false;
+        } else {
+            ordered = (finishedReceiver != null);
+        }
+        mAmInternal.broadcastIntent(
+                intent, finishedReceiver, requiredPermissions, ordered, userId,
+                broadcastAllowList == null ? null : broadcastAllowList.get(userId),
+                filterExtrasForReceiver, bOptions);
     }
 
     void sendResourcesChangedBroadcast(@NonNull Computer snapshot,
@@ -812,13 +837,11 @@ public final class BroadcastHelper {
         }
 
         final String removedPackage = packageRemovedInfo.mRemovedPackage;
-        final int removedAppId = packageRemovedInfo.mRemovedAppId;
-        final int uid = packageRemovedInfo.mUid;
         final String installerPackageName = packageRemovedInfo.mInstallerPackageName;
         final SparseArray<int[]> broadcastAllowList = packageRemovedInfo.mBroadcastAllowList;
 
         Bundle extras = new Bundle(2);
-        extras.putInt(Intent.EXTRA_UID, removedAppId >= 0 ? removedAppId : uid);
+        extras.putInt(Intent.EXTRA_UID, packageRemovedInfo.mUid);
         extras.putBoolean(Intent.EXTRA_REPLACING, true);
         sendPackageBroadcastAndNotify(Intent.ACTION_PACKAGE_ADDED, removedPackage, extras,
                 0, null /*targetPackage*/, null, null, null, broadcastAllowList, null);
@@ -863,8 +886,6 @@ public final class BroadcastHelper {
             boolean removedBySystem,
             boolean isArchived) {
         final String removedPackage = packageRemovedInfo.mRemovedPackage;
-        final int removedAppId = packageRemovedInfo.mRemovedAppId;
-        final int uid = packageRemovedInfo.mUid;
         final String installerPackageName = packageRemovedInfo.mInstallerPackageName;
         final int[] broadcastUserIds = packageRemovedInfo.mBroadcastUsers;
         final int[] instantUserIds = packageRemovedInfo.mInstantUserIds;
@@ -877,8 +898,7 @@ public final class BroadcastHelper {
         final boolean isStaticSharedLib = packageRemovedInfo.mIsStaticSharedLib;
 
         Bundle extras = new Bundle();
-        final int removedUid = removedAppId >= 0  ? removedAppId : uid;
-        extras.putInt(Intent.EXTRA_UID, removedUid);
+        extras.putInt(Intent.EXTRA_UID, packageRemovedInfo.mUid);
         extras.putBoolean(Intent.EXTRA_DATA_REMOVED, dataRemoved);
         extras.putBoolean(Intent.EXTRA_SYSTEM_UPDATE_UNINSTALL, isRemovedPackageSystemUpdate);
         extras.putBoolean(Intent.EXTRA_DONT_KILL_APP, !killApp);
@@ -915,10 +935,10 @@ public final class BroadcastHelper {
                 sendPackageBroadcastAndNotify(Intent.ACTION_PACKAGE_FULLY_REMOVED,
                         removedPackage, extras, Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND, null,
                         null, broadcastUserIds, instantUserIds, broadcastAllowList, null);
-                packageSender.notifyPackageRemoved(removedPackage, removedUid);
+                packageSender.notifyPackageRemoved(removedPackage, packageRemovedInfo.mUid);
             }
         }
-        if (removedAppId >= 0) {
+        if (packageRemovedInfo.mIsAppIdRemoved) {
             // If a system app's updates are uninstalled the UID is not actually removed. Some
             // services need to know the package name affected.
             if (isReplace) {

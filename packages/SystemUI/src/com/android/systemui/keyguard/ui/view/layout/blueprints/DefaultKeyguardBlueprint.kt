@@ -20,58 +20,71 @@ package com.android.systemui.keyguard.ui.view.layout.blueprints
 import com.android.systemui.communal.ui.view.layout.sections.CommunalTutorialIndicatorSection
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.keyguard.shared.model.KeyguardBlueprint
+import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodBurnInSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AodNotificationIconsSection
-import com.android.systemui.keyguard.ui.view.layout.sections.DefaultAmbientIndicationAreaSection
-import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntryIconSection
+import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultNotificationStackScrollLayoutSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultSettingsPopupMenuSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultShortcutsSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusBarSection
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusViewSection
-import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeGuidelines
+import com.android.systemui.keyguard.ui.view.layout.sections.DefaultUdfpsAccessibilityOverlaySection
+import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSectionsModule.Companion.KEYGUARD_AMBIENT_INDICATION_AREA_SECTION
+import com.android.systemui.keyguard.ui.view.layout.sections.SmartspaceSection
+import java.util.Optional
 import javax.inject.Inject
+import javax.inject.Named
+import kotlin.jvm.optionals.getOrNull
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
  * Positions elements of the lockscreen to the default position.
  *
  * This will be the most common use case for phones in portrait mode.
  */
+@ExperimentalCoroutinesApi
 @SysUISingleton
 @JvmSuppressWildcards
 class DefaultKeyguardBlueprint
 @Inject
 constructor(
     defaultIndicationAreaSection: DefaultIndicationAreaSection,
-    defaultDeviceEntryIconSection: DefaultDeviceEntryIconSection,
+    defaultDeviceEntrySection: DefaultDeviceEntrySection,
     defaultShortcutsSection: DefaultShortcutsSection,
-    defaultAmbientIndicationAreaSection: DefaultAmbientIndicationAreaSection,
+    @Named(KEYGUARD_AMBIENT_INDICATION_AREA_SECTION)
+    defaultAmbientIndicationAreaSection: Optional<KeyguardSection>,
     defaultSettingsPopupMenuSection: DefaultSettingsPopupMenuSection,
     defaultStatusViewSection: DefaultStatusViewSection,
     defaultStatusBarSection: DefaultStatusBarSection,
     defaultNotificationStackScrollLayoutSection: DefaultNotificationStackScrollLayoutSection,
-    splitShadeGuidelines: SplitShadeGuidelines,
     aodNotificationIconsSection: AodNotificationIconsSection,
     aodBurnInSection: AodBurnInSection,
     communalTutorialIndicatorSection: CommunalTutorialIndicatorSection,
+    clockSection: ClockSection,
+    smartspaceSection: SmartspaceSection,
+    udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection,
 ) : KeyguardBlueprint {
     override val id: String = DEFAULT
 
     override val sections =
-        setOf(
+        listOfNotNull(
             defaultIndicationAreaSection,
-            defaultDeviceEntryIconSection,
             defaultShortcutsSection,
-            defaultAmbientIndicationAreaSection,
+            defaultAmbientIndicationAreaSection.getOrNull(),
             defaultSettingsPopupMenuSection,
             defaultStatusViewSection,
             defaultStatusBarSection,
             defaultNotificationStackScrollLayoutSection,
-            splitShadeGuidelines,
             aodNotificationIconsSection,
+            smartspaceSection,
             aodBurnInSection,
             communalTutorialIndicatorSection,
+            clockSection,
+            defaultDeviceEntrySection,
+            udfpsAccessibilityOverlaySection, // Add LAST: Intentionally has z-order above others
         )
 
     companion object {

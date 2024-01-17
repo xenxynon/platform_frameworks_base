@@ -428,6 +428,11 @@
     <!-- Cannot double inherit. Use Theme.SystemUI.QuickSettings in code to match -->
     <style name="BrightnessDialog" parent="@android:style/Theme.DeviceDefault.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@style/Animation.BrightnessDialog</item>
+    </style>
+
+    <style name="Animation.BrightnessDialog">
+        <item name="android:windowExitAnimation">@anim/instant_fade_out</item>
     </style>
 
     <style name="Theme.SystemUI.ContrastDialog" parent="@android:style/Theme.DeviceDefault.Dialog">
@@ -949,6 +954,11 @@
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <style name="Theme.EditWidgetsActivity"
+        parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/white</item>
     </style>
 
     <style name="TextAppearance.Control">
@@ -1499,10 +1509,14 @@
 
     <style name="ShortCutButton" parent="@android:style/Widget.Material.Button">
         <item name="android:background">@drawable/shortcut_button_colored</item>
-        <item name="android:stateListAnimator">@null</item>
         <item name="android:textSize">16sp</item>
-        <item name="android:padding">4dp</item>
-        <item name="android:textColor">?androidprv:attr/textColorSecondary</item>
+        <item name="android:textColor">?androidprv:attr/materialColorOnSurface</item>
+        <item name="android:layout_marginEnd">12dp</item>
+        <item name="android:paddingLeft">24dp</item>
+        <item name="android:paddingRight">24dp</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="android:stateListAnimator">@*android:anim/flat_button_state_list_anim_material</item>
+        <item name="android:pointerIcon">arrow</item>
     </style>
 
     <style name="ShortcutHorizontalDivider">
@@ -1510,10 +1524,6 @@
         <item name="android:layout_height">1dp</item>
         <item name="android:layout_gravity">center_horizontal</item>
         <item name="android:background">?android:attr/dividerHorizontal</item>
-    </style>
-
-    <style name="ShortcutItemBackground">
-        <item name="android:background">@color/ksh_key_item_new_background</item>
     </style>
 
     <style name="LongPressLockScreenAnimation">

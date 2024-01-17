@@ -410,12 +410,6 @@ public final class MediaRouterService extends IMediaRouterService.Stub
 
     // Binder call
     @Override
-    public boolean verifyPackageExists(String clientPackageName) {
-        return mService2.verifyPackageExists(clientPackageName);
-    }
-
-    // Binder call
-    @Override
     public List<MediaRoute2Info> getSystemRoutes() {
         return mService2.getSystemRoutes();
     }
@@ -536,6 +530,7 @@ public final class MediaRouterService extends IMediaRouterService.Stub
     }
 
     // Binder call
+    @RequiresPermission(Manifest.permission.MEDIA_CONTENT_CONTROL)
     @Override
     public void registerManager(IMediaRouter2Manager manager, String callerPackageName) {
         final int uid = Binder.getCallingUid();
@@ -543,6 +538,19 @@ public final class MediaRouterService extends IMediaRouterService.Stub
             throw new SecurityException("callerPackageName must match the calling uid");
         }
         mService2.registerManager(manager, callerPackageName);
+    }
+
+    @Override
+    public void registerProxyRouter(
+            @NonNull IMediaRouter2Manager manager,
+            @NonNull String callerPackageName,
+            @NonNull String targetPackageName,
+            @NonNull UserHandle targetUser) {
+        final int uid = Binder.getCallingUid();
+        if (!validatePackageName(uid, callerPackageName)) {
+            throw new SecurityException("callerPackageName must match the calling uid");
+        }
+        mService2.registerProxyRouter(manager, callerPackageName, targetPackageName, targetUser);
     }
 
     // Binder call

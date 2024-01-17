@@ -169,6 +169,7 @@ import com.android.internal.content.InstallLocationUtils;
 import com.android.internal.content.NativeLibraryHelper;
 import com.android.internal.messages.nano.SystemMessageProto;
 import com.android.internal.os.SomeArgs;
+import com.android.internal.pm.pkg.parsing.ParsingPackageUtils;
 import com.android.internal.security.VerityUtils;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.CollectionUtils;
@@ -182,7 +183,6 @@ import com.android.server.pm.Installer.InstallerException;
 import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageStateInternal;
-import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
 
 import libcore.io.IoUtils;
 import libcore.util.EmptyArray;
@@ -499,7 +499,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     @GuardedBy("mLock")
     private SigningDetails mSigningDetails;
     @GuardedBy("mLock")
-    private SparseArray<PackageInstallerSession> mChildSessions = new SparseArray<>();
+    private final SparseArray<PackageInstallerSession> mChildSessions = new SparseArray<>();
     @GuardedBy("mLock")
     private int mParentSessionId;
 
@@ -543,7 +543,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     }
 
     @GuardedBy("mLock")
-    private ArraySet<FileEntry> mFiles = new ArraySet<>();
+    private final ArraySet<FileEntry> mFiles = new ArraySet<>();
 
     static class PerFileChecksum {
         private final Checksum[] mChecksums;
@@ -564,7 +564,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
     }
 
     @GuardedBy("mLock")
-    private ArrayMap<String, PerFileChecksum> mChecksums = new ArrayMap<>();
+    private final ArrayMap<String, PerFileChecksum> mChecksums = new ArrayMap<>();
 
     @GuardedBy("mLock")
     private boolean mSessionApplied;
@@ -1620,7 +1620,14 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             try {
                 Certificate[] ignored = ApkChecksums.verifySignature(checksums, signature);
             } catch (IOException | NoSuchAlgorithmException | SignatureException e) {
-                throw new IllegalArgumentException("Can't verify signature", e);
+                throw new IllegalArgumentException("Can't verify signature: " + e.getMessage(), e);
+            }
+        }
+
+        for (Checksum checksum : checksums) {
+            if (checksum.getValue() == null
+                    || checksum.getValue().length > Checksum.MAX_CHECKSUM_SIZE_BYTES) {
+                throw new IllegalArgumentException("Invalid checksum.");
             }
         }
 
@@ -2261,31 +2268,39 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 == PackageManager.PERMISSION_GRANTED;
     }
 
+    private boolean isInstallationAllowed(PackageStateInternal psi) {
+        if (psi == null || psi.getPkg() == null) {
+            return true;
+        }
+        if (psi.getPkg().isUpdatableSystem()) {
+            return true;
+        }
+        if (mOriginalInstallerUid == Process.ROOT_UID) {
+            Slog.w(TAG, "Overriding updatableSystem because the installer is root: "
+                    + psi.getPackageName());
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Check if this package can be installed archived.
      */
-    private static boolean isArchivedInstallationAllowed(String packageName) {
-        final PackageManagerInternal pmi = LocalServices.getService(PackageManagerInternal.class);
-        final PackageStateInternal existingPkgSetting = pmi.getPackageStateInternal(packageName);
-        if (existingPkgSetting == null) {
+    private static boolean isArchivedInstallationAllowed(PackageStateInternal psi) {
+        if (psi == null) {
             return true;
         }
-
         return false;
     }
 
     /**
      * Checks if the package can be installed on IncFs.
      */
-    private static boolean isIncrementalInstallationAllowed(String packageName) {
-        final PackageManagerInternal pmi = LocalServices.getService(PackageManagerInternal.class);
-        final PackageStateInternal existingPkgSetting = pmi.getPackageStateInternal(packageName);
-        if (existingPkgSetting == null || existingPkgSetting.getPkg() == null) {
+    private static boolean isIncrementalInstallationAllowed(PackageStateInternal psi) {
+        if (psi == null || psi.getPkg() == null) {
             return true;
         }
-
-        return !existingPkgSetting.isSystem()
-                && !existingPkgSetting.isUpdatedSystemApp();
+        return !psi.isSystem() && !psi.isUpdatedSystemApp();
     }
 
     /**
@@ -3384,6 +3399,16 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                         "Split " + apk.getSplitName() + " was defined multiple times");
             }
 
+            if (!apk.isUpdatableSystem()) {
+                if (mOriginalInstallerUid == Process.ROOT_UID) {
+                    Slog.w(TAG, "Overriding updatableSystem because the installer is root for: "
+                            + apk.getPackageName());
+                } else {
+                    throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,
+                            "Non updatable system package can't be installed or updated");
+                }
+            }
+
             // Use first package to define unknown values
             if (mPackageName == null) {
                 mPackageName = apk.getPackageName();
@@ -3458,8 +3483,17 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
             }
         }
 
+        final PackageManagerInternal pmi = LocalServices.getService(PackageManagerInternal.class);
+        final PackageStateInternal existingPkgSetting = pmi.getPackageStateInternal(mPackageName);
+
+        if (!isInstallationAllowed(existingPkgSetting)) {
+            throw new PackageManagerException(
+                    PackageManager.INSTALL_FAILED_SESSION_INVALID,
+                    "Installation of this package is not allowed.");
+        }
+
         if (isArchivedInstallation()) {
-            if (!isArchivedInstallationAllowed(mPackageName)) {
+            if (!isArchivedInstallationAllowed(existingPkgSetting)) {
                 throw new PackageManagerException(
                         PackageManager.INSTALL_FAILED_SESSION_INVALID,
                         "Archived installation of this package is not allowed.");
@@ -3475,7 +3509,7 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
         }
 
         if (isIncrementalInstallation()) {
-            if (!isIncrementalInstallationAllowed(mPackageName)) {
+            if (!isIncrementalInstallationAllowed(existingPkgSetting)) {
                 throw new PackageManagerException(
                         PackageManager.INSTALL_FAILED_SESSION_INVALID,
                         "Incremental installation of this package is not allowed.");
@@ -3572,20 +3606,29 @@ public class PackageInstallerSession extends IPackageInstallerSession.Stub {
                 params.setDontKillApp(false);
             }
 
+            boolean existingSplitReplacedOrRemoved = false;
             // Inherit splits if not overridden.
             if (!ArrayUtils.isEmpty(existing.getSplitNames())) {
                 for (int i = 0; i < existing.getSplitNames().length; i++) {
                     final String splitName = existing.getSplitNames()[i];
                     final File splitFile = new File(existing.getSplitApkPaths()[i]);
                     final boolean splitRemoved = removeSplitList.contains(splitName);
-                    if (!stagedSplits.contains(splitName) && !splitRemoved) {
+                    final boolean splitReplaced = stagedSplits.contains(splitName);
+                    if (!splitReplaced && !splitRemoved) {
                         inheritFileLocked(splitFile);
                         // Collect the requiredSplitTypes and staged splitTypes from splits
                         CollectionUtils.addAll(requiredSplitTypes,
                                 existing.getRequiredSplitTypes()[i]);
                         CollectionUtils.addAll(stagedSplitTypes, existing.getSplitTypes()[i]);
+                    } else {
+                        existingSplitReplacedOrRemoved = true;
                     }
                 }
+            }
+            if (existingSplitReplacedOrRemoved
+                    && (params.installFlags & PackageManager.INSTALL_DONT_KILL_APP) != 0) {
+                // Some splits are being replaced or removed. Make sure the app is restarted.
+                params.setDontKillApp(false);
             }
 
             // Inherit compiled oat directory.

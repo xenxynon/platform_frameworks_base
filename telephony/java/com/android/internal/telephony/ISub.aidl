@@ -66,6 +66,8 @@ interface ISub {
      *
      * @param callingPackage The package maing the call.
      * @param callingFeatureId The feature in the package
+     * @param isForAllProfiles whether the caller intends to see all subscriptions regardless
+     *                      association.
      * @return Sorted list of the currently {@link SubscriptionInfo} records available on the device.
      * <ul>
      * <li>
@@ -83,14 +85,17 @@ interface ISub {
      * </ul>
      */
     List<SubscriptionInfo> getActiveSubscriptionInfoList(String callingPackage,
-            String callingFeatureId);
+            String callingFeatureId, boolean isForAllProfiles);
 
     /**
      * @param callingPackage The package making the call.
      * @param callingFeatureId The feature in the package.
+     * @param isForAllProfile whether the caller intends to see all subscriptions regardless
+     *                      association.
      * @return the number of active subscriptions
      */
-    int getActiveSubInfoCount(String callingPackage, String callingFeatureId);
+    int getActiveSubInfoCount(String callingPackage, String callingFeatureId,
+            boolean isForAllProfile);
 
     /**
      * @return the maximum number of subscriptions this device will support at any one time.
@@ -129,9 +134,9 @@ interface ISub {
      * @param uniqueId This is the unique identifier for the subscription within the specific
      *                      subscription type.
      * @param subscriptionType the type of subscription to be removed
-     * @return 0 if success, < 0 on error.
+     * @return true if success, false on error.
      */
-    int removeSubInfo(String uniqueId, int subscriptionType);
+    boolean removeSubInfo(String uniqueId, int subscriptionType);
 
     /**
      * Set SIM icon tint color by simInfo index
@@ -239,6 +244,7 @@ interface ISub {
     int getSubId(int slotIndex);
 
     int getDefaultSubId();
+    int getDefaultSubIdAsUser(int userId);
 
     int getPhoneId(int subId);
 
@@ -251,16 +257,18 @@ interface ISub {
     void setDefaultDataSubId(int subId);
 
     int getDefaultVoiceSubId();
+    int getDefaultVoiceSubIdAsUser(int userId);
 
     void setDefaultVoiceSubId(int subId);
 
     int getDefaultSmsSubId();
+    int getDefaultSmsSubIdAsUser(int userId);
 
     void setDefaultSmsSubId(int subId);
 
     int[] getActiveSubIdList(boolean visibleOnly);
 
-    int setSubscriptionProperty(int subId, String propKey, String propValue);
+    void setSubscriptionProperty(int subId, String propKey, String propValue);
 
     String getSubscriptionProperty(int subId, String propKey, String callingPackage,
             String callingFeatureId);
@@ -352,13 +360,6 @@ interface ISub {
      * @hide
      */
     List<SubscriptionInfo> getSubscriptionInfoListAssociatedWithUser(in UserHandle userHandle);
-
-       /**
-        * @return {@code true} if using SubscriptionManagerService instead of
-        * SubscriptionController.
-        */
-       //TODO: Removed before U AOSP public release.
-       boolean isSubscriptionManagerServiceEnabled();
 
       /**
        * Called during setup wizard restore flow to attempt to restore the backed up sim-specific

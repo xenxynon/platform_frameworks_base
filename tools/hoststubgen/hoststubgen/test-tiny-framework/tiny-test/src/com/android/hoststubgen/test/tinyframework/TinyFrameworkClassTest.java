@@ -17,6 +17,8 @@ package com.android.hoststubgen.test.tinyframework;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.fail;
+
 import com.android.hoststubgen.test.tinyframework.TinyFrameworkNestedClasses.SubClass;
 
 import org.junit.Rule;
@@ -107,8 +109,81 @@ public class TinyFrameworkClassTest {
     }
 
     @Test
+    public void testLambda1() {
+        assertThat(new TinyFrameworkLambdas().mSupplier.get()).isEqualTo(1);
+    }
+
+    @Test
+    public void testLambda2() {
+        assertThat(TinyFrameworkLambdas.sSupplier.get()).isEqualTo(2);
+    }
+
+    @Test
+    public void testLambda3() {
+        assertThat(new TinyFrameworkLambdas().getSupplier().get()).isEqualTo(3);
+    }
+
+    @Test
+    public void testLambda4() {
+        assertThat(TinyFrameworkLambdas.getSupplier_static().get()).isEqualTo(4);
+    }
+
+    @Test
+    public void testLambda5() {
+        assertThat(new TinyFrameworkLambdas.Nested().mSupplier.get()).isEqualTo(5);
+    }
+
+    @Test
+    public void testLambda6() {
+        assertThat(TinyFrameworkLambdas.Nested.sSupplier.get()).isEqualTo(6);
+    }
+
+    @Test
+    public void testLambda7() {
+        assertThat(new TinyFrameworkLambdas.Nested().getSupplier().get()).isEqualTo(7);
+    }
+
+    @Test
+    public void testLambda8() {
+        assertThat(TinyFrameworkLambdas.Nested.getSupplier_static().get()).isEqualTo(8);
+    }
+
+    @Test
     public void testNativeSubstitutionClass() {
         assertThat(TinyFrameworkNative.nativeAddTwo(3)).isEqualTo(5);
+    }
+
+    @Test
+    public void testNativeSubstitutionClass_nonStatic() {
+        TinyFrameworkNative instance = new TinyFrameworkNative();
+        instance.setValue(5);
+        assertThat(instance.nativeNonStaticAddToValue(3)).isEqualTo(8);
+    }
+
+
+    @Test
+    public void testSubstituteNativeWithThrow() throws Exception {
+        // We can't use TinyFrameworkNative.nativeStillNotSupported() directly in this class,
+        // because @Throw implies @Keep (not @Stub), and we currently compile this test
+        // against the stub jar (so it won't contain @Throw methods).
+        //
+        // But the method exists at runtime, so we can use reflections to call it.
+        //
+        // In the real Ravenwood environment, we don't use HostStubGen's stub jar at all,
+        // so it's not a problem.
+
+        final var clazz = TinyFrameworkNative.class;
+        final var method = clazz.getMethod("nativeStillNotSupported");
+
+        try {
+            method.invoke(null);
+
+            fail("java.lang.reflect.InvocationTargetException expected");
+
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            var inner = e.getCause();
+            assertThat(inner.getMessage()).contains("not supported on the host side");
+        }
     }
 
     @Test
@@ -127,11 +202,11 @@ public class TinyFrameworkClassTest {
 
     @Test
     public void testClassLoadHook() {
-        assertThat(TinyFrameworkClassWithInitializer.sInitialized).isTrue();
+        assertThat(TinyFrameworkClassWithInitializerStub.sInitialized).isTrue();
 
         // Having this line before assertThat() will ensure these class are already loaded.
-        var classes = new Class[] {
-                TinyFrameworkClassWithInitializer.class,
+        var classes = new Class[]{
+                TinyFrameworkClassWithInitializerStub.class,
                 TinyFrameworkClassAnnotations.class,
                 TinyFrameworkForTextPolicy.class,
         };
@@ -143,6 +218,18 @@ public class TinyFrameworkClassTest {
         // This class doesn't have a class load hook, so shouldn't be included.
         assertThat(TinyFrameworkClassLoadHook.sLoadedClasses)
                 .doesNotContain(TinyFrameworkNestedClasses.class);
+    }
+
+    @Test
+    public void testStaticInitializer_Default() {
+        assertThat(TinyFrameworkClassWithInitializerDefault.sInitialized).isFalse();
+        assertThat(TinyFrameworkClassWithInitializerDefault.sObject).isNull();
+    }
+
+    @Test
+    public void testStaticInitializer_Stub() {
+        assertThat(TinyFrameworkClassWithInitializerStub.sInitialized).isTrue();
+        assertThat(TinyFrameworkClassWithInitializerStub.sObject).isNotNull();
     }
 
     /**
@@ -181,5 +268,55 @@ public class TinyFrameworkClassTest {
         // Call the package private method, set(int).
         m.invoke(fd, 0);
         assertThat(f.get(fd)).isEqualTo(0);
+    }
+
+    @Test
+    public void testPackageRedirect() throws Exception {
+        assertThat(TinyFrameworkPackageRedirect.foo(1)).isEqualTo(1);
+    }
+
+    @Test
+    public void testEnumSimple() throws Exception {
+        assertThat(TinyFrameworkEnumSimple.CAT.ordinal()).isEqualTo(0);
+        assertThat(TinyFrameworkEnumSimple.CAT.name()).isEqualTo("CAT");
+
+        assertThat(TinyFrameworkEnumSimple.DOG.ordinal()).isEqualTo(1);
+        assertThat(TinyFrameworkEnumSimple.DOG.name()).isEqualTo("DOG");
+
+        assertThat(TinyFrameworkEnumSimple.valueOf("DOG").ordinal()).isEqualTo(1);
+
+        assertThat(TinyFrameworkEnumSimple.values()).isEqualTo(
+                new TinyFrameworkEnumSimple[]{
+                        TinyFrameworkEnumSimple.CAT,
+                        TinyFrameworkEnumSimple.DOG,
+                }
+        );
+    }
+
+    @Test
+    public void testEnumComplex() throws Exception {
+        assertThat(TinyFrameworkEnumComplex.RED.ordinal()).isEqualTo(0);
+        assertThat(TinyFrameworkEnumComplex.RED.name()).isEqualTo("RED");
+
+        assertThat(TinyFrameworkEnumComplex.RED.getShortName()).isEqualTo("R");
+
+        assertThat(TinyFrameworkEnumComplex.GREEN.ordinal()).isEqualTo(1);
+        assertThat(TinyFrameworkEnumComplex.GREEN.name()).isEqualTo("GREEN");
+
+        assertThat(TinyFrameworkEnumComplex.valueOf("BLUE").ordinal()).isEqualTo(2);
+
+        assertThat(TinyFrameworkEnumComplex.values()).isEqualTo(
+                new TinyFrameworkEnumComplex[]{
+                        TinyFrameworkEnumComplex.RED,
+                        TinyFrameworkEnumComplex.GREEN,
+                        TinyFrameworkEnumComplex.BLUE,
+                }
+        );
+    }
+
+    @Test
+    public void testAidlHeuristics() {
+        assertThat(IPretendingAidl.Stub.addOne(1)).isEqualTo(2);
+        assertThat(IPretendingAidl.Stub.Proxy.addTwo(1)).isEqualTo(3);
     }
 }

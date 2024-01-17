@@ -19,12 +19,13 @@ package com.android.server.display;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.Display.Mode.INVALID_MODE_ID;
 
+import android.annotation.Nullable;
 import android.app.ActivityThread;
 import android.content.Context;
 import android.content.res.Resources;
 import android.hardware.display.DisplayManagerInternal.DisplayOffloadSession;
-import android.hardware.display.DisplayManagerInternal.DisplayOffloader;
 import android.hardware.sidekick.SidekickInternal;
+import android.media.MediaDrm;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -84,8 +85,6 @@ final class LocalDisplayAdapter extends DisplayAdapter {
 
     private final boolean mIsBootDisplayModeSupported;
 
-    private final DisplayManagerFlags mFlags;
-
     private final DisplayNotificationManager mDisplayNotificationManager;
 
     private Context mOverlayContext;
@@ -103,12 +102,11 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             Listener listener, DisplayManagerFlags flags,
             DisplayNotificationManager displayNotificationManager,
             Injector injector) {
-        super(syncRoot, context, handler, listener, TAG);
+        super(syncRoot, context, handler, listener, TAG, flags);
         mDisplayNotificationManager = displayNotificationManager;
         mInjector = injector;
         mSurfaceControlProxy = mInjector.getSurfaceControlProxy();
         mIsBootDisplayModeSupported = mSurfaceControlProxy.getBootDisplayModeSupport();
-        mFlags = flags;
     }
 
     @Override
@@ -238,7 +236,6 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         private boolean mAllmRequested;
         private boolean mGameContentTypeRequested;
         private boolean mSidekickActive;
-        private boolean mDisplayOffloadActive;
         private SurfaceControl.StaticDisplayInfo mStaticDisplayInfo;
         // The supported display modes according to SurfaceFlinger
         private SurfaceControl.DisplayMode[] mSfDisplayModes;
@@ -246,6 +243,10 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         private SurfaceControl.DisplayMode mActiveSfDisplayMode;
         // The active display vsync period in SurfaceFlinger
         private float mActiveRenderFrameRate;
+        // The current HDCP level supported by the display, 0 indicates unset
+        // values are defined in hardware/interfaces/drm/aidl/android/hardware/drm/HdcpLevel.aidl
+        private int mConnectedHdcpLevel;
+
         private DisplayEventReceiver.FrameRateOverride[] mFrameRateOverrides =
                 new DisplayEventReceiver.FrameRateOverride[0];
 
@@ -511,7 +512,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             // Load display device config
             final Context context = getOverlayContext();
             mDisplayDeviceConfig = mInjector.createDisplayDeviceConfig(context, mPhysicalDisplayId,
-                    mIsFirstDisplay);
+                    mIsFirstDisplay, getFeatureFlags());
 
             // Load brightness HWC quirk
             mBacklightAdapter.setForceSurfaceControl(mDisplayDeviceConfig.hasQuirk(
@@ -679,8 +680,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 mInfo.yDpi = mActiveSfDisplayMode.yDpi;
                 mInfo.deviceProductInfo = mStaticDisplayInfo.deviceProductInfo;
 
-                // Assume that all built-in displays that have secure output (eg. HDCP) also
-                // support compositing from gralloc protected buffers.
+                if (mConnectedHdcpLevel != 0) {
+                    mStaticDisplayInfo.secure = mConnectedHdcpLevel >= MediaDrm.HDCP_V1;
+                }
                 if (mStaticDisplayInfo.secure) {
                     mInfo.flags = DisplayDeviceInfo.FLAG_SECURE
                             | DisplayDeviceInfo.FLAG_SUPPORTS_PROTECTED_BUFFERS;
@@ -787,7 +789,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 final int state,
                 final float brightnessState,
                 final float sdrBrightnessState,
-                DisplayOffloadSession displayOffloadSession) {
+                @Nullable DisplayOffloadSessionImpl displayOffloadSession) {
 
             // Assume that the brightness is off if the display is being turned off.
             assert state != Display.STATE_OFF
@@ -854,25 +856,14 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                                     + ", state=" + Display.stateToString(state) + ")");
                         }
 
-                        DisplayOffloader displayOffloader =
-                                displayOffloadSession == null
-                                        ? null
-                                        : displayOffloadSession.getDisplayOffloader();
-
-                        boolean isDisplayOffloadEnabled = mFlags.isDisplayOffloadEnabled();
+                        boolean isDisplayOffloadEnabled =
+                                getFeatureFlags().isDisplayOffloadEnabled();
 
                         // We must tell sidekick/displayoffload to stop controlling the display
                         // before we can change its power mode, so do that first.
                         if (isDisplayOffloadEnabled) {
-                            if (mDisplayOffloadActive && displayOffloader != null) {
-                                Trace.traceBegin(Trace.TRACE_TAG_POWER,
-                                        "DisplayOffloader#stopOffload");
-                                try {
-                                    displayOffloader.stopOffload();
-                                } finally {
-                                    Trace.traceEnd(Trace.TRACE_TAG_POWER);
-                                }
-                                mDisplayOffloadActive = false;
+                            if (displayOffloadSession != null) {
+                                displayOffloadSession.stopOffload();
                             }
                         } else {
                             if (mSidekickActive) {
@@ -903,16 +894,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                         // have a sidekick/displayoffload available, tell it now that it can take
                         // control.
                         if (isDisplayOffloadEnabled) {
-                            if (DisplayOffloadSession.isSupportedOffloadState(state) &&
-                                    displayOffloader != null
-                                    && !mDisplayOffloadActive) {
-                                Trace.traceBegin(
-                                        Trace.TRACE_TAG_POWER, "DisplayOffloader#startOffload");
-                                try {
-                                    mDisplayOffloadActive = displayOffloader.startOffload();
-                                } finally {
-                                    Trace.traceEnd(Trace.TRACE_TAG_POWER);
-                                }
+                            if (DisplayOffloadSession.isSupportedOffloadState(state)
+                                    && displayOffloadSession != null) {
+                                displayOffloadSession.startOffload();
                             }
                         } else {
                             if (Display.isSuspendedState(state) && state != Display.STATE_OFF
@@ -1137,6 +1121,12 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             }
         }
 
+        public void onHdcpLevelsChangedLocked(int connectedLevel, int maxLevel) {
+            if (updateHdcpLevelsLocked(connectedLevel, maxLevel)) {
+                updateDeviceInfoLocked();
+            }
+        }
+
         public boolean updateActiveModeLocked(int activeSfModeId, float renderFrameRate) {
             if (mActiveSfDisplayMode.id == activeSfModeId
                     && mActiveRenderFrameRate == renderFrameRate) {
@@ -1159,6 +1149,22 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             }
 
             mFrameRateOverrides = overrides;
+            return true;
+        }
+
+        public boolean updateHdcpLevelsLocked(int connectedLevel, int maxLevel) {
+            if (connectedLevel > maxLevel) {
+                Slog.w(TAG, "HDCP connected level: " + connectedLevel
+                        + " is larger than max level: " + maxLevel
+                        + ", ignoring request.");
+                return false;
+            }
+
+            if (mConnectedHdcpLevel == connectedLevel) {
+                return false;
+            }
+
+            mConnectedHdcpLevel = connectedLevel;
             return true;
         }
 
@@ -1419,8 +1425,8 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         }
 
         public DisplayDeviceConfig createDisplayDeviceConfig(Context context,
-                long physicalDisplayId, boolean isFirstDisplay) {
-            return DisplayDeviceConfig.create(context, physicalDisplayId, isFirstDisplay);
+                long physicalDisplayId, boolean isFirstDisplay, DisplayManagerFlags flags) {
+            return DisplayDeviceConfig.create(context, physicalDisplayId, isFirstDisplay, flags);
         }
     }
 
@@ -1431,6 +1437,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 long renderPeriod);
         void onFrameRateOverridesChanged(long timestampNanos, long physicalDisplayId,
                 DisplayEventReceiver.FrameRateOverride[] overrides);
+        void onHdcpLevelsChanged(long physicalDisplayId, int connectedLevel, int maxLevel);
 
     }
 
@@ -1463,6 +1470,11 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         public void onFrameRateOverridesChanged(long timestampNanos, long physicalDisplayId,
                 DisplayEventReceiver.FrameRateOverride[] overrides) {
             mListener.onFrameRateOverridesChanged(timestampNanos, physicalDisplayId, overrides);
+        }
+
+        @Override
+        public void onHdcpLevelsChanged(long physicalDisplayId, int connectedLevel, int maxLevel) {
+            mListener.onHdcpLevelsChanged(physicalDisplayId, connectedLevel, maxLevel);
         }
     }
 
@@ -1531,6 +1543,26 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     return;
                 }
                 device.onFrameRateOverridesChanged(overrides);
+            }
+        }
+
+        @Override
+        public void onHdcpLevelsChanged(long physicalDisplayId, int connectedLevel, int maxLevel) {
+            if (DEBUG) {
+                Slog.d(TAG, "onHdcpLevelsChanged(physicalDisplayId=" + physicalDisplayId
+                        + ", connectedLevel=" + connectedLevel + ", maxLevel=" + maxLevel + ")");
+            }
+            synchronized (getSyncRoot()) {
+                LocalDisplayDevice device = mDevices.get(physicalDisplayId);
+                if (device == null) {
+                    if (DEBUG) {
+                        Slog.d(TAG, "Received hdcp levels change for unhandled physical display: "
+                                + "physicalDisplayId=" + physicalDisplayId);
+                    }
+                    return;
+                }
+
+                device.onHdcpLevelsChangedLocked(connectedLevel, maxLevel);
             }
         }
     }

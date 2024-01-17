@@ -13,10 +13,6 @@ java_library {
     name: "service-jobscheduler",
     installable: true,
 
-    defaults: [
-        "service-jobscheduler-aconfig-libraries",
-    ],
-
     srcs: [
         "java/**/*.java",
         ":framework-jobscheduler-shared-srcs",
@@ -28,6 +24,11 @@ java_library {
         "framework",
         "services.core",
         "unsupportedappusage",
+    ],
+
+    static_libs: [
+        "modules-utils-fastxmlserializer",
+        "service-jobscheduler-job.flags-aconfig-java",
     ],
 
     // Rename classes shared with the framework

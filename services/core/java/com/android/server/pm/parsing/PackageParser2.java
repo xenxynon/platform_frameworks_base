@@ -35,17 +35,19 @@ import android.util.DisplayMetrics;
 import android.util.Slog;
 
 import com.android.internal.compat.IPlatformCompat;
+import com.android.internal.pm.parsing.pkg.PackageImpl;
+import com.android.internal.pm.parsing.pkg.ParsedPackage;
+import com.android.internal.pm.pkg.parsing.ParsingPackage;
+import com.android.internal.pm.pkg.parsing.ParsingPackageUtils;
+import com.android.internal.pm.pkg.parsing.ParsingUtils;
 import com.android.internal.util.ArrayUtils;
+import com.android.server.SystemConfig;
 import com.android.server.pm.PackageManagerException;
 import com.android.server.pm.PackageManagerService;
-import com.android.server.pm.parsing.pkg.PackageImpl;
-import com.android.server.pm.parsing.pkg.ParsedPackage;
-import com.android.server.pm.pkg.parsing.ParsingPackage;
-import com.android.server.pm.pkg.parsing.ParsingPackageUtils;
-import com.android.server.pm.pkg.parsing.ParsingUtils;
 
 import java.io.File;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The v2 of package parsing for use when parsing is initiated in the server and must
@@ -88,6 +90,16 @@ public class PackageParser2 implements AutoCloseable {
                 // behavior.
                 return false;
             }
+
+            @Override
+            public Set<String> getHiddenApiWhitelistedApps() {
+                return SystemConfig.getInstance().getHiddenApiWhitelistedApps();
+            }
+
+            @Override
+            public Set<String> getInstallConstraintsAllowlist() {
+                return SystemConfig.getInstance().getInstallConstraintsAllowlist();
+            }
         });
     }
 
@@ -96,19 +108,19 @@ public class PackageParser2 implements AutoCloseable {
     private static final boolean LOG_PARSE_TIMINGS = Build.IS_DEBUGGABLE;
     private static final int LOG_PARSE_TIMINGS_THRESHOLD_MS = 100;
 
-    private ThreadLocal<ApplicationInfo> mSharedAppInfo =
+    private final ThreadLocal<ApplicationInfo> mSharedAppInfo =
             ThreadLocal.withInitial(() -> {
                 ApplicationInfo appInfo = new ApplicationInfo();
                 appInfo.uid = -1; // Not a valid UID since the app will not be installed yet
                 return appInfo;
             });
 
-    private ThreadLocal<ParseTypeImpl> mSharedResult;
+    private final ThreadLocal<ParseTypeImpl> mSharedResult;
 
     @Nullable
     protected PackageCacher mCacher;
 
-    private ParsingPackageUtils parsingUtils;
+    private final ParsingPackageUtils parsingUtils;
 
     public PackageParser2(String[] separateProcesses, DisplayMetrics displayMetrics,
             @Nullable File cacheDir, @NonNull Callback callback) {
@@ -221,7 +233,7 @@ public class PackageParser2 implements AutoCloseable {
                 @NonNull String baseCodePath, @NonNull String codePath,
                 @NonNull TypedArray manifestArray, boolean isCoreApp) {
             return PackageImpl.forParsing(packageName, baseCodePath, codePath, manifestArray,
-                    isCoreApp);
+                    isCoreApp, Callback.this);
         }
 
         /**

@@ -17,62 +17,92 @@
 package com.android.compose.animation.scene
 
 import androidx.activity.compose.BackHandler
-import androidx.annotation.VisibleForTesting
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.LookaheadScope
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.intermediateLayout
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
-import com.android.compose.ui.util.fastForEach
-import kotlinx.coroutines.channels.Channel
+import androidx.compose.ui.util.fastForEach
+import com.android.compose.ui.util.lerp
+import kotlinx.coroutines.CoroutineScope
 
-@VisibleForTesting
-class SceneTransitionLayoutImpl(
-    onChangeScene: (SceneKey) -> Unit,
+@Stable
+internal class SceneTransitionLayoutImpl(
+    internal val state: SceneTransitionLayoutStateImpl,
+    internal var onChangeScene: (SceneKey) -> Unit,
+    internal var density: Density,
+    internal var edgeDetector: EdgeDetector,
+    internal var transitionInterceptionThreshold: Float,
     builder: SceneTransitionLayoutScope.() -> Unit,
-    transitions: SceneTransitions,
-    internal val state: SceneTransitionLayoutState,
-    density: Density,
+    coroutineScope: CoroutineScope,
 ) {
+    /**
+     * The map of [Scene]s.
+     *
+     * TODO(b/317014852): Make this a normal MutableMap instead.
+     */
     internal val scenes = SnapshotStateMap<SceneKey, Scene>()
-    internal val elements = SnapshotStateMap<ElementKey, Element>()
-
-    /** The scenes that are "ready", i.e. they were composed and fully laid-out at least once. */
-    private val readyScenes = SnapshotStateMap<SceneKey, Boolean>()
-
-    internal var onChangeScene by mutableStateOf(onChangeScene)
-    internal var transitions by mutableStateOf(transitions)
-    internal var density: Density by mutableStateOf(density)
 
     /**
-     * The size of this layout. Note that this could be [IntSize.Zero] if this layour does not have
-     * any scene configured or right before the first measure pass of the layout.
+     * The map of [Element]s.
+     *
+     * Note that this map is *mutated* directly during composition, so it is a [SnapshotStateMap] to
+     * make sure that mutations are reverted if composition is cancelled.
      */
-    @VisibleForTesting var size by mutableStateOf(IntSize.Zero)
+    internal val elements = SnapshotStateMap<ElementKey, Element>()
+
+    /**
+     * The scenes that are "ready", i.e. they were composed and fully laid-out at least once.
+     *
+     * Note that this map is *read* during composition, so it is a [SnapshotStateMap] to make sure
+     * that we recompose when modifications are made to this map.
+     */
+    private val readyScenes = SnapshotStateMap<SceneKey, Boolean>()
+
+    private val horizontalGestureHandler: SceneGestureHandler
+    private val verticalGestureHandler: SceneGestureHandler
 
     init {
-        setScenes(builder)
+        updateScenes(builder)
+
+        // SceneGestureHandler must wait for the scenes to be initialized, in order to access the
+        // current scene (required for SwipeTransition).
+        horizontalGestureHandler =
+            SceneGestureHandler(
+                layoutImpl = this,
+                orientation = Orientation.Horizontal,
+                coroutineScope = coroutineScope,
+            )
+
+        verticalGestureHandler =
+            SceneGestureHandler(
+                layoutImpl = this,
+                orientation = Orientation.Vertical,
+                coroutineScope = coroutineScope,
+            )
     }
+
+    internal fun gestureHandler(orientation: Orientation): SceneGestureHandler =
+        when (orientation) {
+            Orientation.Vertical -> verticalGestureHandler
+            Orientation.Horizontal -> horizontalGestureHandler
+        }
 
     internal fun scene(key: SceneKey): Scene {
         return scenes[key] ?: error("Scene $key is not configured")
     }
 
-    internal fun setScenes(builder: SceneTransitionLayoutScope.() -> Unit) {
+    internal fun updateScenes(builder: SceneTransitionLayoutScope.() -> Unit) {
         // Keep a reference of the current scenes. After processing [builder], the scenes that were
         // not configured will be removed.
         val scenesToRemove = scenes.keys.toMutableSet()
@@ -115,20 +145,6 @@ class SceneTransitionLayoutImpl(
     }
 
     @Composable
-    internal fun setCurrentScene(key: SceneKey) {
-        val channel = remember { Channel<SceneKey>(Channel.CONFLATED) }
-        SideEffect { channel.trySend(key) }
-        LaunchedEffect(channel) {
-            for (newKey in channel) {
-                // Inspired by AnimateAsState.kt: let's poll the last value to avoid being one frame
-                // late.
-                val newKey = channel.tryReceive().getOrNull() ?: newKey
-                animateToScene(this@SceneTransitionLayoutImpl, newKey)
-            }
-        }
-    }
-
-    @Composable
     @OptIn(ExperimentalComposeUiApi::class)
     internal fun Content(modifier: Modifier) {
         Box(
@@ -136,9 +152,39 @@ class SceneTransitionLayoutImpl(
                 // Handle horizontal and vertical swipes on this layout.
                 // Note: order here is important and will give a slight priority to the vertical
                 // swipes.
-                .swipeToScene(layoutImpl = this, Orientation.Horizontal)
-                .swipeToScene(layoutImpl = this, Orientation.Vertical)
-                .onSizeChanged { size = it }
+                .swipeToScene(horizontalGestureHandler)
+                .swipeToScene(verticalGestureHandler)
+                // Animate the size of this layout.
+                .intermediateLayout { measurable, constraints ->
+                    // Measure content normally.
+                    val placeable = measurable.measure(constraints)
+
+                    val width: Int
+                    val height: Int
+                    val transition = state.currentTransition
+                    if (transition == null) {
+                        width = placeable.width
+                        height = placeable.height
+                    } else {
+                        // Interpolate the size.
+                        val fromSize = scene(transition.fromScene).targetSize
+                        val toSize = scene(transition.toScene).targetSize
+
+                        // Optimization: make sure we don't read state.progress if fromSize ==
+                        // toSize to avoid running this code every frame when the layout size does
+                        // not change.
+                        if (fromSize == toSize) {
+                            width = fromSize.width
+                            height = fromSize.height
+                        } else {
+                            val size = lerp(fromSize, toSize, transition.progress)
+                            width = size.width.coerceAtLeast(0)
+                            height = size.height.coerceAtLeast(0)
+                        }
+                    }
+
+                    layout(width, height) { placeable.place(0, 0) }
+                }
         ) {
             LookaheadScope {
                 val scenesToCompose =
@@ -172,16 +218,12 @@ class SceneTransitionLayoutImpl(
 
                             scene.Content(
                                 Modifier.drawWithContent {
-                                    when (val state = state.transitionState) {
-                                        is TransitionState.Idle -> drawContent()
-                                        is TransitionState.Transition -> {
-                                            // Don't draw scenes that are not ready yet.
-                                            if (
-                                                readyScenes.containsKey(key) ||
-                                                    state.fromScene == state.toScene
-                                            ) {
-                                                drawContent()
-                                            }
+                                    if (state.currentTransition == null) {
+                                        drawContent()
+                                    } else {
+                                        // Don't draw scenes that are not ready yet.
+                                        if (readyScenes.containsKey(key)) {
+                                            drawContent()
                                         }
                                     }
                                 }
@@ -203,4 +245,8 @@ class SceneTransitionLayoutImpl(
     }
 
     internal fun isSceneReady(scene: SceneKey): Boolean = readyScenes.containsKey(scene)
+
+    internal fun setScenesTargetSizeForTest(size: IntSize) {
+        scenes.values.forEach { it.targetSize = size }
+    }
 }

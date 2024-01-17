@@ -22,7 +22,6 @@ import (
 	"github.com/google/blueprint/proptools"
 
 	"android/soong/android"
-	"android/soong/bazel"
 	"android/soong/genrule"
 	"android/soong/java"
 )
@@ -32,6 +31,7 @@ const conscrypt = "conscrypt.module.public.api"
 const i18n = "i18n.module.public.api"
 const virtualization = "framework-virtualization"
 const location = "framework-location"
+const nfc = "framework-nfc"
 
 var core_libraries_modules = []string{art, conscrypt, i18n}
 
@@ -43,7 +43,7 @@ var core_libraries_modules = []string{art, conscrypt, i18n}
 // APIs.
 // In addition, the modules in this list are allowed to contribute to test APIs
 // stubs.
-var non_updatable_modules = []string{virtualization, location}
+var non_updatable_modules = []string{virtualization, location, nfc}
 
 // The intention behind this soong plugin is to generate a number of "merged"
 // API-related modules that would otherwise require a large amount of very
@@ -64,7 +64,6 @@ type CombinedApisProperties struct {
 
 type CombinedApis struct {
 	android.ModuleBase
-	android.BazelModuleBase
 
 	properties CombinedApisProperties
 }
@@ -114,20 +113,6 @@ type defaultsProps struct {
 	Previous_api        *string
 }
 
-type Bazel_module struct {
-	Label              *string
-	Bp2build_available *bool
-}
-type bazelProperties struct {
-	*Bazel_module
-}
-
-var bp2buildNotAvailable = bazelProperties{
-	&Bazel_module{
-		Bp2build_available: proptools.BoolPtr(false),
-	},
-}
-
 // Struct to pass parameters for the various merged [current|removed].txt file modules we create.
 type MergedTxtDefinition struct {
 	// "current.txt" or "removed.txt"
@@ -142,8 +127,6 @@ type MergedTxtDefinition struct {
 	ModuleTag string
 	// public, system, module-lib or system-server
 	Scope string
-	// True if there is a bp2build definition for this module
-	Bp2buildDefined bool
 }
 
 func createMergedTxt(ctx android.LoadHookContext, txt MergedTxtDefinition) {
@@ -177,20 +160,7 @@ func createMergedTxt(ctx android.LoadHookContext, txt MergedTxtDefinition) {
 		},
 	}
 	props.Visibility = []string{"//visibility:public"}
-	bazelProps := bazelProperties{
-		&Bazel_module{
-			Bp2build_available: proptools.BoolPtr(false),
-		},
-	}
-	if txt.Bp2buildDefined {
-		moduleDir := ctx.ModuleDir()
-		if moduleDir == android.Bp2BuildTopLevel {
-			moduleDir = ""
-		}
-		label := fmt.Sprintf("//%s:%s", moduleDir, moduleName)
-		bazelProps.Label = &label
-	}
-	ctx.CreateModule(genrule.GenRuleFactory, &props, &bazelProps)
+	ctx.CreateModule(genrule.GenRuleFactory, &props)
 }
 
 func createMergedAnnotationsFilegroups(ctx android.LoadHookContext, modules, system_server_modules []string) {
@@ -220,7 +190,7 @@ func createMergedAnnotationsFilegroups(ctx android.LoadHookContext, modules, sys
 		props := fgProps{}
 		props.Name = proptools.StringPtr(i.name)
 		props.Srcs = createSrcs(i.modules, i.tag)
-		ctx.CreateModule(android.FileGroupFactory, &props, &bp2buildNotAvailable)
+		ctx.CreateModule(android.FileGroupFactory, &props)
 	}
 }
 
@@ -316,7 +286,7 @@ func createPublicStubsSourceFilegroup(ctx android.LoadHookContext, modules []str
 	props.Name = proptools.StringPtr("all-modules-public-stubs-source")
 	props.Srcs = createSrcs(modules, "{.public.stubs.source}")
 	props.Visibility = []string{"//frameworks/base"}
-	ctx.CreateModule(android.FileGroupFactory, &props, &bp2buildNotAvailable)
+	ctx.CreateModule(android.FileGroupFactory, &props)
 }
 
 func createMergedTxts(ctx android.LoadHookContext, bootclasspath, system_server_classpath []string) {
@@ -324,43 +294,38 @@ func createMergedTxts(ctx android.LoadHookContext, bootclasspath, system_server_
 
 	tagSuffix := []string{".api.txt}", ".removed-api.txt}"}
 	distFilename := []string{"android.txt", "android-removed.txt"}
-	bp2BuildDefined := []bool{true, false}
 	for i, f := range []string{"current.txt", "removed.txt"} {
 		textFiles = append(textFiles, MergedTxtDefinition{
-			TxtFilename:     f,
-			DistFilename:    distFilename[i],
-			BaseTxt:         ":non-updatable-" + f,
-			Modules:         bootclasspath,
-			ModuleTag:       "{.public" + tagSuffix[i],
-			Scope:           "public",
-			Bp2buildDefined: bp2BuildDefined[i],
+			TxtFilename:  f,
+			DistFilename: distFilename[i],
+			BaseTxt:      ":non-updatable-" + f,
+			Modules:      bootclasspath,
+			ModuleTag:    "{.public" + tagSuffix[i],
+			Scope:        "public",
 		})
 		textFiles = append(textFiles, MergedTxtDefinition{
-			TxtFilename:     f,
-			DistFilename:    distFilename[i],
-			BaseTxt:         ":non-updatable-system-" + f,
-			Modules:         bootclasspath,
-			ModuleTag:       "{.system" + tagSuffix[i],
-			Scope:           "system",
-			Bp2buildDefined: bp2BuildDefined[i],
+			TxtFilename:  f,
+			DistFilename: distFilename[i],
+			BaseTxt:      ":non-updatable-system-" + f,
+			Modules:      bootclasspath,
+			ModuleTag:    "{.system" + tagSuffix[i],
+			Scope:        "system",
 		})
 		textFiles = append(textFiles, MergedTxtDefinition{
-			TxtFilename:     f,
-			DistFilename:    distFilename[i],
-			BaseTxt:         ":non-updatable-module-lib-" + f,
-			Modules:         bootclasspath,
-			ModuleTag:       "{.module-lib" + tagSuffix[i],
-			Scope:           "module-lib",
-			Bp2buildDefined: bp2BuildDefined[i],
+			TxtFilename:  f,
+			DistFilename: distFilename[i],
+			BaseTxt:      ":non-updatable-module-lib-" + f,
+			Modules:      bootclasspath,
+			ModuleTag:    "{.module-lib" + tagSuffix[i],
+			Scope:        "module-lib",
 		})
 		textFiles = append(textFiles, MergedTxtDefinition{
-			TxtFilename:     f,
-			DistFilename:    distFilename[i],
-			BaseTxt:         ":non-updatable-system-server-" + f,
-			Modules:         system_server_classpath,
-			ModuleTag:       "{.system-server" + tagSuffix[i],
-			Scope:           "system-server",
-			Bp2buildDefined: bp2BuildDefined[i],
+			TxtFilename:  f,
+			DistFilename: distFilename[i],
+			BaseTxt:      ":non-updatable-system-server-" + f,
+			Modules:      system_server_classpath,
+			ModuleTag:    "{.system-server" + tagSuffix[i],
+			Scope:        "system-server",
 		})
 	}
 	for _, txt := range textFiles {
@@ -447,53 +412,7 @@ func combinedApisModuleFactory() android.Module {
 	module.AddProperties(&module.properties)
 	android.InitAndroidModule(module)
 	android.AddLoadHook(module, func(ctx android.LoadHookContext) { module.createInternalModules(ctx) })
-	android.InitBazelModule(module)
 	return module
-}
-
-type bazelCombinedApisAttributes struct {
-	Scope bazel.StringAttribute
-	Base  bazel.LabelAttribute
-	Deps  bazel.LabelListAttribute
-}
-
-// combined_apis bp2build converter
-func (a *CombinedApis) ConvertWithBp2build(ctx android.Bp2buildMutatorContext) {
-	basePrefix := "non-updatable"
-	scopeToSuffix := map[string]string{
-		"public":        "-current.txt",
-		"system":        "-system-current.txt",
-		"module-lib":    "-module-lib-current.txt",
-		"system-server": "-system-server-current.txt",
-	}
-
-	for scopeName, suffix := range scopeToSuffix {
-		name := a.Name() + suffix
-
-		var scope bazel.StringAttribute
-		scope.SetValue(scopeName)
-
-		var base bazel.LabelAttribute
-		base.SetValue(android.BazelLabelForModuleDepSingle(ctx, basePrefix+suffix))
-
-		var deps bazel.LabelListAttribute
-		classpath := a.properties.Bootclasspath
-		if scopeName == "system-server" {
-			classpath = a.properties.System_server_classpath
-		}
-		deps = bazel.MakeLabelListAttribute(android.BazelLabelForModuleDeps(ctx, classpath))
-
-		attrs := bazelCombinedApisAttributes{
-			Scope: scope,
-			Base:  base,
-			Deps:  deps,
-		}
-		props := bazel.BazelTargetModuleProperties{
-			Rule_class:        "merged_txts",
-			Bzl_load_location: "//build/bazel/rules/java:merged_txts.bzl",
-		}
-		ctx.CreateBazelTargetModule(props, android.CommonAttributes{Name: name}, &attrs)
-	}
 }
 
 // Various utility methods below.

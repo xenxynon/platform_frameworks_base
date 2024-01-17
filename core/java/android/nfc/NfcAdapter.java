@@ -284,6 +284,20 @@ public final class NfcAdapter {
     public static final int STATE_TURNING_OFF = 4;
 
     /**
+     * Possible states from {@link #getAdapterState}.
+     *
+     * @hide
+     */
+    @IntDef(prefix = { "STATE_" }, value = {
+            STATE_OFF,
+            STATE_TURNING_ON,
+            STATE_ON,
+            STATE_TURNING_OFF
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface AdapterState{}
+
+    /**
      * Flag for use with {@link #enableReaderMode(Activity, ReaderCallback, int, Bundle)}.
      * <p>
      * Setting this flag enables polling for Nfc-A technology.
@@ -378,6 +392,8 @@ public final class NfcAdapter {
      * <p>An external NFC field detected when device locked and SecureNfc enabled.
      * @hide
      */
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_ENABLE_NFC_MAINLINE)
     public static final String ACTION_REQUIRE_UNLOCK_FOR_NFC =
             "android.nfc.action.REQUIRE_UNLOCK_FOR_NFC";
 
@@ -944,8 +960,9 @@ public final class NfcAdapter {
      *
      * @hide
      */
-    @UnsupportedAppUsage
-    public int getAdapterState() {
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_ENABLE_NFC_MAINLINE)
+    public @AdapterState int getAdapterState() {
         try {
             return sService.getState();
         } catch (RemoteException e) {
@@ -1075,6 +1092,61 @@ public final class NfcAdapter {
             sService.pausePolling(timeoutInMs);
         } catch (RemoteException e) {
             attemptDeadServiceRecovery(e);
+        }
+    }
+
+
+    /**
+     * Returns whether the device supports observer mode or not. When observe
+     * mode is enabled, the NFC hardware will listen for NFC readers, but not
+     * respond to them. When observe mode is disabled, the NFC hardware will
+     * resoond to the reader and proceed with the transaction.
+     * @return true if the mode is supported, false otherwise.
+     */
+    @FlaggedApi(Flags.FLAG_NFC_OBSERVE_MODE)
+    public boolean isObserveModeSupported() {
+        try {
+            return sService.isObserveModeSupported();
+        } catch (RemoteException e) {
+            attemptDeadServiceRecovery(e);
+            return false;
+        }
+    }
+
+   /**
+    * Disables observe mode to allow the transaction to proceed. See
+    * {@link #isObserveModeSupported()} for a description of observe mode and
+    * use {@link #disallowTransaction()} to enable observe mode and block
+    * transactions again.
+    *
+    * @return boolean indicating success or failure.
+    */
+    @FlaggedApi(Flags.FLAG_NFC_OBSERVE_MODE)
+    public boolean allowTransaction() {
+        try {
+            return sService.setObserveMode(false);
+        } catch (RemoteException e) {
+            attemptDeadServiceRecovery(e);
+            return false;
+        }
+    }
+
+    /**
+    * Signals that the transaction has completed and observe mode may be
+    * reenabled. See {@link #isObserveModeSupported()} for a description of
+    * observe mode and use {@link #allowTransaction()} to disable observe
+    * mode and allow transactions to proceed.
+    *
+    * @return boolean indicating success or failure.
+    */
+
+    @FlaggedApi(Flags.FLAG_NFC_OBSERVE_MODE)
+    public boolean disallowTransaction() {
+        try {
+            return sService.setObserveMode(true);
+        } catch (RemoteException e) {
+            attemptDeadServiceRecovery(e);
+            return false;
         }
     }
 

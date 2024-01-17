@@ -19,6 +19,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
         package="com.android.shell"
         coreApp="true"
+        updatableSystem="false"
         android:sharedUserId="android.uid.shell"
         >
 
@@ -325,6 +326,7 @@
     <uses-permission android:name="android.permission.CONTROL_KEYGUARD" />
     <uses-permission android:name="android.permission.CONTROL_REMOTE_APP_TRANSITION_ANIMATIONS" />
     <uses-permission android:name="android.permission.SUSPEND_APPS" />
+    <uses-permission android:name="android.permission.QUARANTINE_APPS" />
     <uses-permission android:name="android.permission.OBSERVE_APP_USAGE" />
     <uses-permission android:name="android.permission.READ_CLIPBOARD_IN_BACKGROUND" />
     <!-- Permission needed to wipe the device for Test Harness Mode -->
@@ -439,6 +441,9 @@
     <!-- Permissions required for CTS test - UsageStatsTest -->
     <uses-permission android:name="android.permission.MANAGE_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_LOCUS_ID_USAGE_STATS" />
+
+    <!-- Permission required for CTS test - CtsNfcResolverDerviceTest -->
+    <uses-permission android:name="android.permission.SHOW_CUSTOMIZED_RESOLVER" />
 
     <!-- Permission needed for CTS test - MusicRecognitionManagerTest -->
     <uses-permission android:name="android.permission.MANAGE_MUSIC_RECOGNITION" />
@@ -557,6 +562,9 @@
     <!-- Permissions required for CTS test - NotificationManagerTest -->
     <uses-permission android:name="android.permission.MANAGE_NOTIFICATION_LISTENERS" />
 
+    <!-- Permissions required for CTS test - NotificationManagerZenTest -->
+    <uses-permission android:name="android.permission.CONTROL_DISPLAY_COLOR_TRANSFORMS" />
+
     <!-- Permissions required for CTS test - CtsContactsProviderTestCases -->
     <uses-permission android:name="android.contacts.permission.MANAGE_SIM_ACCOUNTS" />
     <uses-permission android:name="android.permission.SET_DEFAULT_ACCOUNT_FOR_CONTACTS" />
@@ -591,6 +599,9 @@
     <uses-permission android:name="android.permission.MANAGE_WIFI_NETWORK_SELECTION" />
     <!-- Permission needed for CTS test - ConcurrencyTest#testP2pSetWfdInfo -->
     <uses-permission android:name="android.permission.CONFIGURE_WIFI_DISPLAY" />
+
+    <!-- Permission required for CTS test - CtsThreadNetworkTestCases -->
+    <uses-permission android:name="android.permission.THREAD_NETWORK_PRIVILEGED"/>
 
     <!-- Permission required for CTS tests to enable/disable rate limiting toasts. -->
     <uses-permission android:name="android.permission.MANAGE_TOAST_RATE_LIMITING" />
@@ -668,6 +679,7 @@
 
     <!-- Permission required for CTS test - SystemMediaRouter2Test -->
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL" />
+    <uses-permission android:name="android.permission.MEDIA_ROUTING_CONTROL" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING" />
 
     <!-- Permission required for CTS test - SoundDoseHelperTest -->
@@ -675,6 +687,9 @@
 
     <!-- Permission required for CTS test - CtsAmbientContextDetectionServiceDeviceTest -->
     <uses-permission android:name="android.permission.ACCESS_AMBIENT_CONTEXT_EVENT" />
+
+    <!-- Permission required for CTS test - CtsWearableSensingServiceTestCases -->
+    <uses-permission android:name="android.permission.MANAGE_WEARABLE_SENSING_SERVICE" />
 
     <!-- Permission required for CTS test - CallAudioInterceptionTest -->
     <uses-permission android:name="android.permission.CALL_AUDIO_INTERCEPTION" />
@@ -863,6 +878,15 @@
     <!-- Permissions required for CTS test - CtsVoiceInteractionTestCases -->
     <uses-permission android:name="android.permission.RESET_HOTWORD_TRAINING_DATA_EGRESS_COUNT" />
     <uses-permission android:name="android.permission.RECEIVE_SANDBOXED_DETECTION_TRAINING_DATA" />
+    <uses-permission android:name="android.permission.RECEIVE_SANDBOX_TRIGGER_AUDIO" />
+
+    <uses-permission android:name="android.permission.GET_BINDING_UID_IMPORTANCE" />
+
+    <!-- Permissions required for CTS test - CtsAccessibilityServiceTestCases-->
+    <uses-permission android:name="android.permission.ACCESSIBILITY_MOTION_EVENT_OBSERVING" />
+
+    <!-- Permission required for Cts test - CtsNotificationTestCases -->
+    <uses-permission android:name="android.permission.RECEIVE_SENSITIVE_NOTIFICATIONS" />
 
     <application
         android:label="@string/app_label"

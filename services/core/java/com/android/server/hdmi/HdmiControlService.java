@@ -1783,8 +1783,9 @@ public class HdmiControlService extends SystemService {
         // initPortInfo at hotplug event.
         mHdmiCecNetwork.initPortInfo();
 
+        HdmiPortInfo portInfo = getPortInfo(portId);
         if (connected && !isTvDevice()
-                && getPortInfo(portId).getType() == HdmiPortInfo.PORT_OUTPUT) {
+                && portInfo != null && portInfo.getType() == HdmiPortInfo.PORT_OUTPUT) {
             ArrayList<HdmiCecLocalDevice> localDevices = new ArrayList<>();
             for (int type : getCecLocalDeviceTypes()) {
                 HdmiCecLocalDevice localDevice = mHdmiCecNetwork.getLocalDevice(type);
@@ -3610,7 +3611,7 @@ public class HdmiControlService extends SystemService {
         }
     }
 
-    private boolean isEarcEnabled() {
+    public boolean isEarcEnabled() {
         synchronized (mLock) {
             return mEarcEnabled;
         }

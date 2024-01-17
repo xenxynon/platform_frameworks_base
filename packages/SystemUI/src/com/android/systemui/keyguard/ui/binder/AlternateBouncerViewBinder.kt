@@ -17,56 +17,28 @@
 package com.android.systemui.keyguard.ui.binder
 
 import android.view.View
-import android.view.ViewGroup
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.constraintlayout.widget.ConstraintSet
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import com.android.systemui.CoreStartable
-import com.android.systemui.dagger.SysUISingleton
-import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.flags.FeatureFlagsClassic
-import com.android.systemui.flags.Flags
+import com.android.systemui.classifier.Classifier
+import com.android.systemui.deviceentry.shared.DeviceEntryUdfpsRefactor
+import com.android.systemui.keyguard.ui.SwipeUpAnywhereGestureHandler
+import com.android.systemui.keyguard.ui.view.DeviceEntryIconView
+import com.android.systemui.keyguard.ui.viewmodel.AlternateBouncerUdfpsIconViewModel
 import com.android.systemui.keyguard.ui.viewmodel.AlternateBouncerViewModel
 import com.android.systemui.lifecycle.repeatWhenAttached
+import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
 import com.android.systemui.scrim.ScrimView
-import com.android.systemui.shade.NotificationShadeWindowView
-import com.android.systemui.statusbar.NotificationShadeWindowController
-import kotlinx.coroutines.CoroutineScope
+import com.android.systemui.statusbar.gesture.TapGestureDetector
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-
-@ExperimentalCoroutinesApi
-@SysUISingleton
-class AlternateBouncerBinder
-@Inject
-constructor(
-    private val notificationShadeWindowView: NotificationShadeWindowView,
-    private val featureFlags: FeatureFlagsClassic,
-    private val alternateBouncerViewModel: AlternateBouncerViewModel,
-    @Application private val scope: CoroutineScope,
-    private val notificationShadeWindowController: NotificationShadeWindowController,
-) : CoreStartable {
-    override fun start() {
-        if (!featureFlags.isEnabled(Flags.ALTERNATE_BOUNCER_VIEW)) {
-            return
-        }
-
-        AlternateBouncerViewBinder.bind(
-            notificationShadeWindowView.requireViewById(R.id.alternate_bouncer),
-            alternateBouncerViewModel,
-            scope,
-            notificationShadeWindowController,
-        )
-    }
-}
 
 /**
  * Binds the alternate bouncer view to its view-model.
  *
- * To use this properly, users should maintain a one-to-one relationship between the [View] and the
- * view-binding, binding each view only once. It is okay and expected for the same instance of the
- * view-model to be reused for multiple view/view-binder bindings.
+ * For devices that support UDFPS, this includes a UDFPS view.
  */
 @ExperimentalCoroutinesApi
 object AlternateBouncerViewBinder {
@@ -74,19 +46,20 @@ object AlternateBouncerViewBinder {
     /** Binds the view to the view-model, continuing to update the former based on the latter. */
     @JvmStatic
     fun bind(
-        view: ViewGroup,
+        view: ConstraintLayout,
         viewModel: AlternateBouncerViewModel,
-        scope: CoroutineScope,
-        notificationShadeWindowController: NotificationShadeWindowController,
+        falsingManager: FalsingManager,
+        swipeUpAnywhereGestureHandler: SwipeUpAnywhereGestureHandler,
+        tapGestureDetector: TapGestureDetector,
+        alternateBouncerUdfpsIconViewModel: AlternateBouncerUdfpsIconViewModel,
     ) {
-        scope.launch {
-            // forcePluginOpen is necessary to show over occluded apps.
-            // This cannot be tied to the view's lifecycle because setting this allows the view
-            // to be started in the first place.
-            viewModel.forcePluginOpen.collect {
-                notificationShadeWindowController.setForcePluginOpen(it, this)
-            }
+        if (DeviceEntryUdfpsRefactor.isUnexpectedlyInLegacyMode()) {
+            return
         }
+        optionallyAddUdfpsView(
+            view = view,
+            alternateBouncerUdfpsIconViewModel = alternateBouncerUdfpsIconViewModel,
+        )
 
         val scrim = view.requireViewById(R.id.alternate_bouncer_scrim) as ScrimView
         view.repeatWhenAttached { alternateBouncerViewContainer ->
@@ -94,9 +67,25 @@ object AlternateBouncerViewBinder {
                 scrim.viewAlpha = 0f
 
                 launch {
-                    viewModel.onClickListener.collect {
-                        // TODO (b/287599719): Support swiping to dismiss altBouncer
-                        alternateBouncerViewContainer.setOnClickListener(it)
+                    viewModel.registerForDismissGestures.collect { registerForDismissGestures ->
+                        if (registerForDismissGestures) {
+                            swipeUpAnywhereGestureHandler.addOnGestureDetectedCallback(swipeTag) { _
+                                ->
+                                if (
+                                    !falsingManager.isFalseTouch(Classifier.ALTERNATE_BOUNCER_SWIPE)
+                                ) {
+                                    viewModel.showPrimaryBouncer()
+                                }
+                            }
+                            tapGestureDetector.addOnGestureDetectedCallback(tapTag) { _ ->
+                                if (!falsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
+                                    viewModel.showPrimaryBouncer()
+                                }
+                            }
+                        } else {
+                            swipeUpAnywhereGestureHandler.removeOnGestureDetectedCallback(swipeTag)
+                            tapGestureDetector.removeOnGestureDetectedCallback(tapTag)
+                        }
                     }
                 }
 
@@ -112,4 +101,53 @@ object AlternateBouncerViewBinder {
             }
         }
     }
+
+    private fun optionallyAddUdfpsView(
+        view: ConstraintLayout,
+        alternateBouncerUdfpsIconViewModel: AlternateBouncerUdfpsIconViewModel,
+    ) {
+        view.repeatWhenAttached {
+            repeatOnLifecycle(Lifecycle.State.CREATED) {
+                launch {
+                    alternateBouncerUdfpsIconViewModel.iconLocation.collect { iconLocation ->
+                        val viewId = R.id.alternate_bouncer_udfps_icon_view
+                        var udfpsView = view.getViewById(viewId)
+                        if (udfpsView == null) {
+                            udfpsView =
+                                DeviceEntryIconView(view.context, null).apply { id = viewId }
+                            view.addView(udfpsView)
+                            AlternateBouncerUdfpsViewBinder.bind(
+                                udfpsView,
+                                alternateBouncerUdfpsIconViewModel,
+                            )
+                        }
+
+                        val constraintSet = ConstraintSet().apply { clone(view) }
+                        constraintSet.apply {
+                            constrainWidth(viewId, iconLocation.width)
+                            constrainHeight(viewId, iconLocation.height)
+                            connect(
+                                viewId,
+                                ConstraintSet.TOP,
+                                ConstraintSet.PARENT_ID,
+                                ConstraintSet.TOP,
+                                iconLocation.top,
+                            )
+                            connect(
+                                viewId,
+                                ConstraintSet.START,
+                                ConstraintSet.PARENT_ID,
+                                ConstraintSet.START,
+                                iconLocation.left
+                            )
+                        }
+                        constraintSet.applyTo(view)
+                    }
+                }
+            }
+        }
+    }
 }
+
+private const val swipeTag = "AlternateBouncer-SWIPE"
+private const val tapTag = "AlternateBouncer-TAP"

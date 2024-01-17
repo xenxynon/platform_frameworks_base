@@ -16,22 +16,42 @@
 
 package com.android.compose.animation.scene
 
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /** The state of a [SceneTransitionLayout]. */
-class SceneTransitionLayoutState(initialScene: SceneKey) {
+@Stable
+sealed interface SceneTransitionLayoutState {
     /**
      * The current [TransitionState]. All values read here are backed by the Snapshot system.
      *
      * To observe those values outside of Compose/the Snapshot system, use
      * [SceneTransitionLayoutState.observableTransitionState] instead.
      */
-    var transitionState: TransitionState by mutableStateOf(TransitionState.Idle(initialScene))
-        internal set
+    val transitionState: TransitionState
+
+    /** The current transition, or `null` if we are idle. */
+    val currentTransition: TransitionState.Transition?
+        get() = transitionState as? TransitionState.Transition
+
+    /**
+     * Whether we are transitioning. If [from] or [to] is empty, we will also check that they match
+     * the scenes we are animating from and/or to.
+     */
+    fun isTransitioning(from: SceneKey? = null, to: SceneKey? = null): Boolean
+
+    /** Whether we are transitioning from [scene] to [other], or from [other] to [scene]. */
+    fun isTransitioningBetween(scene: SceneKey, other: SceneKey): Boolean
 }
 
+/** Create a new [SceneTransitionLayoutState] that is currently idle at scene [currentScene]. */
+fun SceneTransitionLayoutState(currentScene: SceneKey): SceneTransitionLayoutState {
+    return SceneTransitionLayoutStateImpl(currentScene, SceneTransitions.Empty)
+}
+
+@Stable
 sealed interface TransitionState {
     /**
      * The current effective scene. If a new transition was triggered, it would start from this
@@ -47,29 +67,77 @@ sealed interface TransitionState {
     /** No transition/animation is currently running. */
     data class Idle(override val currentScene: SceneKey) : TransitionState
 
-    /**
-     * There is a transition animating between two scenes.
-     *
-     * Important note: [fromScene] and [toScene] might be the same, in which case this [Transition]
-     * should be treated the same as [Idle]. This is designed on purpose so that a [Transition] can
-     * be started without knowing in advance where it is transitioning to, making the logic of
-     * [swipeToScene] easier to reason about.
-     */
-    interface Transition : TransitionState {
-        /** The scene this transition is starting from. */
-        val fromScene: SceneKey
+    /** There is a transition animating between two scenes. */
+    abstract class Transition(
+        /** The scene this transition is starting from. Can't be the same as toScene */
+        val fromScene: SceneKey,
 
-        /** The scene this transition is going to. */
+        /** The scene this transition is going to. Can't be the same as fromScene */
         val toScene: SceneKey
+    ) : TransitionState {
+
+        init {
+            check(fromScene != toScene)
+        }
 
         /**
          * The progress of the transition. This is usually in the `[0; 1]` range, but it can also be
          * less than `0` or greater than `1` when using transitions with a spring AnimationSpec or
          * when flinging quickly during a swipe gesture.
          */
-        val progress: Float
+        abstract val progress: Float
 
         /** Whether the transition was triggered by user input rather than being programmatic. */
-        val isUserInputDriven: Boolean
+        abstract val isInitiatedByUserInput: Boolean
+
+        /** Whether user input is currently driving the transition. */
+        abstract val isUserInputOngoing: Boolean
+    }
+}
+
+internal class SceneTransitionLayoutStateImpl(
+    initialScene: SceneKey,
+    internal var transitions: SceneTransitions,
+) : SceneTransitionLayoutState {
+    override var transitionState: TransitionState by
+        mutableStateOf(TransitionState.Idle(initialScene))
+        private set
+
+    /**
+     * The current [transformationSpec] associated to [transitionState]. Accessing this value makes
+     * sense only if [transitionState] is a [TransitionState.Transition].
+     */
+    internal var transformationSpec: TransformationSpecImpl = TransformationSpec.Empty
+
+    override fun isTransitioning(from: SceneKey?, to: SceneKey?): Boolean {
+        val transition = currentTransition ?: return false
+        return (from == null || transition.fromScene == from) &&
+            (to == null || transition.toScene == to)
+    }
+
+    override fun isTransitioningBetween(scene: SceneKey, other: SceneKey): Boolean {
+        return isTransitioning(from = scene, to = other) ||
+            isTransitioning(from = other, to = scene)
+    }
+
+    /** Start a new [transition], instantly interrupting any ongoing transition if there was one. */
+    internal fun startTransition(transition: TransitionState.Transition) {
+        // Compute the [TransformationSpec] when the transition starts.
+        transformationSpec =
+            transitions
+                .transitionSpec(transition.fromScene, transition.toScene)
+                .transformationSpec()
+
+        transitionState = transition
+    }
+
+    /**
+     * Notify that [transition] was finished and that we should settle to [idleScene]. This will do
+     * nothing if [transition] was interrupted since it was started.
+     */
+    internal fun finishTransition(transition: TransitionState.Transition, idleScene: SceneKey) {
+        if (transitionState == transition) {
+            transitionState = TransitionState.Idle(idleScene)
+        }
     }
 }

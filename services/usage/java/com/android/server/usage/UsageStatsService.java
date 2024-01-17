@@ -57,6 +57,7 @@ import android.app.usage.Flags;
 import android.app.usage.IUsageStatsManager;
 import android.app.usage.UsageEvents;
 import android.app.usage.UsageEvents.Event;
+import android.app.usage.UsageEventsQuery;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 import android.app.usage.UsageStatsManager.StandbyBuckets;
@@ -82,6 +83,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.ParcelFileDescriptor;
+import android.os.PersistableBundle;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -90,6 +92,7 @@ import android.os.Trace;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.AtomicFile;
@@ -112,6 +115,8 @@ import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.usage.AppStandbyInternal.AppIdleStateChangeListener;
 import com.android.server.utils.AlarmQueue;
+
+import libcore.util.EmptyArray;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -190,6 +195,11 @@ public class UsageStatsService extends SystemService implements
 
     private static final char TOKEN_DELIMITER = '/';
 
+    // The maximum length for extras {@link UsageStatsManager#EXTRA_EVENT_CATEGORY},
+    // {@link UsageStatsManager#EXTRA_EVENT_ACTION} in a {@link UsageEvents.Event#mExtras}.
+    // The value will be truncated at this limit.
+    private static final int MAX_TEXT_LENGTH = 127;
+
     // Handler message types.
     static final int MSG_REPORT_EVENT = 0;
     static final int MSG_FLUSH_TO_DISK = 1;
@@ -203,6 +213,7 @@ public class UsageStatsService extends SystemService implements
     static final int MSG_NOTIFY_ESTIMATED_LAUNCH_TIMES_CHANGED = 9;
     static final int MSG_UID_REMOVED = 10;
     static final int MSG_USER_STARTED = 11;
+    static final int MSG_NOTIFY_USAGE_EVENT_LISTENER = 12;
 
     private final Object mLock = new Object();
     private Handler mHandler;
@@ -310,6 +321,17 @@ public class UsageStatsService extends SystemService implements
                         "usageStatsHandleEstimatedLaunchTimesOnUser(" + userId + ")");
                 handleEstimatedLaunchTimesOnUserUnlock(userId);
                 Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+                return true;
+            }
+            case MSG_NOTIFY_USAGE_EVENT_LISTENER: {
+                final int userId = msg.arg1;
+                final Event event = (Event) msg.obj;
+                synchronized (mUsageEventListeners) {
+                    final int size = mUsageEventListeners.size();
+                    for (int i = 0; i < size; ++i) {
+                        mUsageEventListeners.valueAt(i).onUsageEvent(userId, event);
+                    }
+                }
                 return true;
             }
         }
@@ -529,9 +551,6 @@ public class UsageStatsService extends SystemService implements
             }
             reportEvent(unlockEvent, userId);
 
-            mIoHandler.obtainMessage(MSG_HANDLE_LAUNCH_TIME_ON_USER_UNLOCK,
-                    userId, 0).sendToTarget();
-
             // Remove all the stats stored in system DE.
             deleteRecursively(new File(Environment.getDataSystemDeDirectory(userId), "usagestats"));
 
@@ -543,6 +562,8 @@ public class UsageStatsService extends SystemService implements
                 userService.persistActiveStats();
             }
         }
+
+        mIoHandler.obtainMessage(MSG_HANDLE_LAUNCH_TIME_ON_USER_UNLOCK, userId, 0).sendToTarget();
     }
 
     /**
@@ -1237,12 +1258,7 @@ public class UsageStatsService extends SystemService implements
             service.reportEvent(event);
         }
 
-        synchronized (mUsageEventListeners) {
-            final int size = mUsageEventListeners.size();
-            for (int i = 0; i < size; ++i) {
-                mUsageEventListeners.valueAt(i).onUsageEvent(userId, event);
-            }
-        }
+        mIoHandler.obtainMessage(MSG_NOTIFY_USAGE_EVENT_LISTENER, userId, 0, event).sendToTarget();
     }
 
     private String getUsageSourcePackage(Event event) {
@@ -1478,6 +1494,14 @@ public class UsageStatsService extends SystemService implements
      * Called by the Binder stub.
      */
     UsageEvents queryEvents(int userId, long beginTime, long endTime, int flags) {
+        return queryEventsWithTypes(userId, beginTime, endTime, flags, EmptyArray.INT);
+    }
+
+    /**
+     * Called by the Binder stub.
+     */
+    UsageEvents queryEventsWithTypes(int userId, long beginTime, long endTime, int flags,
+            int[] eventTypeFilter) {
         synchronized (mLock) {
             if (!mUserUnlockedStates.contains(userId)) {
                 Slog.w(TAG, "Failed to query events for locked user " + userId);
@@ -1488,7 +1512,7 @@ public class UsageStatsService extends SystemService implements
             if (service == null) {
                 return null; // user was stopped or removed
             }
-            return service.queryEvents(beginTime, endTime, flags);
+            return service.queryEvents(beginTime, endTime, flags, eventTypeFilter);
         }
     }
 
@@ -1798,6 +1822,13 @@ public class UsageStatsService extends SystemService implements
         mHandler.removeMessages(MSG_FLUSH_TO_DISK);
     }
 
+    private String getTrimmedString(String input) {
+        if (input != null && input.length() > MAX_TEXT_LENGTH) {
+            return input.substring(0, MAX_TEXT_LENGTH);
+        }
+        return input;
+    }
+
     /**
      * Called by the Binder stub.
      */
@@ -1936,6 +1967,15 @@ public class UsageStatsService extends SystemService implements
                 }
             }
         }
+
+        // Flags status.
+        pw.println("Flags:");
+        pw.println("    " + Flags.FLAG_USER_INTERACTION_TYPE_API
+                + ": " + Flags.userInteractionTypeApi());
+        pw.println("    " + Flags.FLAG_USE_PARCELED_LIST
+                + ": " + Flags.useParceledList());
+        pw.println("    " + Flags.FLAG_FILTER_BASED_EVENT_QUERY_API
+                + ": " + Flags.filterBasedEventQueryApi());
 
         final int[] userIds;
         synchronized (mLock) {
@@ -2123,7 +2163,7 @@ public class UsageStatsService extends SystemService implements
 
     private final class BinderService extends IUsageStatsManager.Stub {
 
-        private boolean hasPermission(String callingPackage) {
+        private boolean hasQueryPermission(String callingPackage) {
             final int callingUid = Binder.getCallingUid();
             if (callingUid == Process.SYSTEM_UID) {
                 return true;
@@ -2202,10 +2242,70 @@ public class UsageStatsService extends SystemService implements
             return uid == Process.SYSTEM_UID;
         }
 
+        private UsageEvents queryEventsHelper(int userId, long beginTime, long endTime,
+                String callingPackage, int[] eventTypeFilter) {
+            final int callingUid = Binder.getCallingUid();
+            final int callingPid = Binder.getCallingPid();
+            final boolean obfuscateInstantApps = shouldObfuscateInstantAppsForCaller(
+                    callingUid, UserHandle.getCallingUserId());
+
+            final long token = Binder.clearCallingIdentity();
+            try {
+                final boolean hideShortcutInvocationEvents = shouldHideShortcutInvocationEvents(
+                        userId, callingPackage, callingPid, callingUid);
+                final boolean hideLocusIdEvents = shouldHideLocusIdEvents(callingPid, callingUid);
+                final boolean obfuscateNotificationEvents = shouldObfuscateNotificationEvents(
+                        callingPid, callingUid);
+                int flags = UsageEvents.SHOW_ALL_EVENT_DATA;
+                if (obfuscateInstantApps) flags |= UsageEvents.OBFUSCATE_INSTANT_APPS;
+                if (hideShortcutInvocationEvents) flags |= UsageEvents.HIDE_SHORTCUT_EVENTS;
+                if (hideLocusIdEvents) flags |= UsageEvents.HIDE_LOCUS_EVENTS;
+                if (obfuscateNotificationEvents) flags |= UsageEvents.OBFUSCATE_NOTIFICATION_EVENTS;
+
+                return UsageStatsService.this.queryEventsWithTypes(userId, beginTime, endTime,
+                        flags, eventTypeFilter);
+            } finally {
+                Binder.restoreCallingIdentity(token);
+            }
+        }
+
+        private void reportUserInteractionInnerHelper(String packageName, @UserIdInt int userId,
+                PersistableBundle extras) {
+            if (Flags.reportUsageStatsPermission()) {
+                if (!canReportUsageStats()) {
+                    throw new SecurityException(
+                        "Only the system or holders of the REPORT_USAGE_STATS"
+                            + " permission are allowed to call reportUserInteraction");
+                }
+                if (userId != UserHandle.getCallingUserId()) {
+                    // Cross-user event reporting.
+                    getContext().enforceCallingPermission(
+                            Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                            "Caller doesn't have INTERACT_ACROSS_USERS_FULL permission");
+                }
+            } else {
+                if (!isCallingUidSystem()) {
+                    throw new SecurityException("Only system is allowed to call"
+                        + " reportUserInteraction");
+                }
+            }
+
+            // Verify if this package exists before reporting an event for it.
+            if (mPackageManagerInternal.getPackageUid(packageName, 0, userId) < 0) {
+                throw new IllegalArgumentException("Package " + packageName
+                        + " does not exist!");
+            }
+
+            final Event event = new Event(USER_INTERACTION, SystemClock.elapsedRealtime());
+            event.mPackage = packageName;
+            event.mExtras = extras;
+            reportEventOrAddToQueue(userId, event);
+        }
+
         @Override
         public ParceledListSlice<UsageStats> queryUsageStats(int bucketType, long beginTime,
                 long endTime, String callingPackage, int userId) {
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 return null;
             }
 
@@ -2233,7 +2333,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public ParceledListSlice<ConfigurationStats> queryConfigurationStats(int bucketType,
                 long beginTime, long endTime, String callingPackage) throws RemoteException {
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 return null;
             }
 
@@ -2255,7 +2355,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public ParceledListSlice<EventStats> queryEventStats(int bucketType,
                 long beginTime, long endTime, String callingPackage) throws RemoteException {
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 return null;
             }
 
@@ -2276,32 +2376,38 @@ public class UsageStatsService extends SystemService implements
 
         @Override
         public UsageEvents queryEvents(long beginTime, long endTime, String callingPackage) {
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 return null;
             }
 
-            final int userId = UserHandle.getCallingUserId();
-            final int callingUid = Binder.getCallingUid();
-            final int callingPid = Binder.getCallingPid();
-            final boolean obfuscateInstantApps = shouldObfuscateInstantAppsForCaller(
-                    callingUid, userId);
+            return queryEventsHelper(UserHandle.getCallingUserId(), beginTime, endTime,
+                    callingPackage, /* eventTypeFilter= */ EmptyArray.INT);
+        }
 
-            final long token = Binder.clearCallingIdentity();
-            try {
-                final boolean hideShortcutInvocationEvents = shouldHideShortcutInvocationEvents(
-                        userId, callingPackage, callingPid, callingUid);
-                final boolean hideLocusIdEvents = shouldHideLocusIdEvents(callingPid, callingUid);
-                final boolean obfuscateNotificationEvents = shouldObfuscateNotificationEvents(
-                        callingPid, callingUid);
-                int flags = UsageEvents.SHOW_ALL_EVENT_DATA;
-                if (obfuscateInstantApps) flags |= UsageEvents.OBFUSCATE_INSTANT_APPS;
-                if (hideShortcutInvocationEvents) flags |= UsageEvents.HIDE_SHORTCUT_EVENTS;
-                if (hideLocusIdEvents) flags |= UsageEvents.HIDE_LOCUS_EVENTS;
-                if (obfuscateNotificationEvents) flags |= UsageEvents.OBFUSCATE_NOTIFICATION_EVENTS;
-                return UsageStatsService.this.queryEvents(userId, beginTime, endTime, flags);
-            } finally {
-                Binder.restoreCallingIdentity(token);
+        @Override
+        public UsageEvents queryEventsWithFilter(@NonNull UsageEventsQuery query,
+                @NonNull String callingPackage) {
+            Objects.requireNonNull(query);
+            Objects.requireNonNull(callingPackage);
+
+            if (!hasQueryPermission(callingPackage)) {
+                return null;
             }
+
+            final int callingUserId = UserHandle.getCallingUserId();
+            int userId = query.getUserId();
+            if (userId == UserHandle.USER_NULL) {
+                // Convert userId to actual user Id if not specified in the query object.
+                userId = callingUserId;
+            }
+            if (userId != callingUserId) {
+                getContext().enforceCallingPermission(
+                        Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                        "No permission to query usage stats for user " + userId);
+            }
+
+            return queryEventsHelper(userId, query.getBeginTimeMillis(),
+                    query.getEndTimeMillis(), callingPackage, query.getEventTypeFilter());
         }
 
         @Override
@@ -2311,7 +2417,7 @@ public class UsageStatsService extends SystemService implements
             final int callingUserId = UserHandle.getUserId(callingUid);
 
             checkCallerIsSameApp(callingPackage);
-            final boolean includeTaskRoot = hasPermission(callingPackage);
+            final boolean includeTaskRoot = hasQueryPermission(callingPackage);
 
             final long token = Binder.clearCallingIdentity();
             try {
@@ -2325,7 +2431,7 @@ public class UsageStatsService extends SystemService implements
         @Override
         public UsageEvents queryEventsForUser(long beginTime, long endTime, int userId,
                 String callingPackage) {
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 return null;
             }
 
@@ -2336,33 +2442,14 @@ public class UsageStatsService extends SystemService implements
                         "No permission to query usage stats for this user");
             }
 
-            final int callingUid = Binder.getCallingUid();
-            final int callingPid = Binder.getCallingPid();
-            final boolean obfuscateInstantApps = shouldObfuscateInstantAppsForCaller(
-                    callingUid, callingUserId);
-
-            final long token = Binder.clearCallingIdentity();
-            try {
-                final boolean hideShortcutInvocationEvents = shouldHideShortcutInvocationEvents(
-                        userId, callingPackage, callingPid, callingUid);
-                final boolean obfuscateNotificationEvents = shouldObfuscateNotificationEvents(
-                        callingPid, callingUid);
-                boolean hideLocusIdEvents = shouldHideLocusIdEvents(callingPid, callingUid);
-                int flags = UsageEvents.SHOW_ALL_EVENT_DATA;
-                if (obfuscateInstantApps) flags |= UsageEvents.OBFUSCATE_INSTANT_APPS;
-                if (hideShortcutInvocationEvents) flags |= UsageEvents.HIDE_SHORTCUT_EVENTS;
-                if (hideLocusIdEvents) flags |= UsageEvents.HIDE_LOCUS_EVENTS;
-                if (obfuscateNotificationEvents) flags |= UsageEvents.OBFUSCATE_NOTIFICATION_EVENTS;
-                return UsageStatsService.this.queryEvents(userId, beginTime, endTime, flags);
-            } finally {
-                Binder.restoreCallingIdentity(token);
-            }
+            return queryEventsHelper(userId, beginTime, endTime, callingPackage,
+                    /* eventTypeFilter= */ EmptyArray.INT);
         }
 
         @Override
         public UsageEvents queryEventsForPackageForUser(long beginTime, long endTime,
                 int userId, String pkg, String callingPackage) {
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 return null;
             }
             if (userId != UserHandle.getCallingUserId()) {
@@ -2403,7 +2490,7 @@ public class UsageStatsService extends SystemService implements
                 if (actualCallingUid != callingUid) {
                     return false;
                 }
-            } else if (!hasPermission(callingPackage)) {
+            } else if (!hasQueryPermission(callingPackage)) {
                 return false;
             }
             final boolean obfuscateInstantApps = shouldObfuscateInstantAppsForCaller(
@@ -2453,7 +2540,7 @@ public class UsageStatsService extends SystemService implements
             final int packageUid = mPackageManagerInternal.getPackageUid(packageName, 0, userId);
             // If the calling app is asking about itself, continue, else check for permission.
             final boolean sameApp = packageUid == callingUid;
-            if (!sameApp && !hasPermission(callingPackage)) {
+            if (!sameApp && !hasQueryPermission(callingPackage)) {
                 throw new SecurityException("Don't have permission to query app standby bucket");
             }
 
@@ -2501,7 +2588,7 @@ public class UsageStatsService extends SystemService implements
             } catch (RemoteException re) {
                 throw re.rethrowFromSystemServer();
             }
-            if (!hasPermission(callingPackageName)) {
+            if (!hasQueryPermission(callingPackageName)) {
                 throw new SecurityException(
                         "Don't have permission to query app standby bucket");
             }
@@ -2555,7 +2642,7 @@ public class UsageStatsService extends SystemService implements
             final int packageUid = mPackageManagerInternal.getPackageUid(packageName, 0, userId);
             // If the calling app is asking about itself, continue, else check for permission.
             if (packageUid != callingUid) {
-                if (!hasPermission(callingPackage)) {
+                if (!hasQueryPermission(callingPackage)) {
                     throw new SecurityException(
                             "Don't have permission to query min app standby bucket");
                 }
@@ -2661,23 +2748,36 @@ public class UsageStatsService extends SystemService implements
 
         @Override
         public void reportUserInteraction(String packageName, int userId) {
+            reportUserInteractionInnerHelper(packageName, userId, null);
+        }
+
+        @Override
+        public void reportUserInteractionWithBundle(String packageName, @UserIdInt int userId,
+                PersistableBundle extras) {
             Objects.requireNonNull(packageName);
-            if (Flags.reportUsageStatsPermission()) {
-                if (!canReportUsageStats()) {
-                    throw new SecurityException(
-                        "Only the system or holders of the REPORT_USAGE_STATS"
-                            + " permission are allowed to call reportUserInteraction");
-                }
-            } else {
-                if (!isCallingUidSystem()) {
-                    throw new SecurityException("Only system is allowed to call"
-                            + " reportUserInteraction");
-                }
+            if (extras == null || extras.size() == 0) {
+                throw new IllegalArgumentException("Emtry extras!");
             }
 
-            final Event event = new Event(USER_INTERACTION, SystemClock.elapsedRealtime());
-            event.mPackage = packageName;
-            reportEventOrAddToQueue(userId, event);
+            // Only category/action are allowed now, other unknown keys will be trimmed.
+            // Also, empty category/action is not meanful.
+            String category = extras.getString(UsageStatsManager.EXTRA_EVENT_CATEGORY);
+            if (TextUtils.isEmpty(category)) {
+                throw new IllegalArgumentException("Empty "
+                        + UsageStatsManager.EXTRA_EVENT_CATEGORY);
+            }
+            String action = extras.getString(UsageStatsManager.EXTRA_EVENT_ACTION);
+            if (TextUtils.isEmpty(action)) {
+                throw new IllegalArgumentException("Empty "
+                        + UsageStatsManager.EXTRA_EVENT_ACTION);
+            }
+
+            PersistableBundle extrasCopy = new PersistableBundle();
+            extrasCopy.putString(UsageStatsManager.EXTRA_EVENT_CATEGORY,
+                    getTrimmedString(category));
+            extrasCopy.putString(UsageStatsManager.EXTRA_EVENT_ACTION, getTrimmedString(action));
+
+            reportUserInteractionInnerHelper(packageName, userId, extrasCopy);
         }
 
         @Override
@@ -2899,7 +2999,7 @@ public class UsageStatsService extends SystemService implements
             if (!hasPermissions(android.Manifest.permission.INTERACT_ACROSS_USERS)) {
                 throw new SecurityException("Caller doesn't have INTERACT_ACROSS_USERS permission");
             }
-            if (!hasPermission(callingPackage)) {
+            if (!hasQueryPermission(callingPackage)) {
                 throw new SecurityException("Don't have permission to query usage stats");
             }
             synchronized (mLock) {
@@ -3132,6 +3232,24 @@ public class UsageStatsService extends SystemService implements
         @Override
         public void reportContentProviderUsage(String name, String packageName, int userId) {
             mAppStandby.postReportContentProviderUsage(name, packageName, userId);
+        }
+
+        @Override
+        public void reportUserInteractionEvent(@NonNull String pkgName, @UserIdInt int userId,
+                @NonNull PersistableBundle extras) {
+            if (extras != null && extras.size() != 0) {
+                // Truncate the value if necessary.
+                String category = extras.getString(UsageStatsManager.EXTRA_EVENT_CATEGORY);
+                String action = extras.getString(UsageStatsManager.EXTRA_EVENT_ACTION);
+                extras.putString(UsageStatsManager.EXTRA_EVENT_CATEGORY,
+                        getTrimmedString(category));
+                extras.putString(UsageStatsManager.EXTRA_EVENT_ACTION, getTrimmedString(action));
+            }
+
+            Event event = new Event(USER_INTERACTION, SystemClock.elapsedRealtime());
+            event.mPackage = pkgName;
+            event.mExtras = extras;
+            reportEventOrAddToQueue(userId, event);
         }
 
         @Override

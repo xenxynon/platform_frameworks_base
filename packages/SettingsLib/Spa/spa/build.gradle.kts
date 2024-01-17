@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The Android Open Source Project
+ * Copyright (C) 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,7 +57,7 @@ dependencies {
     api("androidx.slice:slice-builders:1.1.0-alpha02")
     api("androidx.slice:slice-core:1.1.0-alpha02")
     api("androidx.slice:slice-view:1.1.0-alpha02")
-    api("androidx.compose.material3:material3:1.2.0-alpha09")
+    api("androidx.compose.material3:material3:1.2.0-alpha12")
     api("androidx.compose.material:material-icons-extended:$jetpackComposeVersion")
     api("androidx.compose.runtime:runtime-livedata:$jetpackComposeVersion")
     api("androidx.compose.ui:ui-tooling-preview:$jetpackComposeVersion")

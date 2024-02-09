@@ -26,8 +26,10 @@ import static android.app.AppOpsManager.ATTRIBUTION_FLAGS_NONE;
 import static android.app.AppOpsManager.MODE_ALLOWED;
 import static android.app.AppOpsManager.MODE_ERRORED;
 import static android.app.AppOpsManager.MODE_IGNORED;
+import static android.app.AppOpsManager.OP_BLUETOOTH_CONNECT;
 import static android.content.pm.ApplicationInfo.AUTO_REVOKE_DISALLOWED;
 import static android.content.pm.ApplicationInfo.AUTO_REVOKE_DISCOURAGED;
+import static android.permission.flags.Flags.serverSideAttributionRegistration;
 
 import static com.android.server.pm.PackageManagerService.PLATFORM_PACKAGE_NAME;
 
@@ -75,7 +77,6 @@ import com.android.internal.util.Preconditions;
 import com.android.internal.util.function.QuadFunction;
 import com.android.internal.util.function.TriFunction;
 import com.android.server.LocalServices;
-import com.android.server.pm.UserManagerInternal;
 import com.android.server.pm.UserManagerService;
 import com.android.server.pm.permission.PermissionManagerServiceInternal.HotwordDetectionServiceProvider;
 import com.android.server.pm.pkg.AndroidPackage;
@@ -112,9 +113,6 @@ public class PermissionManagerService extends IPermissionManager.Stub {
     /** Internal connection to the package manager */
     private final PackageManagerInternal mPackageManagerInt;
 
-    /** Internal connection to the user manager */
-    private final UserManagerInternal mUserManagerInt;
-
     /** Map of OneTimePermissionUserManagers keyed by userId */
     @GuardedBy("mLock")
     @NonNull
@@ -146,7 +144,6 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
         mContext = context;
         mPackageManagerInt = LocalServices.getService(PackageManagerInternal.class);
-        mUserManagerInt = LocalServices.getService(UserManagerInternal.class);
         mAppOpsManager = context.getSystemService(AppOpsManager.class);
 
         mAttributionSourceRegistry = new AttributionSourceRegistry(context);
@@ -438,10 +435,27 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         }
     }
 
+    /**
+     * Reference propagation over binder is affected by the ownership of the object. So if 
+     * the token is owned by client, references to the token on client side won't be 
+     * propagated to the server and the token may still be garbage collected on server side. 
+     * But if the token is owned by server, references to the token on client side will now 
+     * be propagated to the server since it's a foreign object to the client, and that will 
+     * keep the token referenced on the server side as long as the client is alive and 
+     * holding it.
+     */
     @Override
-    public void registerAttributionSource(@NonNull AttributionSourceState source) {
-        mAttributionSourceRegistry
-                .registerAttributionSource(new AttributionSource(source));
+    public IBinder registerAttributionSource(@NonNull AttributionSourceState source) {
+        if (serverSideAttributionRegistration()) {
+            Binder token = new Binder();
+            mAttributionSourceRegistry
+                    .registerAttributionSource(new AttributionSource(source).withToken(token));
+            return token;
+        } else {
+            mAttributionSourceRegistry
+                    .registerAttributionSource(new AttributionSource(source));
+            return source.token;
+        }
     }
 
     @Override
@@ -1079,12 +1093,10 @@ public class PermissionManagerService extends IPermissionManager.Stub {
         private static final AtomicInteger sAttributionChainIds = new AtomicInteger(0);
 
         private final @NonNull Context mContext;
-        private final @NonNull AppOpsManager mAppOpsManager;
         private final @NonNull PermissionManagerServiceInternal mPermissionManagerServiceInternal;
 
         PermissionCheckerService(@NonNull Context context) {
             mContext = context;
-            mAppOpsManager = mContext.getSystemService(AppOpsManager.class);
             mPermissionManagerServiceInternal =
                     LocalServices.getService(PermissionManagerServiceInternal.class);
         }
@@ -1217,7 +1229,6 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                 @Nullable String message, boolean forDataDelivery, boolean startDataDelivery,
                 boolean fromDatasource, int attributedOp) {
             PermissionInfo permissionInfo = sPlatformPermissions.get(permission);
-
             if (permissionInfo == null) {
                 try {
                     permissionInfo = context.getPackageManager().getPermissionInfo(permission, 0);
@@ -1345,8 +1356,8 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
                 // If the call is from a datasource we need to vet only the chain before it. This
                 // way we can avoid the datasource creating an attribution context for every call.
-                if (!(fromDatasource && current.equals(attributionSource))
-                        && next != null && !current.isTrusted(context)) {
+                boolean isDatasource = fromDatasource && current.equals(attributionSource);
+                if (!isDatasource && next != null && !current.isTrusted(context)) {
                     return PermissionChecker.PERMISSION_HARD_DENIED;
                 }
 
@@ -1402,6 +1413,12 @@ public class PermissionManagerService extends IPermissionManager.Stub {
 
                 switch (opMode) {
                     case AppOpsManager.MODE_ERRORED: {
+                        if (permission.equals(Manifest.permission.BLUETOOTH_CONNECT)) {
+                            Slog.e(LOG_TAG, "BLUETOOTH_CONNECT permission hard denied as op"
+                                    + " mode is MODE_ERRORED. Permission check was requested for: "
+                                    + attributionSource + " and op transaction was invoked for "
+                                    + current);
+                        }
                         return PermissionChecker.PERMISSION_HARD_DENIED;
                     }
                     case AppOpsManager.MODE_IGNORED: {
@@ -1722,7 +1739,22 @@ public class PermissionManagerService extends IPermissionManager.Stub {
                         throw new SecurityException(msg + ":" + e.getMessage());
                     }
                 }
-                return Math.max(checkedOpResult, notedOpResult);
+                int result = Math.max(checkedOpResult, notedOpResult);
+                // TODO(b/302609140): Remove extra logging after this issue is diagnosed.
+                if (op == OP_BLUETOOTH_CONNECT && result == MODE_ERRORED) {
+                    if (result == checkedOpResult) {
+                        Slog.e(LOG_TAG, "BLUETOOTH_CONNECT permission hard denied as"
+                                + " checkOp for resolvedAttributionSource "
+                                + resolvedAttributionSource + " and op " + op
+                                + " returned MODE_ERRORED");
+                    } else {
+                        Slog.e(LOG_TAG, "BLUETOOTH_CONNECT permission hard denied as"
+                                + " noteOp for resolvedAttributionSource "
+                                + resolvedAttributionSource + " and op " + notedOp
+                                + " returned MODE_ERRORED");
+                    }
+                }
+                return result;
             }
         }
 

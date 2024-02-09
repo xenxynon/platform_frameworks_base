@@ -18,6 +18,9 @@ package com.android.providers.settings;
 
 import static android.os.Process.FIRST_APPLICATION_UID;
 
+import android.aconfig.Aconfig.flag_state;
+import android.aconfig.Aconfig.parsed_flag;
+import android.aconfig.Aconfig.parsed_flags;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
@@ -66,6 +69,7 @@ import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -147,6 +151,17 @@ final class SettingsState {
      */
     private static final String CONFIG_STAGED_PREFIX = "staged/";
 
+    private static final List<String> sAconfigTextProtoFilesOnDevice = List.of(
+            "/system/etc/aconfig_flags.pb",
+            "/system_ext/etc/aconfig_flags.pb",
+            "/product/etc/aconfig_flags.pb",
+            "/vendor/etc/aconfig_flags.pb");
+
+    /**
+     * This tag is applied to all aconfig default value-loaded flags.
+     */
+    private static final String BOOT_LOADED_DEFAULT_TAG = "BOOT_LOADED_DEFAULT";
+
     // This was used in version 120 and before.
     private static final String NULL_VALUE_OLD_STYLE = "null";
 
@@ -221,6 +236,10 @@ final class SettingsState {
 
     @GuardedBy("mLock")
     private int mNextHistoricalOpIdx;
+
+    @GuardedBy("mLock")
+    @Nullable
+    private Map<String, Map<String, String>> mNamespaceDefaults;
 
     public static final int SETTINGS_TYPE_GLOBAL = 0;
     public static final int SETTINGS_TYPE_SYSTEM = 1;
@@ -315,6 +334,49 @@ final class SettingsState {
 
         synchronized (mLock) {
             readStateSyncLocked();
+
+            if (Flags.loadAconfigDefaults()) {
+                if (isConfigSettingsKey(mKey)) {
+                    loadAconfigDefaultValuesLocked();
+                }
+            }
+
+        }
+    }
+
+    @GuardedBy("mLock")
+    private void loadAconfigDefaultValuesLocked() {
+        mNamespaceDefaults = new HashMap<>();
+
+        for (String fileName : sAconfigTextProtoFilesOnDevice) {
+            try (FileInputStream inputStream = new FileInputStream(fileName)) {
+                loadAconfigDefaultValues(inputStream.readAllBytes(), mNamespaceDefaults);
+            } catch (IOException e) {
+                Slog.e(LOG_TAG, "failed to read protobuf", e);
+            }
+        }
+    }
+
+    @VisibleForTesting
+    @GuardedBy("mLock")
+    public static void loadAconfigDefaultValues(byte[] fileContents,
+            @NonNull Map<String, Map<String, String>> defaultMap) {
+        try {
+            parsed_flags parsedFlags =
+                    parsed_flags.parseFrom(fileContents);
+            for (parsed_flag flag : parsedFlags.getParsedFlagList()) {
+                if (!defaultMap.containsKey(flag.getNamespace())) {
+                    Map<String, String> defaults = new HashMap<>();
+                    defaultMap.put(flag.getNamespace(), defaults);
+                }
+                String flagName = flag.getNamespace()
+                        + "/" + flag.getPackage() + "." + flag.getName();
+                String flagValue = flag.getState() == flag_state.ENABLED
+                        ? "true" : "false";
+                defaultMap.get(flag.getNamespace()).put(flagName, flagValue);
+            }
+        } catch (IOException e) {
+            Slog.e(LOG_TAG, "failed to parse protobuf", e);
         }
     }
 
@@ -374,6 +436,13 @@ final class SettingsState {
             names.add(name);
         }
         return names;
+    }
+
+    @Nullable
+    public Map<String, Map<String, String>> getAconfigDefaultValues() {
+        synchronized (mLock) {
+            return mNamespaceDefaults;
+        }
     }
 
     // The settings provider must hold its lock when calling here.

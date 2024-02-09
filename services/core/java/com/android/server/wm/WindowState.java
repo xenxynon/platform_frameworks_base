@@ -204,7 +204,6 @@ import android.os.Debug;
 import android.os.DeviceIntegrationUtils;
 import android.os.IBinder;
 import android.os.PowerManager;
-import android.os.PowerManager.WakeReason;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -255,6 +254,7 @@ import com.android.server.policy.WindowManagerPolicy;
 import com.android.server.wm.LocalAnimationAdapter.AnimationSpec;
 import com.android.server.wm.RefreshRatePolicy.FrameRateVote;
 import com.android.server.wm.SurfaceAnimator.AnimationType;
+import com.android.window.flags.Flags;
 
 import dalvik.annotation.optimization.NeverCompile;
 
@@ -704,11 +704,6 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
      */
     private final Region mTapExcludeRegion = new Region();
 
-    /**
-     * Used for testing because the real PowerManager is final.
-     */
-    private PowerManagerWrapper mPowerManagerWrapper;
-
     private static final StringBuilder sTmpSB = new StringBuilder();
 
     /**
@@ -1063,34 +1058,9 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         return mOnBackInvokedCallbackInfo;
     }
 
-    interface PowerManagerWrapper {
-        void wakeUp(long time, @WakeReason int reason, String details);
-
-        boolean isInteractive();
-
-    }
-
     WindowState(WindowManagerService service, Session s, IWindow c, WindowToken token,
             WindowState parentWindow, int appOp, WindowManager.LayoutParams a, int viewVisibility,
             int ownerId, int showUserId, boolean ownerCanAddInternalSystemWindow) {
-        this(service, s, c, token, parentWindow, appOp, a, viewVisibility, ownerId, showUserId,
-                ownerCanAddInternalSystemWindow, new PowerManagerWrapper() {
-                    @Override
-                    public void wakeUp(long time, @WakeReason int reason, String details) {
-                        service.mPowerManager.wakeUp(time, reason, details);
-                    }
-
-                    @Override
-                    public boolean isInteractive() {
-                        return service.mPowerManager.isInteractive();
-                    }
-                });
-    }
-
-    WindowState(WindowManagerService service, Session s, IWindow c, WindowToken token,
-            WindowState parentWindow, int appOp, WindowManager.LayoutParams a, int viewVisibility,
-            int ownerId, int showUserId, boolean ownerCanAddInternalSystemWindow,
-            PowerManagerWrapper powerManagerWrapper) {
         super(service);
         mTmpTransaction = service.mTransactionFactory.get();
         mSession = s;
@@ -1108,7 +1078,6 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         mViewVisibility = viewVisibility;
         mPolicy = mWmService.mPolicy;
         mContext = mWmService.mContext;
-        mPowerManagerWrapper = powerManagerWrapper;
         // Device Integration: This is to make phone screen not show our black screen
         if (!DeviceIntegrationUtils.DISABLE_DEVICE_INTEGRATION) {
             mForceSeamlesslyRotate = token.mRoundedCornerOverlay || mAttrs.type == TYPE_SYSTEM_BLACKSCREEN_OVERLAY;
@@ -1481,16 +1450,7 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
                         this, mWindowFrames.getInsetsChangedInfo(),
                         configChanged, didFrameInsetsChange);
 
-            if (insetsChanged) {
-                mWindowFrames.setInsetsChanged(false);
-                if (mWmService.mWindowsInsetsChanged > 0) {
-                    mWmService.mWindowsInsetsChanged--;
-                }
-                if (mWmService.mWindowsInsetsChanged == 0) {
-                    mWmService.mH.removeMessages(WindowManagerService.H.INSETS_CHANGED);
-                }
-            }
-
+            consumeInsetsChange();
             onResizeHandled();
             mWmService.makeWindowFreezingScreenIfNeededLocked(this);
 
@@ -1943,6 +1903,14 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         if ((mAttrs.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0) {
             return true;
         }
+
+        if (com.android.server.notification.Flags.sensitiveNotificationAppProtection()) {
+            if (mWmService.mSensitiveContentPackages
+                    .shouldBlockScreenCaptureForApp(getOwningPackage(), getOwningUid())) {
+                return true;
+            }
+        }
+
         return !DevicePolicyCache.getInstance().isScreenCaptureAllowed(mShowUserId);
     }
 
@@ -1976,9 +1944,6 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
      * of a transition that has not yet been started.
      */
     boolean isReadyForDisplay() {
-        if (mToken.waitingToShow && getDisplayContent().mAppTransition.isTransitionSet()) {
-            return false;
-        }
         final boolean parentAndClientVisible = !isParentWindowHidden()
                 && mViewVisibility == View.VISIBLE && mToken.isVisible();
         return mHasSurface && isVisibleByPolicy() && !mDestroying
@@ -2387,6 +2352,8 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
 
         mWmService.mTrustedPresentationListenerController.removeIgnoredWindowTokens(
                 getWindowToken());
+
+        consumeInsetsChange();
     }
 
     @Override
@@ -2838,12 +2805,12 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
             boolean canTurnScreenOn = mActivityRecord == null || mActivityRecord.currentLaunchCanTurnScreenOn();
 
             if (allowTheaterMode && canTurnScreenOn
-                        && (mWmService.mAtmService.isDreaming()
-                        || !mPowerManagerWrapper.isInteractive())) {
+                    && (mWmService.mAtmService.isDreaming()
+                            || !mWmService.mPowerManager.isInteractive())) {
                 if (DEBUG_VISIBILITY || DEBUG_POWER) {
                     Slog.v(TAG, "Relayout window turning screen on: " + this);
                 }
-                mPowerManagerWrapper.wakeUp(SystemClock.uptimeMillis(),
+                mWmService.mPowerManager.wakeUp(SystemClock.uptimeMillis(),
                         PowerManager.WAKE_REASON_APPLICATION, "android.server.wm:SCREEN_ON_FLAG");
             }
 
@@ -3714,7 +3681,7 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
 
         markRedrawForSyncReported();
 
-        if (mWmService.mFlags.mWindowStateResizeItemFlag) {
+        if (Flags.bundleClientTransactionFlag()) {
             getProcess().scheduleClientTransactionItem(
                     WindowStateResizeItem.obtain(mClient, mClientWindowFrames, reportDraw,
                             mLastReportedConfiguration, getCompatInsetsState(), forceRelayout,
@@ -3760,6 +3727,16 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         return mClient instanceof IWindow.Stub;
     }
 
+    private void consumeInsetsChange() {
+        if (mWindowFrames.hasInsetsChanged()) {
+            mWindowFrames.setInsetsChanged(false);
+            mWmService.mWindowsInsetsChanged--;
+            if (mWmService.mWindowsInsetsChanged == 0) {
+                mWmService.mH.removeMessages(WindowManagerService.H.INSETS_CHANGED);
+            }
+        }
+    }
+
     /**
      * Called when the insets state changed.
      */
@@ -3767,10 +3744,10 @@ class WindowState extends WindowContainer<WindowState> implements WindowManagerP
         ProtoLog.d(WM_DEBUG_WINDOW_INSETS, "notifyInsetsChanged for %s ", this);
         if (!mWindowFrames.hasInsetsChanged()) {
             mWindowFrames.setInsetsChanged(true);
+            mWmService.mWindowsInsetsChanged++;
 
             // If the new InsetsState won't be dispatched before releasing WM lock, the following
             // message will be executed.
-            mWmService.mWindowsInsetsChanged++;
             mWmService.mH.removeMessages(WindowManagerService.H.INSETS_CHANGED);
             mWmService.mH.sendEmptyMessage(WindowManagerService.H.INSETS_CHANGED);
         }

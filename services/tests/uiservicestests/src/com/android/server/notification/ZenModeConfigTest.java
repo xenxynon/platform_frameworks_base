@@ -19,12 +19,15 @@ package com.android.server.notification;
 import static android.app.AutomaticZenRule.TYPE_BEDTIME;
 import static android.service.notification.ZenPolicy.CONVERSATION_SENDERS_IMPORTANT;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static junit.framework.TestCase.assertEquals;
 import static junit.framework.TestCase.assertFalse;
 import static junit.framework.TestCase.assertNotNull;
 import static junit.framework.TestCase.assertNull;
 import static junit.framework.TestCase.assertTrue;
 
+import android.app.AutomaticZenRule;
 import android.app.Flags;
 import android.app.NotificationManager.Policy;
 import android.content.ComponentName;
@@ -46,6 +49,7 @@ import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
 import com.android.server.UiServiceTestCase;
 
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -56,6 +60,7 @@ import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Instant;
 
 @SmallTest
 @RunWith(AndroidJUnit4.class)
@@ -82,6 +87,11 @@ public class ZenModeConfigTest extends UiServiceTestCase {
 
     @Rule
     public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+
+    @Before
+    public final void setUp() {
+        mSetFlagsRule.enableFlags(Flags.FLAG_MODES_API);
+    }
 
     @Test
     public void testPriorityOnlyMutingAllNotifications() {
@@ -154,7 +164,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
                 .allowConversations(CONVERSATION_SENDERS_IMPORTANT)
                 .showLights(false)
                 .showInAmbientDisplay(false)
-                .allowChannels(ZenPolicy.CHANNEL_TYPE_NONE)
+                .allowPriorityChannels(false)
                 .build();
 
         Policy originalPolicy = config.toNotificationPolicy();
@@ -245,7 +255,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
                 .allowCalls(ZenPolicy.PEOPLE_TYPE_CONTACTS)
                 .allowMessages(ZenPolicy.PEOPLE_TYPE_STARRED)
                 .allowConversations(ZenPolicy.CONVERSATION_SENDERS_NONE)
-                .allowChannels(ZenPolicy.CHANNEL_TYPE_NONE)
+                .allowPriorityChannels(false)
                 .build();
 
         ZenModeConfig config = getMutedAllConfig();
@@ -274,7 +284,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
                 actual.getPriorityConversationSenders());
         assertEquals(expected.getPriorityCallSenders(), actual.getPriorityCallSenders());
         assertEquals(expected.getPriorityMessageSenders(), actual.getPriorityMessageSenders());
-        assertEquals(expected.getAllowedChannels(), actual.getAllowedChannels());
+        assertEquals(expected.getPriorityChannels(), actual.getPriorityChannels());
     }
 
     @Test
@@ -327,6 +337,40 @@ public class ZenModeConfigTest extends UiServiceTestCase {
     }
 
     @Test
+    public void testCanBeUpdatedByApp_nullPolicyAndDeviceEffects() throws Exception {
+        ZenModeConfig.ZenRule rule = new ZenModeConfig.ZenRule();
+        rule.zenPolicy = null;
+        rule.zenDeviceEffects = null;
+        assertThat(rule.canBeUpdatedByApp()).isTrue();
+
+        rule.userModifiedFields = 1;
+
+        assertThat(rule.canBeUpdatedByApp()).isFalse();
+    }
+
+    @Test
+    public void testCanBeUpdatedByApp_policyModified() throws Exception {
+        ZenModeConfig.ZenRule rule = new ZenModeConfig.ZenRule();
+        rule.zenPolicy = new ZenPolicy();
+        assertThat(rule.canBeUpdatedByApp()).isTrue();
+
+        rule.zenPolicyUserModifiedFields = 1;
+
+        assertThat(rule.canBeUpdatedByApp()).isFalse();
+    }
+
+    @Test
+    public void testCanBeUpdatedByApp_deviceEffectsModified() throws Exception {
+        ZenModeConfig.ZenRule rule = new ZenModeConfig.ZenRule();
+        rule.zenDeviceEffects = new ZenDeviceEffects.Builder().build();
+        assertThat(rule.canBeUpdatedByApp()).isTrue();
+
+        rule.zenDeviceEffectsUserModifiedFields = 1;
+
+        assertThat(rule.canBeUpdatedByApp()).isFalse();
+    }
+
+    @Test
     public void testWriteToParcel() {
         mSetFlagsRule.enableFlags(Flags.FLAG_MODES_API);
 
@@ -347,8 +391,12 @@ public class ZenModeConfigTest extends UiServiceTestCase {
 
         rule.allowManualInvocation = ALLOW_MANUAL;
         rule.type = TYPE;
+        rule.userModifiedFields = 16;
+        rule.zenPolicyUserModifiedFields = 5;
+        rule.zenDeviceEffectsUserModifiedFields = 2;
         rule.iconResName = ICON_RES_NAME;
         rule.triggerDescription = TRIGGER_DESC;
+        rule.deletionInstant = Instant.ofEpochMilli(1701790147000L);
 
         Parcel parcel = Parcel.obtain();
         rule.writeToParcel(parcel, 0);
@@ -371,11 +419,16 @@ public class ZenModeConfigTest extends UiServiceTestCase {
         assertEquals(rule.allowManualInvocation, parceled.allowManualInvocation);
         assertEquals(rule.iconResName, parceled.iconResName);
         assertEquals(rule.type, parceled.type);
+        assertEquals(rule.userModifiedFields, parceled.userModifiedFields);
+        assertEquals(rule.zenPolicyUserModifiedFields, parceled.zenPolicyUserModifiedFields);
+        assertEquals(rule.zenDeviceEffectsUserModifiedFields,
+                parceled.zenDeviceEffectsUserModifiedFields);
         assertEquals(rule.triggerDescription, parceled.triggerDescription);
         assertEquals(rule.zenPolicy, parceled.zenPolicy);
+        assertEquals(rule.deletionInstant, parceled.deletionInstant);
+
         assertEquals(rule, parceled);
         assertEquals(rule.hashCode(), parceled.hashCode());
-
     }
 
     @Test
@@ -448,8 +501,12 @@ public class ZenModeConfigTest extends UiServiceTestCase {
 
         rule.allowManualInvocation = ALLOW_MANUAL;
         rule.type = TYPE;
+        rule.userModifiedFields = 4;
+        rule.zenPolicyUserModifiedFields = 5;
+        rule.zenDeviceEffectsUserModifiedFields = 2;
         rule.iconResName = ICON_RES_NAME;
         rule.triggerDescription = TRIGGER_DESC;
+        rule.deletionInstant = Instant.ofEpochMilli(1701790147000L);
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         writeRuleXml(rule, baos);
@@ -476,8 +533,13 @@ public class ZenModeConfigTest extends UiServiceTestCase {
 
         assertEquals(rule.allowManualInvocation, fromXml.allowManualInvocation);
         assertEquals(rule.type, fromXml.type);
+        assertEquals(rule.userModifiedFields, fromXml.userModifiedFields);
+        assertEquals(rule.zenPolicyUserModifiedFields, fromXml.zenPolicyUserModifiedFields);
+        assertEquals(rule.zenDeviceEffectsUserModifiedFields,
+                fromXml.zenDeviceEffectsUserModifiedFields);
         assertEquals(rule.triggerDescription, fromXml.triggerDescription);
         assertEquals(rule.iconResName, fromXml.iconResName);
+        assertEquals(rule.deletionInstant, fromXml.deletionInstant);
     }
 
     @Test
@@ -550,6 +612,22 @@ public class ZenModeConfigTest extends UiServiceTestCase {
     }
 
     @Test
+    public void testRuleXml_userModifiedField() throws Exception {
+        ZenModeConfig.ZenRule rule = new ZenModeConfig.ZenRule();
+        rule.userModifiedFields |= AutomaticZenRule.FIELD_NAME;
+        assertThat(rule.userModifiedFields).isEqualTo(1);
+        assertThat(rule.canBeUpdatedByApp()).isFalse();
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        writeRuleXml(rule, baos);
+        ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+        ZenModeConfig.ZenRule fromXml = readRuleXml(bais);
+
+        assertThat(fromXml.userModifiedFields).isEqualTo(rule.userModifiedFields);
+        assertThat(fromXml.canBeUpdatedByApp()).isFalse();
+    }
+
+    @Test
     public void testZenPolicyXml_classic() throws Exception {
         ZenPolicy policy = new ZenPolicy.Builder()
                 .allowCalls(ZenPolicy.PEOPLE_TYPE_CONTACTS)
@@ -612,7 +690,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
                 .allowSystem(true)
                 .allowReminders(false)
                 .allowEvents(true)
-                .allowChannels(ZenPolicy.CHANNEL_TYPE_NONE)
+                .allowPriorityChannels(false)
                 .hideAllVisualEffects()
                 .showVisualEffect(ZenPolicy.VISUAL_EFFECT_AMBIENT, true)
                 .build();
@@ -638,7 +716,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
         assertEquals(policy.getPriorityCategorySystem(), fromXml.getPriorityCategorySystem());
         assertEquals(policy.getPriorityCategoryReminders(), fromXml.getPriorityCategoryReminders());
         assertEquals(policy.getPriorityCategoryEvents(), fromXml.getPriorityCategoryEvents());
-        assertEquals(policy.getAllowedChannels(), fromXml.getAllowedChannels());
+        assertEquals(policy.getPriorityChannels(), fromXml.getPriorityChannels());
 
         assertEquals(policy.getVisualEffectFullScreenIntent(),
                 fromXml.getVisualEffectFullScreenIntent());

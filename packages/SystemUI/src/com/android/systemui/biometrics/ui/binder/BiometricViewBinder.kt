@@ -31,6 +31,8 @@ import android.view.View
 import android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
 import android.view.accessibility.AccessibilityManager
 import android.widget.Button
+import android.widget.ImageView
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
@@ -77,6 +79,13 @@ object BiometricViewBinder {
         applicationScope: CoroutineScope,
         vibratorHelper: VibratorHelper,
     ): Spaghetti {
+        /**
+         * View is only set visible in BiometricViewSizeBinder once PromptSize is determined that
+         * accounts for iconView size, to prevent prompt resizing being visible to the user.
+         *
+         * TODO(b/288175072): May be able to remove this once constraint layout is implemented
+         */
+        view.visibility = View.INVISIBLE
         val accessibilityManager = view.context.getSystemService(AccessibilityManager::class.java)!!
 
         val textColorError =
@@ -84,11 +93,16 @@ object BiometricViewBinder {
         val textColorHint =
             view.resources.getColor(R.color.biometric_dialog_gray, view.context.theme)
 
+        val logoView = view.requireViewById<ImageView>(R.id.logo)
         val titleView = view.requireViewById<TextView>(R.id.title)
         val subtitleView = view.requireViewById<TextView>(R.id.subtitle)
         val descriptionView = view.requireViewById<TextView>(R.id.description)
+        val customizedViewContainer =
+            view.requireViewById<ScrollView>(R.id.customized_view_container)
 
         // set selected to enable marquee unless a screen reader is enabled
+        logoView.isSelected =
+            !accessibilityManager.isEnabled || !accessibilityManager.isTouchExplorationEnabled
         titleView.isSelected =
             !accessibilityManager.isEnabled || !accessibilityManager.isTouchExplorationEnabled
         subtitleView.isSelected =
@@ -102,7 +116,7 @@ object BiometricViewBinder {
             iconView,
             iconOverlayView,
             view.getUpdatedFingerprintAffordanceSize(),
-            viewModel.iconViewModel
+            viewModel
         )
 
         val indicatorMessageView = view.requireViewById<TextView>(R.id.indicator)
@@ -142,9 +156,15 @@ object BiometricViewBinder {
                 }
             }
 
+            logoView.setImageDrawable(viewModel.logo.first())
             titleView.text = viewModel.title.first()
-            descriptionView.text = viewModel.description.first()
             subtitleView.text = viewModel.subtitle.first()
+            descriptionView.text = viewModel.description.first()
+            BiometricCustomizedViewBinder.bind(
+                customizedViewContainer,
+                view.requireViewById(R.id.space_above_content),
+                viewModel
+            )
 
             // set button listeners
             negativeButton.setOnClickListener { legacyCallback.onButtonNegative() }
@@ -168,15 +188,19 @@ object BiometricViewBinder {
                     viewModel = viewModel,
                     viewsToHideWhenSmall =
                         listOf(
+                            logoView,
                             titleView,
                             subtitleView,
                             descriptionView,
+                            customizedViewContainer,
                         ),
                     viewsToFadeInOnSizeChange =
                         listOf(
+                            logoView,
                             titleView,
                             subtitleView,
                             descriptionView,
+                            customizedViewContainer,
                             indicatorMessageView,
                             negativeButton,
                             cancelButton,

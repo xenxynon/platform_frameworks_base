@@ -2774,11 +2774,7 @@ public final class SystemServer implements Dumpable {
 
         // AdServicesManagerService (PP API service)
         t.traceBegin("StartAdServicesManagerService");
-        SystemService adServices = mSystemServiceManager
-                .startService(AD_SERVICES_MANAGER_SERVICE_CLASS);
-        if (adServices instanceof Dumpable) {
-            mDumper.addDumpable((Dumpable) adServices);
-        }
+        mSystemServiceManager.startService(AD_SERVICES_MANAGER_SERVICE_CLASS);
         t.traceEnd();
 
         // OnDevicePersonalizationSystemService
@@ -3031,6 +3027,12 @@ public final class SystemServer implements Dumpable {
             t.traceBegin("DeviceLockService");
             mSystemServiceManager.startServiceFromJar(DEVICE_LOCK_SERVICE_CLASS,
                     DEVICE_LOCK_APEX_PATH);
+            t.traceEnd();
+        }
+
+        if (com.android.server.notification.Flags.sensitiveNotificationAppProtection()) {
+            t.traceBegin("StartSensitiveContentProtectionManager");
+            mSystemServiceManager.startService(SensitiveContentProtectionManagerService.class);
             t.traceEnd();
         }
 

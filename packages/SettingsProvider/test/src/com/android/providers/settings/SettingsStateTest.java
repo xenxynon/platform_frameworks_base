@@ -15,6 +15,9 @@
  */
 package com.android.providers.settings;
 
+import android.aconfig.Aconfig;
+import android.aconfig.Aconfig.parsed_flag;
+import android.aconfig.Aconfig.parsed_flags;
 import android.os.Looper;
 import android.test.AndroidTestCase;
 import android.util.Xml;
@@ -27,6 +30,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
+import java.util.HashMap;
+import java.util.Map;
 
 public class SettingsStateTest extends AndroidTestCase {
     public static final String CRAZY_STRING =
@@ -82,6 +87,77 @@ public class SettingsStateTest extends AndroidTestCase {
             mSettingsFile.delete();
         }
         super.tearDown();
+    }
+
+    public void testLoadValidAconfigProto() {
+        int configKey = SettingsState.makeKey(SettingsState.SETTINGS_TYPE_CONFIG, 0);
+        Object lock = new Object();
+        SettingsState settingsState = new SettingsState(
+                getContext(), lock, mSettingsFile, configKey,
+                SettingsState.MAX_BYTES_PER_APP_PACKAGE_UNLIMITED, Looper.getMainLooper());
+        parsed_flags flags = parsed_flags
+                .newBuilder()
+                .addParsedFlag(parsed_flag
+                    .newBuilder()
+                        .setPackage("com.android.flags")
+                        .setName("flag1")
+                        .setNamespace("test_namespace")
+                        .setDescription("test flag")
+                        .addBug("12345678")
+                        .setState(Aconfig.flag_state.DISABLED)
+                        .setPermission(Aconfig.flag_permission.READ_WRITE))
+                .addParsedFlag(parsed_flag
+                    .newBuilder()
+                        .setPackage("com.android.flags")
+                        .setName("flag2")
+                        .setNamespace("test_namespace")
+                        .setDescription("another test flag")
+                        .addBug("12345678")
+                        .setState(Aconfig.flag_state.ENABLED)
+                        .setPermission(Aconfig.flag_permission.READ_WRITE))
+                .build();
+
+        synchronized (lock) {
+            Map<String, Map<String, String>> defaults = new HashMap<>();
+            settingsState.loadAconfigDefaultValues(flags.toByteArray(), defaults);
+            Map<String, String> namespaceDefaults = defaults.get("test_namespace");
+            assertEquals(2, namespaceDefaults.keySet().size());
+
+            assertEquals("false", namespaceDefaults.get("test_namespace/com.android.flags.flag1"));
+            assertEquals("true", namespaceDefaults.get("test_namespace/com.android.flags.flag2"));
+        }
+    }
+
+    public void testSkipLoadingAconfigFlagWithMissingFields() {
+        int configKey = SettingsState.makeKey(SettingsState.SETTINGS_TYPE_CONFIG, 0);
+        Object lock = new Object();
+        SettingsState settingsState = new SettingsState(
+                getContext(), lock, mSettingsFile, configKey,
+                SettingsState.MAX_BYTES_PER_APP_PACKAGE_UNLIMITED, Looper.getMainLooper());
+
+        parsed_flags flags = parsed_flags
+                .newBuilder()
+                .addParsedFlag(parsed_flag
+                    .newBuilder()
+                        .setDescription("test flag")
+                        .addBug("12345678")
+                        .setState(Aconfig.flag_state.DISABLED)
+                        .setPermission(Aconfig.flag_permission.READ_WRITE))
+                .build();
+
+        synchronized (lock) {
+            Map<String, Map<String, String>> defaults = new HashMap<>();
+            settingsState.loadAconfigDefaultValues(flags.toByteArray(), defaults);
+
+            Map<String, String> namespaceDefaults = defaults.get("test_namespace");
+            assertEquals(null, namespaceDefaults);
+        }
+    }
+
+    public void testInvalidAconfigProtoDoesNotCrash() {
+        Map<String, Map<String, String>> defaults = new HashMap<>();
+        SettingsState settingsState = getSettingStateObject();
+        settingsState.loadAconfigDefaultValues("invalid protobuf".getBytes(), defaults);
     }
 
     public void testIsBinary() {

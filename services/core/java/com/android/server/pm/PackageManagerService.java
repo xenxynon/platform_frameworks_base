@@ -182,6 +182,7 @@ import com.android.internal.app.ResolverActivity;
 import com.android.internal.content.F2fsUtils;
 import com.android.internal.content.InstallLocationUtils;
 import com.android.internal.content.om.OverlayConfig;
+import com.android.internal.pm.parsing.PackageParser2;
 import com.android.internal.pm.parsing.pkg.AndroidPackageInternal;
 import com.android.internal.pm.parsing.pkg.ParsedPackage;
 import com.android.internal.pm.pkg.component.ParsedInstrumentation;
@@ -222,8 +223,8 @@ import com.android.server.pm.dex.ArtUtils;
 import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.dex.DynamicCodeLogger;
 import com.android.server.pm.local.PackageManagerLocalImpl;
+import com.android.server.pm.parsing.PackageCacher;
 import com.android.server.pm.parsing.PackageInfoUtils;
-import com.android.server.pm.parsing.PackageParser2;
 import com.android.server.pm.parsing.pkg.AndroidPackageUtils;
 import com.android.server.pm.permission.LegacyPermissionManagerInternal;
 import com.android.server.pm.permission.LegacyPermissionManagerService;
@@ -608,6 +609,8 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
     private final boolean mIsUpgrade;
     private final boolean mIsPreNMR1Upgrade;
     private final boolean mIsPreQUpgrade;
+    // If mIsUpgrade == true, contains the prior SDK version, else -1.
+    private final int mPriorSdkVersion;
 
     // Used for privilege escalation. MUST NOT BE CALLED WITH mPackages
     // LOCK HELD.  Can be called with mInstallLock held.
@@ -1701,7 +1704,7 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                         () -> LocalServices.getService(UserManagerInternal.class)),
                 (i, pm) -> new DisplayMetrics(),
                 (i, pm) -> new PackageParser2(pm.mSeparateProcesses, i.getDisplayMetrics(),
-                        pm.mCacheDir,
+                        new PackageCacher(pm.mCacheDir),
                         pm.mPackageParserCallback) /* scanningCachingPackageParserProducer */,
                 (i, pm) -> new PackageParser2(pm.mSeparateProcesses, i.getDisplayMetrics(), null,
                         pm.mPackageParserCallback) /* scanningPackageParserProducer */,
@@ -1893,6 +1896,7 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
         mInstantAppResolverSettingsComponent = testParams.instantAppResolverSettingsComponent;
         mIsPreNMR1Upgrade = testParams.isPreNmr1Upgrade;
         mIsPreQUpgrade = testParams.isPreQupgrade;
+        mPriorSdkVersion = testParams.priorSdkVersion;
         mIsUpgrade = testParams.isUpgrade;
         mMetrics = testParams.Metrics;
         mModuleInfoProvider = testParams.moduleInfoProvider;
@@ -2235,7 +2239,7 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                         "Upgrading from " + ver.fingerprint + " (" + ver.buildFingerprint + ") to "
                                 + PackagePartitions.FINGERPRINT + " (" + Build.FINGERPRINT + ")");
             }
-
+            mPriorSdkVersion = mIsUpgrade ? ver.sdkVersion : -1;
             mInitAppsHelper = new InitAppsHelper(this, mApexManager, mInstallPackageHelper,
                     mInjector.getSystemPartitions());
 
@@ -4650,7 +4654,7 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                 });
                 mPackageMonitorCallbackHelper.notifyPackageMonitor(Intent.ACTION_PACKAGE_UNSTOPPED,
                         packageName, extras, userIds, null /* instantUserIds */,
-                        broadcastAllowList, mHandler);
+                        broadcastAllowList, mHandler, null /* filterExtras */);
             }
         }
     }
@@ -4683,8 +4687,7 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                     mPreferredActivityHelper, mResolveIntentHelper, mDomainVerificationManager,
                     mDomainVerificationConnection, mInstallerService, mPackageProperty,
                     mResolveComponentName, mInstantAppResolverSettingsComponent,
-                    mRequiredSdkSandboxPackage, mServicesExtensionPackageName,
-                    mSharedSystemSharedLibraryPackageName);
+                    mServicesExtensionPackageName, mSharedSystemSharedLibraryPackageName);
         }
 
         @Override
@@ -7100,7 +7103,7 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
             }
             mPackageMonitorCallbackHelper.notifyPackageMonitor(Intent.ACTION_PACKAGE_RESTARTED,
                     packageName, extras, userIds, null /* instantUserIds */,
-                    broadcastAllowList, mHandler);
+                    broadcastAllowList, mHandler, null /* filterExtras */);
         }
 
         @Override
@@ -7125,6 +7128,12 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                     null /* filterExtrasForReceiver */, null /* bOptions */);
             mPackageMonitorCallbackHelper.notifyPackageMonitorWithIntent(intent, userId,
                     visibilityAllowList, mHandler);
+        }
+
+        @Override
+        public boolean isUpgradingFromLowerThan(int sdkVersion) {
+            final boolean isUpgrading = mPriorSdkVersion != -1;
+            return isUpgrading && mPriorSdkVersion < sdkVersion;
         }
     }
 

@@ -13,11 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.systemui.biometrics.ui.viewmodel
 
 import android.content.Context
 import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.hardware.biometrics.BiometricPrompt
+import android.hardware.biometrics.PromptContentView
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -192,6 +196,28 @@ constructor(
     val iconViewModel: PromptIconViewModel =
         PromptIconViewModel(this, displayStateInteractor, promptSelectorInteractor)
 
+    private val _isIconViewLoaded = MutableStateFlow(false)
+
+    /**
+     * For prompts with an iconView, false until the prompt's iconView animation has been loaded in
+     * the view, otherwise true by default. Used for BiometricViewSizeBinder to wait for the icon
+     * asset to be loaded before determining the prompt size.
+     */
+    val isIconViewLoaded: Flow<Boolean> =
+        combine(credentialKind, _isIconViewLoaded.asStateFlow()) { credentialKind, isIconViewLoaded
+            ->
+            if (credentialKind is PromptKind.Biometric) {
+                isIconViewLoaded
+            } else {
+                true
+            }
+        }
+
+    // Sets whether the prompt's iconView animation has been loaded in the view yet.
+    fun setIsIconViewLoaded(iconViewLoaded: Boolean) {
+        _isIconViewLoaded.value = iconViewLoaded
+    }
+
     /** Padding for prompt UI elements */
     val promptPadding: Flow<Rect> =
         combine(size, displayStateInteractor.currentRotation) { size, rotation ->
@@ -209,6 +235,19 @@ constructor(
             }
         }
 
+    /** Logo for the prompt. */
+    val logo: Flow<Drawable?> =
+        promptSelectorInteractor.prompt
+            .map {
+                when {
+                    it == null -> null
+                    it.logoRes != -1 -> context.resources.getDrawable(it.logoRes, context.theme)
+                    it.logoBitmap != null -> BitmapDrawable(context.resources, it.logoBitmap)
+                    else -> context.packageManager.getApplicationIcon(it.opPackageName)
+                }
+            }
+            .distinctUntilChanged()
+
     /** Title for the prompt. */
     val title: Flow<String> =
         promptSelectorInteractor.prompt.map { it?.title ?: "" }.distinctUntilChanged()
@@ -217,9 +256,20 @@ constructor(
     val subtitle: Flow<String> =
         promptSelectorInteractor.prompt.map { it?.subtitle ?: "" }.distinctUntilChanged()
 
-    /** Description for the prompt. */
-    val description: Flow<String> =
+    /** Custom content view for the prompt. */
+    val contentView: Flow<PromptContentView?> =
+        promptSelectorInteractor.prompt.map { it?.contentView }.distinctUntilChanged()
+
+    private val originalDescription =
         promptSelectorInteractor.prompt.map { it?.description ?: "" }.distinctUntilChanged()
+    /**
+     * Description for the prompt. Description view and contentView is mutually exclusive. Pass
+     * description down only when contentView is null.
+     */
+    val description: Flow<String> =
+        combine(contentView, originalDescription) { contentView, description ->
+            if (contentView == null) description else ""
+        }
 
     /** If the indicator (help, error) message should be shown. */
     val isIndicatorMessageVisible: Flow<Boolean> =

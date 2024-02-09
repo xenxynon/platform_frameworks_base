@@ -16,33 +16,40 @@
 
 package com.android.systemui.communal.widgets
 
-import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.RemoteException
 import android.util.Log
 import android.view.IWindowManager
+import android.view.WindowInsets
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
-import com.android.systemui.communal.domain.interactor.CommunalInteractor
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.android.internal.logging.UiEventLogger
+import com.android.systemui.communal.shared.log.CommunalUiEvent
 import com.android.systemui.communal.ui.viewmodel.CommunalEditModeViewModel
 import com.android.systemui.compose.ComposeFacade.setCommunalEditWidgetActivityContent
 import javax.inject.Inject
+import kotlinx.coroutines.launch
 
 /** An Activity for editing the widgets that appear in hub mode. */
 class EditWidgetsActivity
 @Inject
 constructor(
     private val communalViewModel: CommunalEditModeViewModel,
-    private val communalInteractor: CommunalInteractor,
     private var windowManagerService: IWindowManager? = null,
+    private val uiEventLogger: UiEventLogger,
 ) : ComponentActivity() {
     companion object {
-        /**
-         * Intent extra name for the {@link AppWidgetProviderInfo} of a widget to add to hub mode.
-         */
-        const val ADD_WIDGET_INFO = "add_widget_info"
+        private const val EXTRA_IS_PENDING_WIDGET_DRAG = "is_pending_widget_drag"
+        private const val EXTRA_FILTER_STRATEGY = "filter_strategy"
+        private const val FILTER_STRATEGY_GLANCEABLE_HUB = 1
+        private const val REQUEST_CODE_CONFIGURE_WIDGET = 1
         private const val TAG = "EditWidgetsActivity"
     }
 
@@ -50,15 +57,25 @@ constructor(
         registerForActivityResult(StartActivityForResult()) { result ->
             when (result.resultCode) {
                 RESULT_OK -> {
-                    result.data
-                        ?.let {
-                            it.getParcelableExtra(
-                                ADD_WIDGET_INFO,
-                                AppWidgetProviderInfo::class.java
-                            )
+                    uiEventLogger.log(CommunalUiEvent.COMMUNAL_HUB_WIDGET_PICKER_SHOWN)
+
+                    result.data?.let { intent ->
+                        val isPendingWidgetDrag =
+                            intent.getBooleanExtra(EXTRA_IS_PENDING_WIDGET_DRAG, false)
+                        // Nothing to do when a widget is being dragged & dropped. The drop
+                        // target in the communal grid will receive the widget to be added (if
+                        // the user drops it over).
+                        if (!isPendingWidgetDrag) {
+                            intent
+                                .getParcelableExtra(
+                                    Intent.EXTRA_COMPONENT_NAME,
+                                    ComponentName::class.java
+                                )
+                                ?.let { communalViewModel.onAddWidget(it, 0) }
+                                ?: run { Log.w(TAG, "No AppWidgetProviderInfo found in result.") }
                         }
-                        ?.let { communalInteractor.addWidget(it.provider, 0) }
-                        ?: run { Log.w(TAG, "No AppWidgetProviderInfo found in result.") }
+                    }
+                        ?: run { Log.w(TAG, "No data in result.") }
                 }
                 else ->
                     Log.w(
@@ -71,13 +88,49 @@ constructor(
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val windowInsetsController = window.decorView.windowInsetsController
+        windowInsetsController?.hide(WindowInsets.Type.systemBars())
+        window.setDecorFitsSystemWindows(false)
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Start the configuration activity when new widgets are added.
+                communalViewModel.widgetsToConfigure.collect { widgetId ->
+                    communalViewModel.startConfigurationActivity(
+                        activity = this@EditWidgetsActivity,
+                        widgetId = widgetId,
+                        requestCode = REQUEST_CODE_CONFIGURE_WIDGET
+                    )
+                }
+            }
+        }
+
         setCommunalEditWidgetActivityContent(
             activity = this,
             viewModel = communalViewModel,
             onOpenWidgetPicker = {
-                addWidgetActivityLauncher.launch(
-                    Intent(applicationContext, WidgetPickerActivity::class.java)
-                )
+                val intent =
+                    Intent(Intent.ACTION_MAIN).also { it.addCategory(Intent.CATEGORY_HOME) }
+                packageManager
+                    .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                    ?.activityInfo
+                    ?.packageName
+                    ?.let { packageName ->
+                        try {
+                            addWidgetActivityLauncher.launch(
+                                Intent(Intent.ACTION_PICK).also {
+                                    it.setPackage(packageName)
+                                    it.putExtra(
+                                        EXTRA_FILTER_STRATEGY,
+                                        FILTER_STRATEGY_GLANCEABLE_HUB
+                                    )
+                                }
+                            )
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to launch widget picker activity", e)
+                        }
+                    }
+                    ?: run { Log.e(TAG, "Couldn't resolve launcher package name") }
             },
             onEditDone = {
                 try {
@@ -88,5 +141,24 @@ constructor(
                 }
             }
         )
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_CONFIGURE_WIDGET) {
+            communalViewModel.setConfigurationResult(resultCode)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+
+        uiEventLogger.log(CommunalUiEvent.COMMUNAL_HUB_EDIT_MODE_SHOWN)
+    }
+
+    override fun onStop() {
+        super.onStop()
+
+        uiEventLogger.log(CommunalUiEvent.COMMUNAL_HUB_EDIT_MODE_GONE)
     }
 }

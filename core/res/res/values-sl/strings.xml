@@ -436,6 +436,10 @@
     <string name="permdesc_foregroundServiceSystemExempted" msgid="947381760834649622">"Aplikaciji dovoljuje, da uporablja storitve v ospredju vrste »systemExempted«."</string>
     <string name="permlab_foregroundServiceFileManagement" msgid="2585000987966045030">"izvajanje storitve v ospredju vrste »fileManagement«"</string>
     <string name="permdesc_foregroundServiceFileManagement" msgid="417103601269698508">"Aplikaciji dovoljuje, da uporablja storitve v ospredju vrste »fileManagement«."</string>
+    <!-- no translation found for permlab_foregroundServiceMediaProcessing (3045295152245381864) -->
+    <skip />
+    <!-- no translation found for permdesc_foregroundServiceMediaProcessing (8303086172106677312) -->
+    <skip />
     <string name="permlab_foregroundServiceSpecialUse" msgid="7973536745876645082">"izvajanje storitve v ospredju vrste »specialUse«"</string>
     <string name="permdesc_foregroundServiceSpecialUse" msgid="646713654541885919">"Aplikaciji dovoljuje, da uporablja storitve v ospredju vrste »specialUse«."</string>
     <string name="permlab_getPackageSize" msgid="375391550792886641">"izračunavanje prostora za shranjevanje aplikacije"</string>
@@ -634,7 +638,8 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Uporaba odklepanja s poverilnico"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"Odklenite zaslon, če želite nadaljevati."</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"Prst dobro pridržite na tipalu"</string>
-    <string name="fingerprint_acquired_insufficient" msgid="623888149088216458">"Prstnega odtisa ni mogoče prepoznati. Poskusite znova."</string>
+    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
+    <skip />
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"Očistite tipalo prstnih odtisov in poskusite znova."</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"Očistite tipalo in poskusite znova."</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"Prst dobro pridržite na tipalu"</string>
@@ -698,7 +703,8 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"Obraz ni viden. Držite telefon v višini oči."</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"Preveč se premikate. Držite telefon pri miru."</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"Znova registrirajte svoj obraz."</string>
-    <string name="face_acquired_too_different" msgid="2520389515612972889">"Obraza ni mogoče prepoznati. Poskusite znova."</string>
+    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
+    <skip />
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"Nekoliko spremenite položaj glave."</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"Glejte bolj naravnost v telefon"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"Glejte bolj naravnost v telefon"</string>
@@ -1908,8 +1914,7 @@
     <string name="zen_mode_default_weekends_name" msgid="4707200272709377930">"Konec tedna"</string>
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"Dogodek"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"Spanje"</string>
-    <!-- no translation found for zen_mode_implicit_trigger_description (5714956693073007111) -->
-    <skip />
+    <string name="zen_mode_implicit_trigger_description" msgid="5714956693073007111">"Upravlja <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
     <string name="zen_mode_implicit_activated" msgid="2634285680776672994">"Vklopljeno"</string>
     <string name="zen_mode_implicit_deactivated" msgid="8688441768371501750">"Izklopljeno"</string>
     <string name="muted_by" msgid="91464083490094950">"<xliff:g id="THIRD_PARTY">%1$s</xliff:g> izklaplja nekatere zvoke"</string>
@@ -2342,7 +2347,7 @@
     <string name="permdesc_startForegroundServicesFromBackground" msgid="4071826571656001537">"Spremljevalni aplikaciji dovoljuje, da storitve v ospredju zažene iz ozadja."</string>
     <string name="mic_access_on_toast" msgid="2666925317663845156">"Mikrofon je na voljo"</string>
     <string name="mic_access_off_toast" msgid="8111040892954242437">"Mikrofon je blokiran"</string>
-    <string name="connected_display_unavailable_notification_title" msgid="5265409360902073556">"Ni mogoče zrcaliti zaslona"</string>
+    <string name="connected_display_unavailable_notification_title" msgid="5265409360902073556">"Ni mogoče zrcaliti v zaslon"</string>
     <string name="connected_display_unavailable_notification_content" msgid="3845903313751217516">"Uporabite drug kabel in poskusite znova"</string>
     <string name="connected_display_thermally_unavailable_notification_content" msgid="9205758199439955949">"Naprava je pretopla in ne more zrcaliti v zaslon, dokler se ne ohladi"</string>
     <string name="concurrent_display_notification_name" msgid="1526911253558311131">"Dual Screen"</string>
@@ -2368,4 +2373,5 @@
     <string name="profile_label_work_3" msgid="4834572253956798917">"Delo 3"</string>
     <string name="profile_label_test" msgid="9168641926186071947">"Preizkus"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"Skupno"</string>
+    <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
 </resources>

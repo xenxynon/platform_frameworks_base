@@ -262,6 +262,7 @@ public final class BroadcastHelper {
             // Deliver LOCKED_BOOT_COMPLETED first
             Intent lockedBcIntent = new Intent(Intent.ACTION_LOCKED_BOOT_COMPLETED)
                     .setPackage(packageName);
+            lockedBcIntent.putExtra(Intent.EXTRA_USER_HANDLE, userId);
             if (includeStopped) {
                 lockedBcIntent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
             }
@@ -275,6 +276,7 @@ public final class BroadcastHelper {
             // Deliver BOOT_COMPLETED only if user is unlocked
             if (mUmInternal.isUserUnlockingOrUnlocked(userId)) {
                 Intent bcIntent = new Intent(Intent.ACTION_BOOT_COMPLETED).setPackage(packageName);
+                bcIntent.putExtra(Intent.EXTRA_USER_HANDLE, userId);
                 if (includeStopped) {
                     bcIntent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
                 }
@@ -827,7 +829,8 @@ public final class BroadcastHelper {
             // action. When the targetPkg is set, it sends the broadcast to specific app, e.g.
             // installer app or null for registered apps. The callback only need to send back to the
             // registered apps so we check the null condition here.
-            notifyPackageMonitor(action, pkg, extras, userIds, instantUserIds, broadcastAllowList);
+            notifyPackageMonitor(action, pkg, extras, userIds, instantUserIds, broadcastAllowList,
+                    null /* filterExtras */);
         }
     }
 
@@ -975,14 +978,16 @@ public final class BroadcastHelper {
         final Bundle options = new BroadcastOptions()
                 .setDeferralPolicy(BroadcastOptions.DEFERRAL_POLICY_UNTIL_ACTIVE)
                 .toBundle();
+        BiFunction<Integer, Bundle, Bundle> filterExtrasForReceiver =
+                (callingUid, intentExtras) -> BroadcastHelper.filterExtrasChangedPackageList(
+                        snapshot, callingUid, intentExtras);
         mHandler.post(() -> sendPackageBroadcast(intent, null /* pkg */,
                 extras, flags, null /* targetPkg */, null /* finishedReceiver */,
                 new int[]{userId}, null /* instantUserIds */, null /* broadcastAllowList */,
-                (callingUid, intentExtras) -> BroadcastHelper.filterExtrasChangedPackageList(
-                        snapshot, callingUid, intentExtras),
+                filterExtrasForReceiver,
                 options));
         notifyPackageMonitor(intent, null /* pkg */, extras, new int[]{userId},
-                null /* instantUserIds */, null /* broadcastAllowList */);
+                null /* instantUserIds */, null /* broadcastAllowList */, filterExtrasForReceiver);
     }
 
     void sendMyPackageSuspendedOrUnsuspended(@NonNull Computer snapshot,
@@ -1068,9 +1073,10 @@ public final class BroadcastHelper {
                                       @Nullable Bundle extras,
                                       @NonNull int[] userIds,
                                       @NonNull int[] instantUserIds,
-                                      @Nullable SparseArray<int[]> broadcastAllowList) {
+                                      @Nullable SparseArray<int[]> broadcastAllowList,
+                                      @Nullable BiFunction<Integer, Bundle, Bundle> filterExtras) {
         mPackageMonitorCallbackHelper.notifyPackageMonitor(action, pkg, extras, userIds,
-                instantUserIds, broadcastAllowList, mHandler);
+                instantUserIds, broadcastAllowList, mHandler, filterExtras);
     }
 
     private void notifyResourcesChanged(boolean mediaStatus,

@@ -21,13 +21,18 @@ package com.android.systemui.scene.ui.viewmodel
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.classifier.domain.interactor.falsingInteractor
 import com.android.systemui.coroutines.collectLastValue
-import com.android.systemui.scene.SceneTestUtils
+import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.sceneKeys
+import com.android.systemui.scene.shared.flag.fakeSceneContainerFlags
 import com.android.systemui.scene.shared.model.SceneKey
 import com.android.systemui.scene.shared.model.SceneModel
+import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -35,13 +40,19 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SceneContainerViewModelTest : SysuiTestCase() {
 
-    private val utils = SceneTestUtils(this)
-    private val interactor = utils.sceneInteractor()
-    private val underTest =
-        SceneContainerViewModel(
-            sceneInteractor = interactor,
-            falsingInteractor = utils.falsingInteractor(),
-        )
+    private val kosmos = testKosmos()
+    private val interactor = kosmos.sceneInteractor
+    private lateinit var underTest: SceneContainerViewModel
+
+    @Before
+    fun setUp() {
+        kosmos.fakeSceneContainerFlags.enabled = true
+        underTest =
+            SceneContainerViewModel(
+                sceneInteractor = interactor,
+                falsingInteractor = kosmos.falsingInteractor,
+            )
+    }
 
     @Test
     fun isVisible() = runTest {
@@ -57,7 +68,7 @@ class SceneContainerViewModelTest : SysuiTestCase() {
 
     @Test
     fun allSceneKeys() {
-        assertThat(underTest.allSceneKeys).isEqualTo(utils.fakeSceneKeys())
+        assertThat(underTest.allSceneKeys).isEqualTo(kosmos.sceneKeys)
     }
 
     @Test

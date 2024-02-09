@@ -33,6 +33,7 @@ import android.view.ViewTreeObserver.OnGlobalLayoutListener
 import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.android.systemui.Flags.migrateClocksToBlueprint
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.customization.R
 import com.android.systemui.dagger.qualifiers.Background
@@ -45,12 +46,11 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInterac
 import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.lifecycle.repeatWhenAttached
-import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.Logger
 import com.android.systemui.log.core.LogLevel.DEBUG
-import com.android.systemui.log.dagger.KeyguardLargeClockLog
-import com.android.systemui.log.dagger.KeyguardSmallClockLog
 import com.android.systemui.plugins.clocks.ClockController
 import com.android.systemui.plugins.clocks.ClockFaceController
+import com.android.systemui.plugins.clocks.ClockMessageBuffers
 import com.android.systemui.plugins.clocks.ClockTickRate
 import com.android.systemui.plugins.clocks.AlarmData
 import com.android.systemui.plugins.clocks.WeatherData
@@ -91,117 +91,120 @@ constructor(
     private val context: Context,
     @Main private val mainExecutor: DelayableExecutor,
     @Background private val bgExecutor: Executor,
-    @KeyguardSmallClockLog private val smallLogBuffer: LogBuffer?,
-    @KeyguardLargeClockLog private val largeLogBuffer: LogBuffer?,
+    private val clockBuffers: ClockMessageBuffers,
     private val featureFlags: FeatureFlags,
     private val zenModeController: ZenModeController,
 ) {
+    var loggers = listOf(
+        clockBuffers.infraMessageBuffer,
+        clockBuffers.smallClockMessageBuffer,
+        clockBuffers.largeClockMessageBuffer
+    ).map { Logger(it, TAG) }
+
     var clock: ClockController? = null
+        get() = field
         set(value) {
-            smallClockOnAttachStateChangeListener?.let {
-                field?.smallClock?.view?.removeOnAttachStateChangeListener(it)
+            disconnectClock(field)
+            field = value
+            connectClock(value)
+        }
+
+    private fun disconnectClock(clock: ClockController?) {
+        if (clock == null) { return; }
+        smallClockOnAttachStateChangeListener?.let {
+            clock.smallClock.view.removeOnAttachStateChangeListener(it)
+            smallClockFrame?.viewTreeObserver
+                    ?.removeOnGlobalLayoutListener(onGlobalLayoutListener)
+        }
+        largeClockOnAttachStateChangeListener?.let {
+            clock.largeClock.view.removeOnAttachStateChangeListener(it)
+        }
+    }
+
+    private fun connectClock(clock: ClockController?) {
+        if (clock == null) { return; }
+        val clockStr = clock.toString()
+        loggers.forEach { it.d({ "New Clock: $str1" }) { str1 = clockStr } }
+
+        clock.initialize(resources, dozeAmount, 0f)
+
+        if (!regionSamplingEnabled) {
+            updateColors()
+        } else {
+            smallRegionSampler = createRegionSampler(
+                clock.smallClock.view,
+                mainExecutor,
+                bgExecutor,
+                regionSamplingEnabled,
+                isLockscreen = true,
+                ::updateColors
+            ).apply { startRegionSampler() }
+
+            largeRegionSampler = createRegionSampler(
+                clock.largeClock.view,
+                mainExecutor,
+                bgExecutor,
+                regionSamplingEnabled,
+                isLockscreen = true,
+                ::updateColors
+            ).apply { startRegionSampler() }
+
+            updateColors()
+        }
+        updateFontSizes()
+        updateTimeListeners()
+
+        weatherData?.let {
+            if (WeatherData.DEBUG) {
+                Log.i(TAG, "Pushing cached weather data to new clock: $it")
+            }
+            clock.events.onWeatherDataChanged(it)
+        }
+        zenData?.let {
+            clock.events.onZenDataChanged(it)
+        }
+        alarmData?.let {
+            clock.events.onAlarmDataChanged(it)
+        }
+
+        smallClockOnAttachStateChangeListener = object : OnAttachStateChangeListener {
+            var pastVisibility: Int? = null
+            override fun onViewAttachedToWindow(view: View) {
+                clock.events.onTimeFormatChanged(DateFormat.is24HourFormat(context))
+                // Match the asing for view.parent's layout classes.
+                smallClockFrame = (view.parent as ViewGroup)?.also { frame ->
+                    pastVisibility = frame.visibility
+                    onGlobalLayoutListener = OnGlobalLayoutListener {
+                        val currentVisibility = frame.visibility
+                        if (pastVisibility != currentVisibility) {
+                            pastVisibility = currentVisibility
+                            // when small clock is visible,
+                            // recalculate bounds and sample
+                            if (currentVisibility == View.VISIBLE) {
+                                smallRegionSampler?.stopRegionSampler()
+                                smallRegionSampler?.startRegionSampler()
+                            }
+                        }
+                    }
+                    frame.viewTreeObserver.addOnGlobalLayoutListener(onGlobalLayoutListener)
+                }
+            }
+
+            override fun onViewDetachedFromWindow(p0: View) {
                 smallClockFrame?.viewTreeObserver
                         ?.removeOnGlobalLayoutListener(onGlobalLayoutListener)
             }
-            largeClockOnAttachStateChangeListener?.let {
-                field?.largeClock?.view?.removeOnAttachStateChangeListener(it)
-            }
-
-            field = value
-            if (value != null) {
-                smallLogBuffer?.log(TAG, DEBUG, {}, { "New Clock" })
-                value.smallClock.messageBuffer = smallLogBuffer
-                largeLogBuffer?.log(TAG, DEBUG, {}, { "New Clock" })
-                value.largeClock.messageBuffer = largeLogBuffer
-
-                value.initialize(resources, dozeAmount, 0f)
-
-                if (!regionSamplingEnabled) {
-                    updateColors()
-                } else {
-                    clock?.let {
-                        smallRegionSampler = createRegionSampler(
-                                it.smallClock.view,
-                                mainExecutor,
-                                bgExecutor,
-                                regionSamplingEnabled,
-                                isLockscreen = true,
-                                ::updateColors
-                        )?.apply { startRegionSampler() }
-
-                        largeRegionSampler = createRegionSampler(
-                                it.largeClock.view,
-                                mainExecutor,
-                                bgExecutor,
-                                regionSamplingEnabled,
-                                isLockscreen = true,
-                                ::updateColors
-                        )?.apply { startRegionSampler() }
-
-                        updateColors()
-                    }
-                }
-                updateFontSizes()
-                updateTimeListeners()
-                weatherData?.let {
-                    if (WeatherData.DEBUG) {
-                        Log.i(TAG, "Pushing cached weather data to new clock: $it")
-                    }
-                    value.events.onWeatherDataChanged(it)
-                }
-                zenData?.let {
-                    value.events.onZenDataChanged(it)
-                }
-                alarmData?.let {
-                    value.events.onAlarmDataChanged(it)
-                }
-
-                smallClockOnAttachStateChangeListener =
-                    object : OnAttachStateChangeListener {
-                        var pastVisibility: Int? = null
-                        override fun onViewAttachedToWindow(view: View) {
-                            value.events.onTimeFormatChanged(DateFormat.is24HourFormat(context))
-                            // Match the asing for view.parent's layout classes.
-                            smallClockFrame = view.parent as ViewGroup
-                            smallClockFrame?.let { frame ->
-                                pastVisibility = frame.visibility
-                                onGlobalLayoutListener = OnGlobalLayoutListener {
-                                    val currentVisibility = frame.visibility
-                                    if (pastVisibility != currentVisibility) {
-                                        pastVisibility = currentVisibility
-                                        // when small clock is visible,
-                                        // recalculate bounds and sample
-                                        if (currentVisibility == View.VISIBLE) {
-                                            smallRegionSampler?.stopRegionSampler()
-                                            smallRegionSampler?.startRegionSampler()
-                                        }
-                                    }
-                                }
-                                frame.viewTreeObserver
-                                        .addOnGlobalLayoutListener(onGlobalLayoutListener)
-                            }
-                        }
-
-                        override fun onViewDetachedFromWindow(p0: View) {
-                            smallClockFrame?.viewTreeObserver
-                                    ?.removeOnGlobalLayoutListener(onGlobalLayoutListener)
-                        }
-                }
-                value.smallClock.view
-                        .addOnAttachStateChangeListener(smallClockOnAttachStateChangeListener)
-
-                largeClockOnAttachStateChangeListener =
-                    object : OnAttachStateChangeListener {
-                        override fun onViewAttachedToWindow(p0: View) {
-                            value.events.onTimeFormatChanged(DateFormat.is24HourFormat(context))
-                        }
-                        override fun onViewDetachedFromWindow(p0: View) {
-                        }
-                }
-                value.largeClock.view
-                        .addOnAttachStateChangeListener(largeClockOnAttachStateChangeListener)
-            }
         }
+        clock.smallClock.view.addOnAttachStateChangeListener(smallClockOnAttachStateChangeListener)
+
+        largeClockOnAttachStateChangeListener = object : OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(p0: View) {
+                clock.events.onTimeFormatChanged(DateFormat.is24HourFormat(context))
+            }
+            override fun onViewDetachedFromWindow(p0: View) {}
+        }
+        clock.largeClock.view.addOnAttachStateChangeListener(largeClockOnAttachStateChangeListener)
+    }
 
     @VisibleForTesting
     var smallClockOnAttachStateChangeListener: OnAttachStateChangeListener? = null
@@ -247,6 +250,7 @@ constructor(
             largeClock.events.onRegionDarknessChanged(isRegionDark)
         }
     }
+
     protected open fun createRegionSampler(
         sampledView: View,
         mainExecutor: Executor?,
@@ -254,7 +258,7 @@ constructor(
         regionSamplingEnabled: Boolean,
         isLockscreen: Boolean,
         updateColors: () -> Unit
-    ): RegionSampler? {
+    ): RegionSampler {
         return RegionSampler(
             sampledView,
             mainExecutor,
@@ -322,6 +326,10 @@ constructor(
                     }
                 }
 
+                if (visible) {
+                    refreshTime()
+                }
+
                 smallTimeListener?.update(shouldTimeListenerRun)
                 largeTimeListener?.update(shouldTimeListenerRun)
             }
@@ -342,6 +350,19 @@ constructor(
             override fun onWeatherDataChanged(data: WeatherData) {
                 weatherData = data
                 clock?.run { events.onWeatherDataChanged(data) }
+            }
+
+            override fun onTimeChanged() {
+                refreshTime()
+            }
+
+            private fun refreshTime() {
+                if (!migrateClocksToBlueprint()) {
+                    return
+                }
+
+                clock?.smallClock?.events?.onTimeTick()
+                clock?.largeClock?.events?.onTimeTick()
             }
         }
 
@@ -555,7 +576,8 @@ constructor(
             isRunning = true
             when (clockFace.config.tickRate) {
                 ClockTickRate.PER_MINUTE -> {
-                    /* Handled by KeyguardClockSwitchController */
+                    // Handled by KeyguardClockSwitchController and
+                    // by KeyguardUpdateMonitorCallback#onTimeChanged.
                 }
                 ClockTickRate.PER_SECOND -> executor.execute(secondsRunnable)
                 ClockTickRate.PER_FRAME -> {

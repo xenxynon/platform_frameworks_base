@@ -49,6 +49,7 @@ import static com.android.internal.annotations.VisibleForTesting.Visibility.PACK
 import static com.android.media.audio.Flags.alarmMinVolumeZero;
 import static com.android.media.audio.Flags.bluetoothMacAddressAnonymization;
 import static com.android.media.audio.Flags.disablePrescaleAbsoluteVolume;
+import static com.android.media.audio.Flags.ringerModeAffectsAlarm;
 import static com.android.server.audio.SoundDoseHelper.ACTION_CHECK_MUSIC_ACTIVE;
 import static com.android.server.utils.EventLogger.Event.ALOGE;
 import static com.android.server.utils.EventLogger.Event.ALOGI;
@@ -618,6 +619,7 @@ public class AudioService extends IAudioService.Stub
     };
 
     private final boolean mUseFixedVolume;
+    private final boolean mRingerModeAffectsAlarm;
     private final boolean mUseVolumeGroupAliases;
 
     // If absolute volume is supported in AVRCP device
@@ -1310,6 +1312,9 @@ public class AudioService extends IAudioService.Stub
 
         mUseFixedVolume = mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_useFixedVolume);
+
+        mRingerModeAffectsAlarm = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_audio_ringer_mode_affects_alarm_stream);
 
         mRecordMonitor = new RecordingActivityMonitor(mContext);
         mRecordMonitor.registerRecordingCallback(mVoiceRecordingActivityMonitor, true);
@@ -7076,6 +7081,19 @@ public class AudioService extends IAudioService.Stub
             ringerModeAffectedStreams &= ~(1 << AudioSystem.STREAM_DTMF);
         }
 
+        if (ringerModeAffectsAlarm()) {
+            if (mRingerModeAffectsAlarm) {
+                boolean muteAlarmWithRinger =
+                        mSettings.getGlobalInt(mContentResolver,
+                        Settings.Global.MUTE_ALARM_STREAM_WITH_RINGER_MODE,
+                        /* def= */ 0) != 0;
+                if (muteAlarmWithRinger) {
+                    ringerModeAffectedStreams |= (1 << AudioSystem.STREAM_ALARM);
+                } else {
+                    ringerModeAffectedStreams &= ~(1 << AudioSystem.STREAM_ALARM);
+                }
+            }
+        }
         if (ringerModeAffectedStreams != mRingerModeAffectedStreams) {
             mSettings.putSystemIntForUser(mContentResolver,
                     Settings.System.MODE_RINGER_STREAMS_AFFECTED,
@@ -7939,7 +7957,6 @@ public class AudioService extends IAudioService.Stub
         DEVICE_MEDIA_UNMUTED_ON_PLUG_SET.addAll(AudioSystem.DEVICE_OUT_ALL_A2DP_SET);
         DEVICE_MEDIA_UNMUTED_ON_PLUG_SET.addAll(AudioSystem.DEVICE_OUT_ALL_BLE_SET);
         DEVICE_MEDIA_UNMUTED_ON_PLUG_SET.addAll(AudioSystem.DEVICE_OUT_ALL_USB_SET);
-        DEVICE_MEDIA_UNMUTED_ON_PLUG_SET.add(AudioSystem.DEVICE_OUT_HDMI);
     }
 
     /** only public for mocking/spying, do not call outside of AudioService */
@@ -8896,6 +8913,8 @@ public class AudioService extends IAudioService.Stub
                 synchronized (VolumeStreamState.class) {
                     oldIndex = getIndex(device);
                     index = getValidIndex(index, hasModifyAudioSettings);
+                    // for STREAM_SYSTEM_ENFORCED, do not sync aliased streams on the enforced index
+                    int aliasIndex = index;
                     if ((mStreamType == AudioSystem.STREAM_SYSTEM_ENFORCED) && mCameraSoundForced) {
                         index = mIndexMax;
                     }
@@ -8914,7 +8933,8 @@ public class AudioService extends IAudioService.Stub
                         if (streamType != mStreamType &&
                                 mStreamVolumeAlias[streamType] == mStreamType &&
                                 (changed || !aliasStreamState.hasIndexForDevice(device))) {
-                            final int scaledIndex = rescaleIndex(index, mStreamType, streamType);
+                            final int scaledIndex =
+                                    rescaleIndex(aliasIndex, mStreamType, streamType);
                             aliasStreamState.setIndex(scaledIndex, device, caller,
                                     hasModifyAudioSettings);
                             if (isCurrentDevice) {
@@ -9436,6 +9456,14 @@ public class AudioService extends IAudioService.Stub
             if (mIsSingleVolume && (streamState.mStreamType != AudioSystem.STREAM_MUSIC)) {
                 return;
             }
+
+            // Persisting STREAM_SYSTEM_ENFORCED index is not needed as its alias (STREAM_RING)
+            // is persisted. This can also be problematic when the enforcement is active as it will
+            // override current SYSTEM_RING persisted value given they share the same settings name
+            // (due to aliasing).
+            if (streamState.mStreamType == AudioSystem.STREAM_SYSTEM_ENFORCED) {
+                return;
+            }
             if (streamState.hasValidSettingsName()) {
                 mSettings.putSystemIntForUser(mContentResolver,
                         streamState.getSettingNameForDevice(device),
@@ -9756,6 +9784,8 @@ public class AudioService extends IAudioService.Stub
                     Settings.Global.ZEN_MODE), false, this);
             mContentResolver.registerContentObserver(Settings.Global.getUriFor(
                     Settings.Global.ZEN_MODE_CONFIG_ETAG), false, this);
+            mContentResolver.registerContentObserver(Settings.Global.getUriFor(
+                    Settings.Global.MUTE_ALARM_STREAM_WITH_RINGER_MODE), false, this);
             mContentResolver.registerContentObserver(Settings.System.getUriFor(
                 Settings.System.MODE_RINGER_STREAMS_AFFECTED), false, this);
             mContentResolver.registerContentObserver(Settings.Global.getUriFor(
@@ -12743,12 +12773,16 @@ public class AudioService extends IAudioService.Stub
     public @Nullable AudioHalVersionInfo getHalVersion() {
         for (AudioHalVersionInfo version : AudioHalVersionInfo.VERSIONS) {
             try {
-                // TODO: check AIDL service.
                 String versionStr = version.getMajorVersion() + "." + version.getMinorVersion();
-                HwBinder.getService(
-                        String.format("android.hardware.audio@%s::IDevicesFactory", versionStr),
-                        "default");
-                return version;
+                final String aidlStr = "android.hardware.audio.core.IModule/default";
+                final String hidlStr = String.format("android.hardware.audio@%s::IDevicesFactory",
+                        versionStr);
+                if (null != ServiceManager.checkService(aidlStr)) {
+                    return version;
+                } else {
+                    HwBinder.getService(hidlStr, "default");
+                    return version;
+                }
             } catch (NoSuchElementException e) {
                 // Ignore, the specified HAL interface is not found.
             } catch (RemoteException re) {
@@ -13645,6 +13679,46 @@ public class AudioService extends IAudioService.Stub
             }
             return status;
         }
+    }
+
+
+    /**
+     * @see AudioManager#shouldNotificationSoundPlay(AudioAttributes)
+     */
+    @android.annotation.EnforcePermission(
+            android.Manifest.permission.QUERY_AUDIO_STATE)
+    public boolean shouldNotificationSoundPlay(@NonNull final AudioAttributes aa) {
+        super.shouldNotificationSoundPlay_enforcePermission();
+        Objects.requireNonNull(aa);
+
+        // don't play notifications if the stream volume associated with the
+        // AudioAttributes of the notification record is 0 (non-zero volume implies
+        // not silenced by SILENT or VIBRATE ringer mode)
+        final int stream = AudioAttributes.toLegacyStreamType(aa);
+        final boolean mutingFromVolume = getStreamVolume(stream) == 0;
+        if (mutingFromVolume) {
+            if (DEBUG_VOL) {
+                Slog.d(TAG, "notification should not play due to muted stream " + stream);
+            }
+            return false;
+        }
+
+        // don't play notifications if there is a user of GAIN_TRANSIENT_EXCLUSIVE audio focus
+        // and the focus owner is recording
+        final int uid = mMediaFocusControl.getExclusiveFocusOwnerUid();
+        if (uid == -1) { // return value is -1 if focus isn't GAIN_TRANSIENT_EXCLUSIVE
+            return true;
+        }
+        // is the owner of GAIN_TRANSIENT_EXCLUSIVE focus also recording?
+        final boolean mutingFromFocusAndRecording = mRecordMonitor.isRecordingActiveForUid(uid);
+        if (mutingFromFocusAndRecording) {
+            if (DEBUG_VOL) {
+                Slog.d(TAG, "notification should not play due to exclusive focus owner recording "
+                        + " uid:" + uid);
+            }
+            return false;
+        }
+        return true;
     }
 
     //======================

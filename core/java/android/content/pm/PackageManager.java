@@ -16,6 +16,8 @@
 
 package android.content.pm;
 
+import static com.android.internal.pm.pkg.parsing.ParsingPackageUtils.PARSE_COLLECT_CERTIFICATES;
+
 import android.Manifest;
 import android.annotation.CallbackExecutor;
 import android.annotation.CheckResult;
@@ -55,7 +57,6 @@ import android.content.IntentFilter;
 import android.content.IntentSender;
 import android.content.pm.PackageInstaller.SessionParams;
 import android.content.pm.dex.ArtManager;
-import android.content.pm.pkg.FrameworkPackageUserState;
 import android.content.pm.verify.domain.DomainVerificationManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -91,6 +92,10 @@ import android.util.AndroidException;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.pm.parsing.PackageInfoCommonUtils;
+import com.android.internal.pm.parsing.PackageParser2;
+import com.android.internal.pm.parsing.PackageParserException;
+import com.android.internal.pm.parsing.pkg.ParsedPackage;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.DataClass;
 
@@ -817,6 +822,8 @@ public abstract class PackageManager {
             GET_DISABLED_UNTIL_USED_COMPONENTS,
             GET_UNINSTALLED_PACKAGES,
             MATCH_HIDDEN_UNTIL_INSTALLED_COMPONENTS,
+            MATCH_DIRECT_BOOT_AWARE,
+            MATCH_DIRECT_BOOT_UNAWARE,
             GET_ATTRIBUTIONS_LONG,
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -2518,6 +2525,7 @@ public abstract class PackageManager {
             USER_MIN_ASPECT_RATIO_16_9,
             USER_MIN_ASPECT_RATIO_3_2,
             USER_MIN_ASPECT_RATIO_FULLSCREEN,
+            USER_MIN_ASPECT_RATIO_APP_DEFAULT,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface UserMinAspectRatio {}
@@ -2571,6 +2579,16 @@ public abstract class PackageManager {
      */
     public static final int USER_MIN_ASPECT_RATIO_FULLSCREEN = 6;
 
+    /**
+     * Aspect ratio override code: user sets to app's default aspect ratio.
+     * This resets both the user-forced aspect ratio, and the device manufacturer
+     * per-app override {@link ActivityInfo#OVERRIDE_ANY_ORIENTATION_TO_USER}.
+     * It is different from {@link #USER_MIN_ASPECT_RATIO_UNSET} as the latter may
+     * apply the device manufacturer per-app orientation override if any,
+     * @hide
+     */
+    public static final int USER_MIN_ASPECT_RATIO_APP_DEFAULT = 7;
+
     /** @hide */
     @IntDef(flag = true, prefix = { "DELETE_" }, value = {
             DELETE_KEEP_DATA,
@@ -2578,7 +2596,6 @@ public abstract class PackageManager {
             DELETE_SYSTEM_APP,
             DELETE_DONT_KILL_APP,
             DELETE_CHATTY,
-            DELETE_SHOW_DIALOG,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface DeleteFlags {}
@@ -2629,12 +2646,6 @@ public abstract class PackageManager {
      */
     @FlaggedApi(android.content.pm.Flags.FLAG_ARCHIVING)
     public static final int DELETE_ARCHIVE = 0x00000010;
-
-    /**
-     * Show a confirmation dialog to the user when app is being deleted.
-     */
-    @FlaggedApi(android.content.pm.Flags.FLAG_ARCHIVING)
-    public static final int DELETE_SHOW_DIALOG = 0x00000020;
 
     /**
      * Flag parameter for {@link #deletePackage} to indicate that package deletion
@@ -3295,6 +3306,14 @@ public abstract class PackageManager {
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device supports NFC charging.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    @FlaggedApi(android.nfc.Flags.FLAG_ENABLE_NFC_CHARGING)
+    public static final String FEATURE_NFC_CHARGING = "android.hardware.nfc.charging";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The Beam API is enabled on the device.
      */
     @SdkConstant(SdkConstantType.FEATURE)
@@ -3304,7 +3323,7 @@ public abstract class PackageManager {
      * Feature for {@link #getSystemAvailableFeatures} and
      * {@link #hasSystemFeature}: The device supports any
      * one of the {@link #FEATURE_NFC}, {@link #FEATURE_NFC_HOST_CARD_EMULATION},
-     * or {@link #FEATURE_NFC_HOST_CARD_EMULATION_NFCF} features.
+     * {@link #FEATURE_NFC_HOST_CARD_EMULATION_NFCF}, or {@link #FEATURE_NFC_CHARGING} features.
      *
      * @hide
      */
@@ -8609,28 +8628,56 @@ public abstract class PackageManager {
     @Nullable
     public PackageInfo getPackageArchiveInfo(@NonNull String archiveFilePath,
             @NonNull PackageInfoFlags flags) {
-        long flagsBits = flags.getValue();
-        final PackageParser parser = new PackageParser();
-        parser.setCallback(new PackageParser.CallbackImpl(this));
         final File apkFile = new File(archiveFilePath);
-        try {
-            if ((flagsBits & (MATCH_DIRECT_BOOT_UNAWARE | MATCH_DIRECT_BOOT_AWARE)) != 0) {
-                // Caller expressed an explicit opinion about what encryption
-                // aware/unaware components they want to see, so fall through and
-                // give them what they want
-            } else {
-                // Caller expressed no opinion, so match everything
-                flagsBits |= MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE;
-            }
 
-            PackageParser.Package pkg = parser.parsePackage(apkFile, 0, false);
-            if ((flagsBits & GET_SIGNATURES) != 0 || (flagsBits & GET_SIGNING_CERTIFICATES) != 0) {
-                PackageParser.collectCertificates(pkg, false /* skipVerify */);
-            }
-            return PackageParser.generatePackageInfo(pkg, null, (int) flagsBits, 0, 0, null,
-                    FrameworkPackageUserState.DEFAULT);
-        } catch (PackageParser.PackageParserException e) {
-            Log.w(TAG, "Failure to parse package archive", e);
+        @PackageInfoFlagsBits long flagsBits = flags.getValue();
+        if ((flagsBits & (MATCH_DIRECT_BOOT_UNAWARE | MATCH_DIRECT_BOOT_AWARE)) != 0) {
+            // Caller expressed an explicit opinion about what encryption
+            // aware/unaware components they want to see, so fall through and
+            // give them what they want
+        } else {
+            // Caller expressed no opinion, so match everything
+            flagsBits |= MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE;
+        }
+
+        int parserFlags = 0;
+        if ((flagsBits & (GET_SIGNATURES | GET_SIGNING_CERTIFICATES)) != 0) {
+            parserFlags |= PARSE_COLLECT_CERTIFICATES;
+        }
+
+        final PackageParser2 parser2 = new PackageParser2(/*separateProcesses*/ null,
+                /*displayMetrics*/ null,/*cacher*/ null,
+                new PackageParser2.Callback() {
+                    @Override
+                    public boolean hasFeature(String feature) {
+                        return PackageManager.this.hasSystemFeature(feature);
+                    }
+
+                    @NonNull
+                    @Override
+                    public Set<String> getHiddenApiWhitelistedApps() {
+                        return Collections.emptySet();
+                    }
+
+                    @NonNull
+                    @Override
+                    public Set<String> getInstallConstraintsAllowlist() {
+                        return Collections.emptySet();
+                    }
+
+                    @Override
+                    public boolean isChangeEnabled(long changeId,
+                            @androidx.annotation.NonNull ApplicationInfo appInfo) {
+                        return false;
+                    }
+                });
+
+        try {
+            ParsedPackage pp = parser2.parsePackage(apkFile, parserFlags, false);
+
+            return PackageInfoCommonUtils.generate(pp, flagsBits, UserHandle.myUserId());
+        } catch (PackageParserException e) {
+            Log.w(TAG, "Failure to parse package archive apkFile= " +apkFile);
             return null;
         }
     }
@@ -10970,7 +11017,7 @@ public abstract class PackageManager {
     }
 
     /**
-     * Returns the property defined in the given package's &lt;appliction&gt; tag.
+     * Returns the property defined in the given package's &lt;application&gt; tag.
      *
      * @throws NameNotFoundException if either the given package is not installed or if the
      * given property is not defined within the &lt;application&gt; tag.
@@ -11480,14 +11527,14 @@ public abstract class PackageManager {
     }
 
     /**
-     * Retrieve AndroidManifest.xml information for the given application apk path.
+     * Retrieve AndroidManifest.xml information for the given application apk file.
      *
      * <p>Example:
      *
      * <pre><code>
      * Bundle result;
      * try {
-     *     result = getContext().getPackageManager().parseAndroidManifest(apkFilePath,
+     *     result = getContext().getPackageManager().parseAndroidManifest(apkFile,
      *             xmlResourceParser -> {
      *                 Bundle bundle = new Bundle();
      *                 // Search the start tag
@@ -11516,9 +11563,10 @@ public abstract class PackageManager {
      *
      * Note: When the parserFunction is invoked, the client can read the AndroidManifest.xml
      * information by the XmlResourceParser object. After leaving the parserFunction, the
-     * XmlResourceParser object will be closed.
+     * XmlResourceParser object will be closed. The caller should also handle the exception for
+     * calling this method.
      *
-     * @param apkFilePath The path of an application apk file.
+     * @param apkFile The file of an application apk.
      * @param parserFunction The parserFunction will be invoked with the XmlResourceParser object
      *        after getting the AndroidManifest.xml of an application package.
      *
@@ -11529,7 +11577,7 @@ public abstract class PackageManager {
      */
     @FlaggedApi(android.content.pm.Flags.FLAG_GET_PACKAGE_INFO)
     @WorkerThread
-    public <T> T parseAndroidManifest(@NonNull String apkFilePath,
+    public <T> T parseAndroidManifest(@NonNull File apkFile,
             @NonNull Function<XmlResourceParser, T> parserFunction) throws IOException {
         throw new UnsupportedOperationException(
                 "parseAndroidManifest not implemented in subclass");

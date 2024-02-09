@@ -43,8 +43,6 @@ import static android.media.MediaRoute2Info.TYPE_WIRED_HEADSET;
 
 import static com.android.settingslib.media.LocalMediaManager.MediaDeviceState.STATE_SELECTED;
 
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.annotation.TargetApi;
 import android.app.Notification;
 import android.bluetooth.BluetoothAdapter;
@@ -59,6 +57,8 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import androidx.annotation.DoNotInline;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -98,14 +98,15 @@ public abstract class InfoMediaManager extends MediaManager {
     private final Map<String, RouteListingPreference.Item> mPreferenceItemMap =
             new ConcurrentHashMap<>();
 
-    public InfoMediaManager(Context context, String packageName, Notification notification,
+    public InfoMediaManager(
+            Context context,
+            @NonNull String packageName,
+            Notification notification,
             LocalBluetoothManager localBluetoothManager) {
         super(context, notification);
 
         mBluetoothManager = localBluetoothManager;
-        if (!TextUtils.isEmpty(packageName)) {
-            mPackageName = packageName;
-        }
+        mPackageName = packageName;
     }
 
     /** Creates an instance of InfoMediaManager. */
@@ -114,6 +115,14 @@ public abstract class InfoMediaManager extends MediaManager {
             String packageName,
             Notification notification,
             LocalBluetoothManager localBluetoothManager) {
+
+        // The caller is only interested in system routes (headsets, built-in speakers, etc), and is
+        // not interested in a specific app's routing. The media routing APIs still require a
+        // package name, so we use the package name of the calling app.
+        if (TextUtils.isEmpty(packageName)) {
+            packageName = context.getPackageName();
+        }
+
         if (Flags.useMediaRouter2ForInfoMediaManager()) {
             try {
                 return new RouterInfoMediaManager(
@@ -375,7 +384,7 @@ public abstract class InfoMediaManager extends MediaManager {
         for (MediaRoute2Info route : getSelectableRoutes(info)) {
             deviceList.add(
                     new InfoMediaDevice(
-                            mContext, route, mPackageName, mPreferenceItemMap.get(route.getId())));
+                            mContext, route, mPreferenceItemMap.get(route.getId())));
         }
         return deviceList;
     }
@@ -402,7 +411,7 @@ public abstract class InfoMediaManager extends MediaManager {
         for (MediaRoute2Info route : getDeselectableRoutes(info)) {
             deviceList.add(
                     new InfoMediaDevice(
-                            mContext, route, mPackageName, mPreferenceItemMap.get(route.getId())));
+                            mContext, route, mPreferenceItemMap.get(route.getId())));
             Log.d(TAG, route.getName() + " is deselectable for " + mPackageName);
         }
         return deviceList;
@@ -426,7 +435,7 @@ public abstract class InfoMediaManager extends MediaManager {
         for (MediaRoute2Info route : getSelectedRoutes(info)) {
             deviceList.add(
                     new InfoMediaDevice(
-                            mContext, route, mPackageName, mPreferenceItemMap.get(route.getId())));
+                            mContext, route, mPreferenceItemMap.get(route.getId())));
         }
         return deviceList;
     }
@@ -625,7 +634,6 @@ public abstract class InfoMediaManager extends MediaManager {
                         new InfoMediaDevice(
                                 mContext,
                                 route,
-                                mPackageName,
                                 mPreferenceItemMap.get(route.getId()));
                 break;
             case TYPE_BUILTIN_SPEAKER:
@@ -642,7 +650,6 @@ public abstract class InfoMediaManager extends MediaManager {
                         new PhoneMediaDevice(
                                 mContext,
                                 route,
-                                mPackageName,
                                 mPreferenceItemMap.getOrDefault(route.getId(), null));
                 break;
             case TYPE_HEARING_AID:
@@ -658,7 +665,6 @@ public abstract class InfoMediaManager extends MediaManager {
                                     mContext,
                                     cachedDevice,
                                     route,
-                                    mPackageName,
                                     mPreferenceItemMap.getOrDefault(route.getId(), null));
                 }
                 break;
@@ -667,7 +673,6 @@ public abstract class InfoMediaManager extends MediaManager {
                         new ComplexMediaDevice(
                                 mContext,
                                 route,
-                                mPackageName,
                                 mPreferenceItemMap.get(route.getId()));
                 break;
             default:

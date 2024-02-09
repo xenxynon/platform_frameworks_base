@@ -188,10 +188,10 @@
     <string name="face_reenroll_failure_dialog_content" msgid="7073947334397236935">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‎‎‎‏‎‎‎‏‎‏‎‏‏‏‎‏‏‎‏‎‏‏‎‎‏‏‏‏‏‎‎‎‎‏‎‏‎‏‎‎‏‎‎‎‏‏‎‎‏‎‏‏‎‏‏‎‎‎‏‏‏‎Couldn’t set up face unlock. Go to Settings to try again.‎‏‎‎‏‎"</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‏‏‏‎‎‎‏‏‎‏‏‎‎‏‎‎‏‎‏‎‏‏‎‎‏‎‏‎‎‎‏‏‏‎‎‎‏‎‏‎‏‎‏‎‏‎‏‏‏‏‏‏‏‎‏‏‏‏‏‎Touch the fingerprint sensor‎‏‎‎‏‎"</string>
     <string name="fingerprint_dialog_authenticated_confirmation" msgid="1603899612957562862">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‎‏‏‎‎‏‎‎‎‎‏‎‎‎‏‏‎‎‏‎‎‎‏‏‎‎‏‏‎‎‏‏‏‏‎‏‏‎‏‏‏‎‎‎‏‏‎‏‎‏‏‏‏‏‏‎‏‏‏‎‎Press the unlock icon to continue‎‏‎‎‏‎"</string>
-    <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‎‏‎‏‏‎‏‏‏‏‎‏‎‏‏‏‏‎‏‎‎‏‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‎‏‎‏‎‎‏‏‎‎‎‏‎‎‎‏‎‎‎Can’t recognize face. Use fingerprint instead.‎‏‎‎‏‎"</string>
+    <string name="fingerprint_dialog_use_fingerprint_instead" msgid="5542430577183894219">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‏‏‎‎‏‏‏‎‏‎‏‎‏‎‏‎‏‎‏‏‎‎‏‏‏‏‏‎‏‎‏‏‎‎‎‏‎‏‎‎‏‏‏‏‎‎‏‎‏‎‏‎‏‏‎‎‏‎‏‏‎Face not recognized. Use fingerprint instead.‎‏‎‎‏‎"</string>
     <!-- no translation found for keyguard_face_failed_use_fp (7140293906176164263) -->
     <skip />
-    <string name="keyguard_face_failed" msgid="9044619102286917151">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‏‏‎‏‏‎‎‎‎‏‎‎‏‏‏‏‎‎‎‏‎‎‏‎‎‏‏‏‎‎‏‏‎‎‎‎‏‎‎‎‎‏‏‎‎‎‏‎‏‏‏‎‎‎‎‏‏‏‏‏‎Can’t recognize face‎‏‎‎‏‎"</string>
+    <string name="keyguard_face_failed" msgid="2346762871330729634">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‎‎‎‏‎‎‏‎‎‎‏‎‏‏‎‎‎‎‎‎‏‏‎‎‏‎‏‏‏‎‏‎‏‎‏‏‎‏‏‏‏‏‎‎‏‏‎‏‏‏‎‏‎‏‎‎‎‏‎‎Face not recognized‎‏‎‎‏‎"</string>
     <string name="keyguard_suggest_fingerprint" msgid="8742015961962702960">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‏‎‎‏‎‏‎‏‎‎‎‏‏‏‏‎‎‎‎‏‎‎‏‏‎‎‏‏‎‏‎‎‎‎‎‏‏‎‎‏‎‏‎‎‏‏‏‎‏‎‎‎‎‏‏‏‎‎‎‎‎Use fingerprint instead‎‏‎‎‏‎"</string>
     <string name="keyguard_face_unlock_unavailable" msgid="1581949044193418736">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‎‏‎‏‏‏‏‏‎‏‎‎‎‎‏‏‎‏‏‎‎‏‎‎‎‏‏‎‎‎‏‎‏‏‏‏‏‏‏‎‏‎‏‎‏‏‎‏‏‏‎‏‏‏‏‏‎‎‎‎‎Face Unlock unavailable‎‏‎‎‏‎"</string>
     <string name="accessibility_bluetooth_connected" msgid="4745196874551115205">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‎‎‎‏‏‏‎‏‏‎‏‎‎‏‎‏‎‎‏‏‎‏‏‎‏‎‏‎‏‎‎‏‎‎‎‎‏‏‏‎‏‎‎‏‏‎‏‏‏‏‎‏‏‏‎‎‎‏‎‏‎Bluetooth connected.‎‏‎‎‏‎"</string>
@@ -333,6 +333,14 @@
     <string name="qs_record_issue_label" msgid="8166290137285529059">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‎‎‎‏‎‏‎‏‎‏‎‎‎‏‏‏‏‏‎‏‏‎‎‏‏‏‎‎‏‏‏‎‏‏‎‏‏‎‏‎‏‏‏‎‎‎‎‎‏‏‎‏‏‏‏‎‎‎‏‏‎Record Issue‎‏‎‎‏‎"</string>
     <string name="qs_record_issue_start" msgid="2979831312582567056">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‏‎‎‏‎‏‎‏‏‎‏‎‎‏‏‏‏‏‎‎‏‏‎‎‏‎‏‎‎‏‏‏‏‏‎‏‎‎‎‏‎‎‎‏‏‏‏‎‎‏‎‎‏‎‎‏‎‎‎‎‎Start‎‏‎‎‏‎"</string>
     <string name="qs_record_issue_stop" msgid="3531747965741982657">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‎‎‎‏‎‎‎‎‎‎‏‏‎‏‎‎‏‎‏‎‎‎‎‏‎‎‎‎‎‎‎‏‎‏‏‎‎‏‎‎‎‎‏‎‎‏‏‎‎‎‏‏‏‏‎‎‎‎‎‏‎Stop‎‏‎‎‏‎"</string>
+    <string name="qs_record_issue_dropdown_header" msgid="5995983175678658329">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‎‎‏‏‎‎‏‏‎‏‏‎‎‎‎‎‎‎‏‎‏‏‏‎‏‏‏‎‎‎‏‎‎‎‎‏‏‎‎‎‏‎‏‏‏‎‎‎‎‏‏‏‎‎‎‏‏‎‎‏‎What part of your device experience was affected?‎‏‎‎‏‎"</string>
+    <string name="qs_record_issue_dropdown_prompt" msgid="2526949919167046219">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‎‏‏‎‎‎‏‎‎‎‏‏‎‎‎‎‏‏‏‏‎‎‏‎‎‎‎‎‎‏‎‏‎‎‏‎‎‏‎‎‏‏‏‎‏‏‎‎‎‏‎‎‏‎‎‏‎‏‏‎Select issue type‎‏‎‎‏‎"</string>
+    <string name="qs_record_issue_dropdown_screenrecord" msgid="6396141928484257626">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‏‎‎‎‏‏‎‎‎‎‏‏‏‎‏‎‏‎‎‏‎‎‏‏‎‎‏‎‎‎‎‏‏‏‎‎‎‏‎‎‏‎‎‏‎‎‏‏‏‏‏‏‎‏‎‏‏‎‏‎‎Screen record‎‏‎‎‏‎"</string>
+  <string-array name="qs_record_issue_types">
+    <item msgid="2947988124014085798">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‏‎‎‎‏‏‏‎‏‎‎‏‎‏‎‏‏‎‏‏‏‎‎‏‎‏‎‎‎‏‏‎‎‏‎‏‏‏‏‎‏‏‏‎‎‎‎‎‎‏‏‎‏‎‏‎‎‏‏‎‎Performance‎‏‎‎‏‎"</item>
+    <item msgid="1627504621139124393">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‎‏‏‎‏‎‎‏‎‏‏‎‎‎‎‎‏‏‏‎‏‏‎‏‎‏‎‎‎‏‏‏‏‏‎‏‎‏‎‎‏‏‎‏‏‏‏‎‎‎‎‎‏‎‏‎‏‎‎‏‎User Interface‎‏‎‎‏‎"</item>
+    <item msgid="8309220355268900335">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‎‎‏‏‎‏‎‏‎‎‎‎‎‏‎‎‎‏‏‏‏‏‏‎‎‎‏‏‏‎‎‏‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‏‎‏‎‏‏‏‏‎‏‏‏‏‎Battery‎‏‎‎‏‎"</item>
+  </string-array>
     <string name="quick_settings_onehanded_label" msgid="2416537930246274991">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‎‎‏‏‎‎‎‏‎‎‏‎‏‎‎‎‏‎‎‎‏‏‏‎‎‎‏‏‎‏‏‎‏‏‎‏‎‎‏‎‏‏‎‎‎‏‏‏‏‏‏‏‎‏‎‏‏‏‏‎One-handed mode‎‏‎‎‏‎"</string>
     <string name="quick_settings_contrast_label" msgid="988087460210159123">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‎‏‏‎‏‏‎‏‏‎‏‏‎‎‏‏‎‎‏‎‎‎‏‎‎‏‏‏‏‎‏‎‏‏‎‎‎‏‏‎‏‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‏‎‎‏‏‎Contrast‎‏‎‎‏‎"</string>
     <string name="quick_settings_contrast_standard" msgid="2538227821968061832">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‎‏‏‎‎‏‏‏‎‎‏‏‎‎‏‏‎‎‎‏‏‎‎‎‎‎‏‏‎‎‎‎‏‏‏‎‏‏‎‏‎‏‏‎‏‏‏‎‏‎‏‏‎‎‎‏‎‎‎‎Standard‎‏‎‎‏‎"</string>
@@ -405,6 +413,11 @@
     <string name="keyguard_indication_charging_time_dock" msgid="3149328898931741271">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‏‎‏‏‏‎‏‏‎‏‎‎‏‎‏‎‏‎‎‏‏‏‏‏‎‎‏‎‏‎‎‏‏‏‎‏‏‎‏‏‎‎‏‎‏‏‎‏‎‎‏‎‎‏‎‏‎‏‏‏‎‎‏‎‎‏‏‎<xliff:g id="PERCENTAGE">%2$s</xliff:g>‎‏‎‎‏‏‏‎ • Charging • Full in ‎‏‎‎‏‏‎<xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>‎‏‎‎‏‏‏‎‎‏‎‎‏‎"</string>
     <string name="communal_tutorial_indicator_text" msgid="4503010353591430123">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‏‏‏‎‎‏‏‏‏‏‎‏‏‏‏‎‏‎‎‎‎‎‎‎‏‏‏‏‎‎‎‎‎‎‎‏‏‎‏‏‏‎‎‏‎‎‏‎‏‎‏‏‏‏‏‎‏‎‏‏‎Swipe left to start the communal tutorial‎‏‎‎‏‎"</string>
     <string name="button_to_open_widget_editor" msgid="5599945944349057600">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‏‏‎‏‏‎‏‏‎‏‏‏‎‎‎‎‎‎‎‏‎‎‏‎‏‎‏‎‏‎‏‎‎‏‏‎‎‏‎‏‎‎‎‎‏‎‏‎‎‎‏‎‎‏‎‎‎‎‎‎‎Open the widget editor‎‏‎‎‏‎"</string>
+    <string name="cta_tile_button_to_open_widget_editor" msgid="3871562362382963878">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‎‏‎‏‏‎‏‏‏‎‏‎‏‎‎‎‏‏‎‏‎‏‏‏‎‏‎‎‏‏‎‎‎‏‏‏‏‎‎‏‏‎‏‏‏‏‎‏‎‏‎‎‏‎‏‎‎‏‏‎‎Customize‎‏‎‎‏‎"</string>
+    <string name="cta_tile_button_to_dismiss" msgid="3377597875997861754">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‏‏‏‎‏‏‎‏‏‏‏‏‏‎‏‎‎‎‏‏‎‏‎‏‏‏‏‏‎‏‏‏‏‎‎‎‏‏‏‏‎‏‏‏‎‏‏‎‎‏‏‏‎‏‏‏‏‎‏‎‎Dismiss‎‏‎‎‏‎"</string>
+    <string name="cta_label_to_edit_widget" msgid="6496885074209203756">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‏‎‏‎‎‎‏‎‏‎‎‏‏‎‎‏‎‎‏‎‏‎‎‎‏‏‎‏‏‎‎‏‎‎‏‎‏‏‎‎‎‏‏‎‏‏‏‎‎‏‏‎‎‎‏‎‏‏‎‎‎Add, remove, and reorder your widgets in this space‎‏‎‎‏‎"</string>
+    <string name="cta_label_to_open_widget_picker" msgid="3874946756976360699">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‎‏‎‏‏‏‎‎‎‏‏‎‏‎‎‏‎‎‏‏‏‎‎‎‏‎‏‏‏‎‎‎‏‏‎‏‎‎‏‎‎‎‎‎‏‎‏‏‏‏‎‎‏‏‏‏‏‎‏‏‎Add more widgets‎‏‎‎‏‎"</string>
+    <string name="popup_on_dismiss_cta_tile_text" msgid="8292501780996070019">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‎‎‏‏‎‎‎‏‎‏‎‎‏‏‏‎‎‎‏‎‎‏‏‎‏‏‏‏‎‎‏‎‏‎‏‏‏‎‎‏‎‎‎‎‏‎‎‏‏‎‏‎‏‎‎‎‎‎‏‏‎Long press to customize widgets‎‏‎‎‏‎"</string>
     <string name="button_to_remove_widget" msgid="3948204829181214098">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‎‏‏‎‏‏‎‎‏‎‏‎‏‏‎‏‎‏‏‏‎‏‎‏‏‏‏‏‏‎‏‎‎‏‏‏‏‏‎‏‎‎‏‏‏‏‏‏‏‏‎‏‏‎‎‏‎‎‏‎‎Remove‎‏‎‎‏‎"</string>
     <string name="hub_mode_add_widget_button_text" msgid="4831464661209971729">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‎‎‏‏‎‎‎‎‏‏‎‎‏‏‎‎‏‏‏‏‏‎‎‎‎‎‏‎‏‏‎‏‏‏‎‎‎‏‎‎‎‏‎‏‏‏‏‏‏‏‎‎‎‎‎‏‎‎‎‏‎Add widget‎‏‎‎‏‎"</string>
     <string name="hub_mode_editing_exit_button_text" msgid="3704686734192264771">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‎‎‏‏‎‏‏‎‏‎‎‏‏‎‏‏‎‎‎‎‏‏‏‏‎‏‎‎‏‏‎‏‏‎‏‏‏‎‏‎‎‎‎‏‏‏‎‎‎‏‏‎‎‏‎‎‎‎‏‏‎Done‎‏‎‎‏‎"</string>
@@ -826,6 +839,7 @@
     <string name="notification_channel_setup" msgid="7660580986090760350">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‎‏‎‏‎‎‏‎‎‏‏‏‏‏‏‎‏‏‎‎‏‏‏‎‏‎‎‎‏‏‏‎‎‎‎‎‏‎‎‎‎‏‏‎‏‎‎‏‎‏‎‎‎‏‎‎‏‏‏‏‎‎Setup‎‏‎‎‏‎"</string>
     <string name="notification_channel_storage" msgid="2720725707628094977">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‏‎‏‏‏‎‎‎‎‎‏‏‏‏‏‎‏‎‏‏‎‎‏‏‏‎‏‏‎‏‏‎‏‏‎‎‏‏‏‎‎‏‎‎‎‏‎‎‏‏‎‎‎‎‎‎‎‎‏‎Storage‎‏‎‎‏‎"</string>
     <string name="notification_channel_hints" msgid="7703783206000346876">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‎‏‎‏‎‏‏‏‎‏‎‎‏‎‏‎‏‎‏‏‎‎‎‎‎‎‎‏‎‎‏‏‎‏‏‎‎‎‏‎‎‎‏‎‏‎‏‎‎‎‏‏‎‏‏‏‏‏‏‎‎‎Hints‎‏‎‎‏‎"</string>
+    <string name="notification_channel_accessibility" msgid="8956203986976245820">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‏‏‎‎‎‏‎‎‏‎‏‎‏‏‎‏‎‏‎‎‎‎‎‏‎‎‏‎‏‏‏‏‏‎‏‏‏‎‏‎‏‎‎‎‎‎‎‎‏‎‎‎‎‎‏‏‏‏‎‎‎Accessibility‎‏‎‎‏‎"</string>
     <string name="instant_apps" msgid="8337185853050247304">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‎‎‏‏‏‎‏‏‎‎‏‏‏‎‏‎‎‎‏‎‎‏‎‏‏‏‎‎‎‏‏‎‏‏‎‏‎‏‏‏‏‎‎‎‏‏‎‏‏‎‎‎‏‎‎‎‏‎‎‎‎Instant Apps‎‏‎‎‏‎"</string>
     <string name="instant_apps_title" msgid="8942706782103036910">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‏‏‎‎‎‎‎‏‏‎‏‎‏‏‏‎‎‎‎‎‎‏‏‏‎‎‎‎‎‎‎‏‎‏‎‏‏‎‏‏‏‎‏‎‎‏‏‎‎‎‏‏‏‏‏‎‏‏‏‎‎‎‏‎‎‏‏‎<xliff:g id="APP">%1$s</xliff:g>‎‏‎‎‏‏‏‎ running‎‏‎‎‏‎"</string>
     <string name="instant_apps_message" msgid="6112428971833011754">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‎‏‎‎‏‏‎‏‎‎‏‏‏‎‏‏‎‏‎‏‏‏‎‎‎‎‏‏‏‏‎‎‏‏‎‎‏‏‏‎‏‎‎‏‏‎‏‎‏‏‏‎‎‎‏‎‏‎‏‎‎App opened without being installed.‎‏‎‎‏‎"</string>
@@ -861,7 +875,6 @@
     <string name="auto_saver_title" msgid="6873691178754086596">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‏‏‏‏‎‏‏‎‎‏‎‎‎‏‎‎‎‎‎‏‏‎‏‏‎‏‎‏‎‏‏‎‏‏‎‏‎‏‎‏‏‏‏‏‏‎‎‏‎‏‏‎‏‏‎‎‎‏‎‎‎Tap to schedule Battery Saver‎‏‎‎‏‎"</string>
     <string name="auto_saver_text" msgid="3214960308353838764">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‏‏‎‎‏‎‎‏‏‏‎‏‏‏‎‏‎‏‎‏‎‏‎‏‏‏‎‏‏‏‏‎‏‎‏‎‎‏‏‎‏‎‎‏‎‎‏‎‏‏‏‎‏‎‏‎‏‏‎‎‎Turn on when battery is likely to run out‎‏‎‎‏‎"</string>
     <string name="no_auto_saver_action" msgid="7467924389609773835">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‎‎‏‏‏‏‎‏‎‎‎‏‏‎‏‏‎‎‏‎‏‏‎‏‎‏‎‏‎‎‏‏‎‎‏‎‎‎‎‏‎‏‎‏‎‏‎‎‏‏‎‏‏‎‎‎‎‏‎‏‏‎No thanks‎‏‎‎‏‎"</string>
-    <string name="heap_dump_tile_name" msgid="2464189856478823046">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‎‏‎‎‎‏‏‎‎‏‎‏‎‎‎‏‏‏‏‏‎‎‏‏‏‏‎‎‏‎‏‏‏‏‎‏‎‎‎‏‎‏‎‏‎‎‎‎‎‏‎‏‎‎‎‎‏‏‎‎Dump SysUI Heap‎‏‎‎‏‎"</string>
     <string name="ongoing_privacy_dialog_a11y_title" msgid="2205794093673327974">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‏‏‏‎‏‎‎‏‏‏‎‎‏‎‎‎‏‏‏‎‎‎‎‎‏‎‏‎‏‎‎‏‏‎‎‏‎‎‎‎‏‏‎‏‏‎‏‎‏‏‎‏‎‏‏‎‎‏‏‎‎In use‎‏‎‎‏‎"</string>
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‎‎‏‏‏‏‎‎‎‎‎‏‏‏‏‏‎‎‏‏‏‏‎‎‎‏‏‏‎‏‎‏‏‏‎‎‎‏‏‏‏‎‎‏‏‎‎‏‏‎‏‎‎‏‎‏‎‎‏‎‎Applications are using your ‎‏‎‎‏‏‎<xliff:g id="TYPES_LIST">%s</xliff:g>‎‏‎‎‏‏‏‎.‎‏‎‎‏‎"</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‏‎‎‏‏‏‏‎‎‏‏‎‎‎‏‎‎‏‏‏‎‏‏‏‏‎‎‏‏‏‎‏‎‎‎‎‎‎‎‏‏‏‎‎‏‎‎‎‏‎‎‎‎‏‎‎‏‎‏‏‎, ‎‏‎‎‏‎ "</string>
@@ -922,6 +935,8 @@
     <string name="accessibility_floating_button_migration_tooltip" msgid="5217151214439341902">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‏‎‎‎‎‏‏‎‎‏‏‏‎‎‎‎‏‎‏‏‎‏‏‎‎‎‏‏‎‏‎‎‏‏‎‎‎‎‏‎‎‏‏‏‏‎‎‏‏‏‏‏‎‏‎‎‏‏‏‎‎Tap to open accessibility features. Customize or replace this button in Settings.‎‏‎‎‏‏‎\n‎‏‎‎‏‏‏‎‎‏‎‎‏‏‎\n‎‏‎‎‏‏‏‎‎‏‎‎‏‏‎"<annotation id="link">"‎‏‎‎‏‏‏‎View settings‎‏‎‎‏‏‎"</annotation>"‎‏‎‎‏‏‏‎‎‏‎‎‏‎"</string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‏‏‏‎‏‎‎‏‎‎‏‏‎‏‏‎‎‎‎‏‎‎‏‎‏‎‏‎‏‎‎‏‏‎‏‏‏‎‎‎‎‏‎‏‏‏‏‏‏‎‎‎‏‎‎‎‏‏‎‏‎Move button to the edge to hide it temporarily‎‏‎‎‏‎"</string>
     <string name="accessibility_floating_button_undo" msgid="511112888715708241">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‎‏‏‏‏‏‎‎‎‏‎‏‏‏‏‏‎‏‎‏‏‎‎‏‏‏‎‏‏‎‏‏‎‏‏‏‎‎‎‎‎‎‎‏‏‎‎‎‎‎‎‏‏‏‎‏‎‏‎‎‎‏‎Undo‎‏‎‎‏‎"</string>
+    <string name="accessibility_floating_button_hidden_notification_title" msgid="4115036997406994799">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‏‎‎‏‎‎‎‏‏‎‏‏‏‎‎‎‏‏‎‎‎‏‎‏‏‎‎‎‏‏‎‎‎‏‎‎‎‎‎‎‏‎‎‎‏‎‏‏‎‎‎‏‎‏‏‎‏‏‏‏‎Accessibility button hidden‎‏‎‎‏‎"</string>
+    <string name="accessibility_floating_button_hidden_notification_text" msgid="1457021647040915658">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‎‏‎‎‎‎‏‏‏‎‎‎‎‏‏‎‎‎‎‏‎‏‏‏‎‏‏‏‏‏‏‎‎‏‎‏‏‏‏‎‏‏‎‏‏‎‏‎‏‎‎‎‏‏‎‎‏‎‏‎‎Tap to show accessibility button‎‏‎‎‏‎"</string>
     <string name="accessibility_floating_button_undo_message_label_text" msgid="9017658016426242640">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‏‏‏‏‎‏‎‎‏‎‎‏‎‏‎‎‏‎‏‎‎‎‎‎‏‏‎‎‎‎‎‎‏‏‎‏‏‏‎‎‎‎‏‎‏‎‎‎‏‏‎‎‏‎‎‏‎‏‎‎‎‎‎‎‏‎‎‏‏‎<xliff:g id="FEATURE_NAME">%s</xliff:g>‎‏‎‎‏‏‏‎ shortcut removed‎‏‎‎‏‎"</string>
     <string name="accessibility_floating_button_undo_message_number_text" msgid="4909270290725226075">"{count,plural, =1{‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‎‏‎‎‎‎‏‎‎‎‎‏‎‎‏‏‏‎‏‏‎‏‎‏‎‎‎‏‏‎‏‎‏‎‎‏‎‎‎‎‏‏‏‎‎‏‎‎‎‏‏‎‎‏‎‏‏‎‏‏‎# shortcut removed‎‏‎‎‏‎}other{‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‎‏‎‎‎‎‏‎‎‎‎‏‎‎‏‏‏‎‏‏‎‏‎‏‎‎‎‏‏‎‏‎‏‎‎‏‎‎‎‎‏‏‏‎‎‏‎‎‎‏‏‎‎‏‎‏‏‎‏‏‎# shortcuts removed‎‏‎‎‏‎}}"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‎‏‏‎‏‏‎‎‏‎‎‎‏‏‏‏‎‏‏‏‏‏‏‏‎‎‏‎‏‎‎‎‎‏‏‎‏‎‏‏‏‎‏‏‏‏‏‏‏‎‎‎‎‎‏‎‏‎‎‏‎Move top left‎‏‎‎‏‎"</string>
@@ -1200,8 +1215,9 @@
     <string name="assistant_attention_content_description" msgid="4166330881435263596">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‏‎‎‏‏‏‎‏‎‎‎‏‏‏‎‎‎‏‏‏‏‏‎‏‏‏‎‎‏‏‎‎‏‏‎‎‏‎‏‏‎‎‎‎‎‏‏‎‎‎‏‎‎‏‏‎‏‏‎‎‎User presence is detected‎‏‎‎‏‎"</string>
     <string name="set_default_notes_app_toast_content" msgid="2812374329662610753">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‏‏‏‎‎‎‎‎‏‏‏‏‎‎‎‏‏‏‏‏‎‎‎‏‏‎‏‎‏‎‏‏‏‏‎‏‏‏‏‎‏‏‏‏‎‎‏‏‏‎‏‎‏‎‎‎‎‎‏‎Set default notes app in Settings‎‏‎‎‏‎"</string>
     <string name="install_app" msgid="5066668100199613936">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‎‎‏‏‎‎‏‎‏‎‎‎‎‎‏‏‎‏‎‏‏‏‏‎‎‏‎‏‎‏‏‏‏‎‎‏‏‎‎‏‏‎‎‏‏‏‎‎‎‎‏‎‏‏‏‏‏‎‎‎‎‎Install app‎‏‎‎‏‎"</string>
+    <string name="dismissible_keyguard_swipe" msgid="2213369651289613196">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‏‏‏‎‏‎‏‏‎‏‏‏‎‏‏‏‎‏‏‏‏‏‏‏‏‎‎‎‏‎‎‎‏‏‎‏‏‎‏‏‏‏‏‏‎‏‏‎‎‎‏‏‏‎‎‎‏‏‎‎‎Swipe to continue‎‏‎‎‏‎"</string>
     <string name="connected_display_dialog_start_mirroring" msgid="6237895789920854982">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‎‏‏‎‏‎‎‏‎‎‎‏‎‏‏‏‎‏‎‏‎‎‏‎‏‎‏‏‏‏‎‏‎‎‎‎‎‎‏‎‎‎‏‏‎‎‏‎‎‎‏‏‏‏‎‎‎‏‏‎‎Mirror to external display?‎‏‎‎‏‎"</string>
-    <string name="connected_display_dialog_dual_display_stop_warning" msgid="2917631104216376315">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‏‎‎‎‎‏‏‏‏‏‎‏‏‎‎‎‎‎‏‎‎‎‎‎‎‏‏‏‏‏‏‏‎‎‎‎‎‏‏‏‎‎‏‎‏‎‏‎‎‎‏‏‏‏‏‏‏‎‏‏‎Any dual screen activity currently running will be stopped‎‏‎‎‏‎"</string>
+    <string name="connected_display_dialog_dual_display_stop_warning" msgid="4174707498892447947">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‏‏‎‎‏‏‏‏‎‏‏‏‏‏‎‎‎‏‎‏‎‎‏‎‏‏‎‏‎‎‎‎‎‏‎‎‎‏‎‏‎‎‏‎‎‏‏‎‏‎‎‎‎‏‏‎‎‏‎‏‏‎Your inner display will be mirrored. Your front display will be turned off.‎‏‎‎‏‎"</string>
     <string name="mirror_display" msgid="2515262008898122928">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‎‏‎‎‎‏‎‏‏‏‎‏‎‎‎‎‎‎‎‎‎‎‏‎‏‏‏‏‎‎‎‎‏‏‏‏‏‎‏‎‏‏‎‏‎‎‎‎‏‏‏‎‏‎‎‏‎‏‏‎‎‎‎‎Mirror display‎‏‎‎‏‎"</string>
     <string name="dismiss_dialog" msgid="2195508495854675882">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‎‏‏‏‏‏‎‎‏‏‏‏‎‎‎‎‎‎‎‎‎‏‏‎‏‎‏‏‎‎‎‎‎‏‏‏‏‎‎‏‏‎‎‎‏‎‏‎‎‏‎‎‏‏‏‏‎‏‎‏‎‏‎‎Dismiss‎‏‎‎‏‎"</string>
     <string name="connected_display_icon_desc" msgid="6373560639989971997">"‎‏‎‎‎‎‎‏‎‏‏‏‎‎‎‎‎‎‏‎‎‏‎‎‎‎‏‏‏‏‏‏‏‏‎‏‏‎‎‎‎‏‏‏‎‎‏‏‎‏‏‎‏‏‏‏‏‎‏‎‎‎‏‎‎‎‏‎‏‏‎‏‎‎‎‎‎‎‏‏‎‏‏‏‏‏‎‎‎‎‎‏‏‏‎‏‎Display connected‎‏‎‎‏‎"</string>

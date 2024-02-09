@@ -140,6 +140,7 @@ import android.service.autofill.FillEventHistory.Event;
 import android.service.autofill.FillEventHistory.Event.NoSaveReason;
 import android.service.autofill.FillRequest;
 import android.service.autofill.FillResponse;
+import android.service.autofill.Flags;
 import android.service.autofill.InlinePresentation;
 import android.service.autofill.InternalSanitizer;
 import android.service.autofill.InternalValidator;
@@ -231,6 +232,9 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     private static final ComponentName CREDMAN_SERVICE_COMPONENT_NAME =
             new ComponentName("com.android.credentialmanager",
                     "com.android.credentialmanager.autofill.CredentialAutofillService");
+
+    static final String SESSION_ID_KEY = "autofill_session_id";
+    static final String REQUEST_ID_KEY = "autofill_request_id";
 
     final Object mLock;
 
@@ -366,6 +370,9 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @GuardedBy("mLock")
     private SparseArray<FillResponse> mResponses;
 
+    @GuardedBy("mLock")
+    private SparseArray<FillResponse> mSecondaryResponses;
+
     /**
      * Contexts read from the app; they will be updated (sanitized, change values for save) before
      * sent to {@link AutofillService}. Ordered by the time they were read.
@@ -378,7 +385,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
      */
     private boolean mHasCallback;
 
-    /** Whether the session has credential provider as the primary provider. */
+    /** Whether the session has credential manager provider as the primary provider. */
     private boolean mIsPrimaryCredential;
 
     @GuardedBy("mLock")
@@ -575,6 +582,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @GuardedBy("mLock")
     private AutofillId[] mLastFillDialogTriggerIds;
 
+    private boolean mIgnoreViewStateResetToEmpty;
+
     void onSwitchInputMethodLocked() {
         // One caveat is that for the case where the focus is on a field for which regular autofill
         // returns null, and augmented autofill is triggered,  and then the user switches the input
@@ -709,7 +718,21 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                         mPendingFillRequest.getDelayedFillIntentSender());
             }
             mLastFillRequest = mPendingFillRequest;
-            mRemoteFillService.onFillRequest(mPendingFillRequest);
+            if (shouldRequestSecondaryProvider(mPendingFillRequest.getFlags())
+                    && mSecondaryProviderHandler != null) {
+                Slog.v(TAG, "Requesting fill response to secondary provider.");
+                mSecondaryProviderHandler.onFillRequest(mPendingFillRequest,
+                        mPendingInlineSuggestionsRequest,
+                        mPendingFillRequest.getFlags(), id, mClient);
+            } else if (mRemoteFillService != null) {
+                if (mIsPrimaryCredential) {
+                    mPendingFillRequest = addSessionIdAndRequestIdToClientState(mPendingFillRequest,
+                            mPendingInlineSuggestionsRequest, id);
+                    mRemoteFillService.onFillCredentialRequest(mPendingFillRequest, mClient);
+                } else {
+                    mRemoteFillService.onFillRequest(mPendingFillRequest);
+                }
+            }
             mPendingInlineSuggestionsRequest = null;
             mWaitForInlineRequest = false;
             mPendingFillRequest = null;
@@ -849,6 +872,22 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                         mService.getServicePackageName(), mLastFillRequest.getFlags());
             }
         }
+    }
+
+    private FillRequest addSessionIdAndRequestIdToClientState(FillRequest pendingFillRequest,
+            InlineSuggestionsRequest pendingInlineSuggestionsRequest, int sessionId) {
+        if (pendingFillRequest.getClientState() == null) {
+            pendingFillRequest = new FillRequest(pendingFillRequest.getId(),
+                    pendingFillRequest.getFillContexts(),
+                    pendingFillRequest.getHints(),
+                    new Bundle(),
+                    pendingFillRequest.getFlags(),
+                    pendingInlineSuggestionsRequest,
+                    pendingFillRequest.getDelayedFillIntentSender());
+        }
+        pendingFillRequest.getClientState().putInt(SESSION_ID_KEY, sessionId);
+        pendingFillRequest.getClientState().putInt(REQUEST_ID_KEY, pendingFillRequest.getId());
+        return pendingFillRequest;
     }
 
     /**
@@ -1192,7 +1231,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @GuardedBy("mLock")
     private void requestNewFillResponseLocked(@NonNull ViewState viewState, int newState,
             int flags) {
-        final FillResponse existingResponse = viewState.getResponse();
+        final FillResponse existingResponse = shouldRequestSecondaryProvider(flags)
+                ? viewState.getSecondaryResponse() : viewState.getResponse();
         mFillRequestEventLogger.startLogForNewRequest();
         mRequestCount++;
         mFillRequestEventLogger.maybeSetAppPackageUid(uid);
@@ -1248,7 +1288,9 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             Slog.v(TAG, "Requesting structure for request #" + ordinal + " ,requestId=" + requestId
                     + ", flags=" + flags);
         }
+        boolean isCredmanRequested = (flags & FLAG_VIEW_REQUESTS_CREDMAN_SERVICE) != 0;
         mPresentationStatsEventLogger.maybeSetRequestId(requestId);
+        mPresentationStatsEventLogger.maybeSetIsCredentialRequest(isCredmanRequested);
         mPresentationStatsEventLogger.maybeSetFieldClassificationRequestId(
                 mFieldClassificationIdSnapshot);
         mFillRequestEventLogger.maybeSetRequestId(requestId);
@@ -1426,6 +1468,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         mSessionCommittedEventLogger.maybeSetComponentPackageUid(uid);
         mSaveEventLogger = SaveEventLogger.forSessionId(sessionId);
         mIsPrimaryCredential = isPrimaryCredential;
+        mIgnoreViewStateResetToEmpty = Flags.ignoreViewStateResetToEmpty();
 
         synchronized (mLock) {
             mSessionFlags = new SessionFlags();
@@ -1688,6 +1731,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
 
         processResponseLockedForPcc(response, response.getClientState(), requestFlags);
         mFillResponseEventLogger.maybeSetLatencyResponseProcessingMillis();
+        mFillResponseEventLogger.logAndEndEvent();
     }
 
 
@@ -1800,6 +1844,37 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             return;
         }
         synchronized (mLock) {
+            // TODO(b/319913595): refactor logging for fill response for primary and secondary
+            //  providers
+            // Start a new FillResponse logger for the success case.
+            mFillResponseEventLogger.startLogForNewResponse();
+            mFillResponseEventLogger.maybeSetRequestId(fillResponse.getRequestId());
+            mFillResponseEventLogger.maybeSetAppPackageUid(uid);
+            mFillResponseEventLogger.maybeSetResponseStatus(RESPONSE_STATUS_SUCCESS);
+            mFillResponseEventLogger.startResponseProcessingTime();
+            // Time passed since session was created
+            final long fillRequestReceivedRelativeTimestamp =
+                    SystemClock.elapsedRealtime() - mLatencyBaseTime;
+            mPresentationStatsEventLogger.maybeSetFillResponseReceivedTimestampMs(
+                    (int) (fillRequestReceivedRelativeTimestamp));
+            mFillResponseEventLogger.maybeSetLatencyFillResponseReceivedMillis(
+                    (int) (fillRequestReceivedRelativeTimestamp));
+            if (mDestroyed) {
+                Slog.w(TAG, "Call to Session#onSecondaryFillResponse() rejected - session: "
+                        + id + " destroyed");
+                mFillResponseEventLogger.maybeSetResponseStatus(RESPONSE_STATUS_SESSION_DESTROYED);
+                mFillResponseEventLogger.logAndEndEvent();
+                return;
+            }
+
+            List<Dataset> datasetList = fillResponse.getDatasets();
+            int datasetCount = (datasetList == null) ? 0 : datasetList.size();
+            mFillResponseEventLogger.maybeSetTotalDatasetsProvided(datasetCount);
+            mFillResponseEventLogger.maybeSetAvailableCount(datasetCount);
+            if (mSecondaryResponses == null) {
+                mSecondaryResponses = new SparseArray<>(2);
+            }
+            mSecondaryResponses.put(fillResponse.getRequestId(), fillResponse);
             setViewStatesLocked(fillResponse, ViewState.STATE_FILLABLE, /* clearResponse= */ false,
                     /* isPrimary= */ false);
 
@@ -1808,6 +1883,8 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             if (currentView != null) {
                 currentView.maybeCallOnFillReady(flags);
             }
+            mFillResponseEventLogger.maybeSetLatencyResponseProcessingMillis();
+            mFillResponseEventLogger.logAndEndEvent();
         }
     }
 
@@ -3964,7 +4041,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         }
 
         // If it's not, then check if it should start a partition.
-        if (shouldStartNewPartitionLocked(id)) {
+        if (shouldStartNewPartitionLocked(id, flags)) {
             if (sDebug) {
                 Slog.d(TAG, "Starting partition or augmented request for view id " + id + ": "
                         + viewState.getStateAsString());
@@ -3992,9 +4069,11 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
      * @return {@code true} if a new partition should be started
      */
     @GuardedBy("mLock")
-    private boolean shouldStartNewPartitionLocked(@NonNull AutofillId id) {
+    private boolean shouldStartNewPartitionLocked(@NonNull AutofillId id, int flags) {
         final ViewState currentView = mViewStates.get(id);
-        if (mResponses == null) {
+        SparseArray<FillResponse> responses = shouldRequestSecondaryProvider(flags)
+                ? mSecondaryResponses : mResponses;
+        if (responses == null) {
             return currentView != null && (currentView.getState()
                     & ViewState.STATE_PENDING_CREATE_INLINE_REQUEST) == 0;
         }
@@ -4006,7 +4085,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             return true;
         }
 
-        final int numResponses = mResponses.size();
+        final int numResponses = responses.size();
         if (numResponses >= AutofillManagerService.getPartitionMaxCount()) {
             Slog.e(TAG, "Not starting a new partition on " + id + " because session " + this.id
                     + " reached maximum of " + AutofillManagerService.getPartitionMaxCount());
@@ -4014,7 +4093,7 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
         }
 
         for (int responseNum = 0; responseNum < numResponses; responseNum++) {
-            final FillResponse response = mResponses.valueAt(responseNum);
+            final FillResponse response = responses.valueAt(responseNum);
 
             if (ArrayUtils.contains(response.getIgnoredIds(), id)) {
                 return false;
@@ -4050,6 +4129,10 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     }
 
     boolean shouldRequestSecondaryProvider(int flags) {
+        if (!mService.isAutofillCredmanIntegrationEnabled()
+                || mSecondaryProviderHandler == null) {
+            return false;
+        }
         if (mIsPrimaryCredential) {
             return (flags & FLAG_VIEW_REQUESTS_CREDMAN_SERVICE) == 0;
         } else {
@@ -4185,12 +4268,6 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 }
                 break;
             case ACTION_VIEW_ENTERED:
-                if (shouldRequestSecondaryProvider(flags)
-                        && mSecondaryProviderHandler != null
-                        && mAssistReceiver.mLastFillRequest != null) {
-                    mSecondaryProviderHandler.onFillRequest(mAssistReceiver.mLastFillRequest,
-                            flags);
-                }
                 mLatencyBaseTime = SystemClock.elapsedRealtime();
                 boolean wasPreviouslyFillDialog = mPreviouslyFillDialogPotentiallyStarted;
                 mPreviouslyFillDialogPotentiallyStarted = false;
@@ -4203,6 +4280,25 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                 mCurrentViewId = viewState.id;
                 if (value != null) {
                     viewState.setCurrentValue(value);
+                }
+                boolean isCredmanRequested = (flags & FLAG_VIEW_REQUESTS_CREDMAN_SERVICE) != 0;
+                if (shouldRequestSecondaryProvider(flags)) {
+                    if (requestNewFillResponseOnViewEnteredIfNecessaryLocked(
+                            id, viewState, flags)) {
+                        Slog.v(TAG, "Started a new fill request for secondary provider.");
+                        return;
+                    }
+
+                    FillResponse response = viewState.getSecondaryResponse();
+                    if (response != null) {
+                        logPresentationStatsOnViewEntered(response, isCredmanRequested);
+                    }
+
+                    // If the ViewState is ready to be displayed, onReady() will be called.
+                    viewState.update(value, virtualBounds, flags);
+
+                    // return here because primary provider logic is not applicable.
+                    return;
                 }
 
                 if (mCompatMode && (viewState.getState() & ViewState.STATE_URL_BAR) != 0) {
@@ -4283,13 +4379,9 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
                     return;
                 }
 
-                if (viewState.getResponse() != null) {
-                    FillResponse response = viewState.getResponse();
-                    mPresentationStatsEventLogger.maybeSetRequestId(response.getRequestId());
-                    mPresentationStatsEventLogger.maybeSetFieldClassificationRequestId(
-                            mFieldClassificationIdSnapshot);
-                    mPresentationStatsEventLogger.maybeSetAvailableCount(
-                            response.getDatasets(), mCurrentViewId);
+                FillResponse response = viewState.getResponse();
+                if (response != null) {
+                    logPresentationStatsOnViewEntered(response, isCredmanRequested);
                 }
 
                 if (isSameViewEntered) {
@@ -4327,6 +4419,17 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
             default:
                 Slog.w(TAG, "updateLocked(): unknown action: " + action);
         }
+    }
+
+    @GuardedBy("mLock")
+    private void logPresentationStatsOnViewEntered(FillResponse response,
+            boolean isCredmanRequested) {
+        mPresentationStatsEventLogger.maybeSetRequestId(response.getRequestId());
+        mPresentationStatsEventLogger.maybeSetIsCredentialRequest(isCredmanRequested);
+        mPresentationStatsEventLogger.maybeSetFieldClassificationRequestId(
+                mFieldClassificationIdSnapshot);
+        mPresentationStatsEventLogger.maybeSetAvailableCount(
+                response.getDatasets(), mCurrentViewId);
     }
 
     @GuardedBy("mLock")
@@ -4371,6 +4474,15 @@ final class Session implements RemoteFillService.FillServiceCallbacks, ViewState
     @GuardedBy("mLock")
     private void updateViewStateAndUiOnValueChangedLocked(AutofillId id, AutofillValue value,
             ViewState viewState, int flags) {
+        if (mIgnoreViewStateResetToEmpty && (value == null || value.isEmpty())
+                && viewState.getCurrentValue() != null && viewState.getCurrentValue().isText()
+                && viewState.getCurrentValue().getTextValue() != null
+                && viewState.getCurrentValue().getTextValue().length() > 1) {
+            if (sVerbose) {
+                Slog.v(TAG, "Ignoring view state reset to empty on id " + id);
+            }
+            return;
+        }
         final String textValue;
         if (value == null || !value.isText()) {
             textValue = null;

@@ -26,17 +26,18 @@ import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doAnswer;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.mockitoSession;
 import static com.android.server.job.JobSchedulerService.ACTIVE_INDEX;
 import static com.android.server.job.JobSchedulerService.EXEMPTED_INDEX;
+import static com.android.server.job.controllers.FlexibilityController.FLEXIBLE_CONSTRAINTS;
 import static com.android.server.job.controllers.FlexibilityController.FcConfig.DEFAULT_FALLBACK_FLEXIBILITY_DEADLINE_MS;
 import static com.android.server.job.controllers.FlexibilityController.FcConfig.DEFAULT_UNSEEN_CONSTRAINT_GRACE_PERIOD_MS;
 import static com.android.server.job.controllers.FlexibilityController.FcConfig.KEY_APPLIED_CONSTRAINTS;
 import static com.android.server.job.controllers.FlexibilityController.FcConfig.KEY_DEADLINE_PROXIMITY_LIMIT;
 import static com.android.server.job.controllers.FlexibilityController.FcConfig.KEY_FALLBACK_FLEXIBILITY_DEADLINE;
 import static com.android.server.job.controllers.FlexibilityController.FcConfig.KEY_PERCENTS_TO_DROP_NUM_FLEXIBLE_CONSTRAINTS;
-import static com.android.server.job.controllers.FlexibilityController.FLEXIBLE_CONSTRAINTS;
 import static com.android.server.job.controllers.FlexibilityController.SYSTEM_WIDE_FLEXIBLE_CONSTRAINTS;
 import static com.android.server.job.controllers.JobStatus.CONSTRAINT_BATTERY_NOT_LOW;
 import static com.android.server.job.controllers.JobStatus.CONSTRAINT_CHARGING;
@@ -52,24 +53,32 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.AlarmManager;
 import android.app.AppGlobals;
 import android.app.job.JobInfo;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.net.NetworkRequest;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.DeviceConfig;
 import android.util.ArraySet;
+import android.util.EmptyArray;
 
 import com.android.server.AppSchedulingModuleThread;
+import com.android.server.DeviceIdleInternal;
 import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.JobStore;
@@ -79,6 +88,7 @@ import libcore.junit.util.compat.CoreCompatChangeRule;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.MockitoSession;
@@ -97,6 +107,7 @@ public class FlexibilityControllerTest {
     private static final long FROZEN_TIME = 100L;
 
     private MockitoSession mMockingSession;
+    private BroadcastReceiver mBroadcastReceiver;
     private FlexibilityController mFlexibilityController;
     private DeviceConfig.Properties.Builder mDeviceConfigPropertiesBuilder;
     private JobStore mJobStore;
@@ -107,6 +118,8 @@ public class FlexibilityControllerTest {
     private AlarmManager mAlarmManager;
     @Mock
     private Context mContext;
+    @Mock
+    private DeviceIdleInternal mDeviceIdleInternal;
     @Mock
     private JobSchedulerService mJobSchedulerService;
     @Mock
@@ -130,10 +143,13 @@ public class FlexibilityControllerTest {
         // Called in FlexibilityController constructor.
         when(mContext.getMainLooper()).thenReturn(Looper.getMainLooper());
         when(mContext.getSystemService(Context.ALARM_SERVICE)).thenReturn(mAlarmManager);
+        doNothing().when(mAlarmManager).setExact(anyInt(), anyLong(), anyString(), any(), any());
         when(mContext.getPackageManager()).thenReturn(mPackageManager);
         when(mPackageManager.hasSystemFeature(
                 PackageManager.FEATURE_AUTOMOTIVE)).thenReturn(false);
         when(mPackageManager.hasSystemFeature(PackageManager.FEATURE_EMBEDDED)).thenReturn(false);
+        doReturn(mDeviceIdleInternal)
+                .when(() -> LocalServices.getService(DeviceIdleInternal.class));
         // Used in FlexibilityController.FcConstants.
         doAnswer((Answer<Void>) invocationOnMock -> null)
                 .when(() -> DeviceConfig.addOnPropertiesChangedListener(
@@ -148,7 +164,7 @@ public class FlexibilityControllerTest {
                         eq(DeviceConfig.NAMESPACE_JOB_SCHEDULER), ArgumentMatchers.<String>any()));
         //used to get jobs by UID
         mJobStore = JobStore.initAndGetForTesting(mContext, mContext.getFilesDir());
-        when(mJobSchedulerService.getJobStore()).thenReturn(mJobStore);
+        doReturn(mJobStore).when(mJobSchedulerService).getJobStore();
         // Used in JobStatus.
         doReturn(mock(PackageManagerInternal.class))
                 .when(() -> LocalServices.getService(PackageManagerInternal.class));
@@ -158,6 +174,8 @@ public class FlexibilityControllerTest {
         JobSchedulerService.sElapsedRealtimeClock =
                 Clock.fixed(Instant.ofEpochMilli(FROZEN_TIME), ZoneOffset.UTC);
         // Initialize real objects.
+        ArgumentCaptor<BroadcastReceiver> receiverCaptor =
+                ArgumentCaptor.forClass(BroadcastReceiver.class);
         mFlexibilityController = new FlexibilityController(mJobSchedulerService,
                 mPrefetchController);
         mFcConfig = mFlexibilityController.getFcConfig();
@@ -168,6 +186,11 @@ public class FlexibilityControllerTest {
         setDeviceConfigLong(KEY_DEADLINE_PROXIMITY_LIMIT, 0L);
         setDeviceConfigInt(KEY_APPLIED_CONSTRAINTS, FLEXIBLE_CONSTRAINTS);
         waitForQuietModuleThread();
+
+        verify(mContext).registerReceiver(receiverCaptor.capture(),
+                ArgumentMatchers.argThat(filter ->
+                        filter.hasAction(PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED)));
+        mBroadcastReceiver = receiverCaptor.getValue();
     }
 
     @After
@@ -403,6 +426,8 @@ public class FlexibilityControllerTest {
 
     @Test
     public void testGetNextConstraintDropTimeElapsedLocked() {
+        setDeviceConfigLong(KEY_FALLBACK_FLEXIBILITY_DEADLINE, 200 * HOUR_IN_MILLIS);
+
         long nextTimeToDropNumConstraints;
 
         // no delay, deadline
@@ -434,15 +459,18 @@ public class FlexibilityControllerTest {
 
         nextTimeToDropNumConstraints = mFlexibilityController
                 .getNextConstraintDropTimeElapsedLocked(js);
-        assertEquals(130400100, nextTimeToDropNumConstraints);
+        assertEquals(FROZEN_TIME + 800000L + (200 * HOUR_IN_MILLIS) / 2,
+                nextTimeToDropNumConstraints);
         js.setNumDroppedFlexibleConstraints(1);
         nextTimeToDropNumConstraints = mFlexibilityController
                 .getNextConstraintDropTimeElapsedLocked(js);
-        assertEquals(156320100L, nextTimeToDropNumConstraints);
+        assertEquals(FROZEN_TIME + 800000L + (200 * HOUR_IN_MILLIS) * 6 / 10,
+                nextTimeToDropNumConstraints);
         js.setNumDroppedFlexibleConstraints(2);
         nextTimeToDropNumConstraints = mFlexibilityController
                 .getNextConstraintDropTimeElapsedLocked(js);
-        assertEquals(182240100L, nextTimeToDropNumConstraints);
+        assertEquals(FROZEN_TIME + 800000L + (200 * HOUR_IN_MILLIS) * 7 / 10,
+                nextTimeToDropNumConstraints);
 
         // no delay, no deadline
         jb = createJob(0);
@@ -450,15 +478,15 @@ public class FlexibilityControllerTest {
 
         nextTimeToDropNumConstraints = mFlexibilityController
                 .getNextConstraintDropTimeElapsedLocked(js);
-        assertEquals(129600100, nextTimeToDropNumConstraints);
+        assertEquals(FROZEN_TIME + (200 * HOUR_IN_MILLIS) / 2, nextTimeToDropNumConstraints);
         js.setNumDroppedFlexibleConstraints(1);
         nextTimeToDropNumConstraints = mFlexibilityController
                 .getNextConstraintDropTimeElapsedLocked(js);
-        assertEquals(155520100L, nextTimeToDropNumConstraints);
+        assertEquals(FROZEN_TIME + (200 * HOUR_IN_MILLIS) * 6 / 10, nextTimeToDropNumConstraints);
         js.setNumDroppedFlexibleConstraints(2);
         nextTimeToDropNumConstraints = mFlexibilityController
                 .getNextConstraintDropTimeElapsedLocked(js);
-        assertEquals(181440100L, nextTimeToDropNumConstraints);
+        assertEquals(FROZEN_TIME + (200 * HOUR_IN_MILLIS) * 7 / 10, nextTimeToDropNumConstraints);
 
         // delay, deadline
         jb = createJob(0)
@@ -601,10 +629,10 @@ public class FlexibilityControllerTest {
     @Test
     public void testGetLifeCycleBeginningElapsedLocked_Prefetch() {
         // prefetch with lifecycle
-        when(mPrefetchController.getLaunchTimeThresholdMs()).thenReturn(700L);
+        doReturn(700L).when(mPrefetchController).getLaunchTimeThresholdMs();
         JobInfo.Builder jb = createJob(0).setPrefetch(true);
         JobStatus js = createJobStatus("time", jb);
-        when(mPrefetchController.getNextEstimatedLaunchTimeLocked(js)).thenReturn(900L);
+        doReturn(900L).when(mPrefetchController).getNextEstimatedLaunchTimeLocked(js);
         assertEquals(900L - 700L, mFlexibilityController.getLifeCycleBeginningElapsedLocked(js));
         // prefetch with enqueue
         jb = createJob(0).setPrefetch(true);
@@ -619,7 +647,7 @@ public class FlexibilityControllerTest {
         // prefetch without estimate
         mFlexibilityController.mPrefetchLifeCycleStart
                 .add(js.getUserId(), js.getSourcePackageName(), 500L);
-        when(mPrefetchController.getNextEstimatedLaunchTimeLocked(js)).thenReturn(Long.MAX_VALUE);
+        doReturn(Long.MAX_VALUE).when(mPrefetchController).getNextEstimatedLaunchTimeLocked(js);
         jb = createJob(0).setPrefetch(true);
         js = createJobStatus("time", jb);
         assertEquals(500L, mFlexibilityController.getLifeCycleBeginningElapsedLocked(js));
@@ -645,12 +673,12 @@ public class FlexibilityControllerTest {
         // prefetch no estimate
         JobInfo.Builder jb = createJob(0).setPrefetch(true);
         JobStatus js = createJobStatus("time", jb);
-        when(mPrefetchController.getNextEstimatedLaunchTimeLocked(js)).thenReturn(Long.MAX_VALUE);
+        doReturn(Long.MAX_VALUE).when(mPrefetchController).getNextEstimatedLaunchTimeLocked(js);
         assertEquals(Long.MAX_VALUE, mFlexibilityController.getLifeCycleEndElapsedLocked(js, 0));
         // prefetch with estimate
         jb = createJob(0).setPrefetch(true);
         js = createJobStatus("time", jb);
-        when(mPrefetchController.getNextEstimatedLaunchTimeLocked(js)).thenReturn(1000L);
+        doReturn(1000L).when(mPrefetchController).getNextEstimatedLaunchTimeLocked(js);
         assertEquals(1000L, mFlexibilityController.getLifeCycleEndElapsedLocked(js, 0));
     }
 
@@ -699,7 +727,7 @@ public class FlexibilityControllerTest {
         // Stop satisfied constraints from causing a false positive.
         js.setNumAppliedFlexibleConstraints(100);
         synchronized (mFlexibilityController.mLock) {
-            when(mJobSchedulerService.isCurrentlyRunningLocked(js)).thenReturn(true);
+            doReturn(true).when(mJobSchedulerService).isCurrentlyRunningLocked(js);
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(js));
         }
     }
@@ -851,6 +879,9 @@ public class FlexibilityControllerTest {
 
     @Test
     public void testAllowlistedAppBypass() {
+        setPowerWhitelistExceptIdle();
+        mFlexibilityController.onSystemServicesReady();
+
         JobStatus jsHigh = createJobStatus("testAllowlistedAppBypass",
                 createJob(0).setPriority(JobInfo.PRIORITY_HIGH));
         JobStatus jsDefault = createJobStatus("testAllowlistedAppBypass",
@@ -864,6 +895,15 @@ public class FlexibilityControllerTest {
         jsLow.setStandbyBucket(EXEMPTED_INDEX);
         jsMin.setStandbyBucket(EXEMPTED_INDEX);
 
+        setPowerWhitelistExceptIdle();
+        synchronized (mFlexibilityController.mLock) {
+            assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsHigh));
+            assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsDefault));
+            assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsLow));
+            assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsMin));
+        }
+
+        setPowerWhitelistExceptIdle(SOURCE_PACKAGE);
         synchronized (mFlexibilityController.mLock) {
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(jsHigh));
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(jsDefault));
@@ -883,7 +923,7 @@ public class FlexibilityControllerTest {
         JobStatus jsMin = createJobStatus("testAllowlistedAppBypass",
                 createJob(0).setPriority(JobInfo.PRIORITY_MIN));
 
-        when(mJobSchedulerService.getUidBias(mSourceUid)).thenReturn(JobInfo.BIAS_DEFAULT);
+        doReturn(JobInfo.BIAS_DEFAULT).when(mJobSchedulerService).getUidBias(mSourceUid);
         synchronized (mFlexibilityController.mLock) {
             assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsHigh));
             assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsDefault));
@@ -891,8 +931,7 @@ public class FlexibilityControllerTest {
             assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsMin));
         }
 
-        when(mJobSchedulerService.getUidBias(mSourceUid))
-                .thenReturn(JobInfo.BIAS_BOUND_FOREGROUND_SERVICE);
+        setUidBias(mSourceUid, JobInfo.BIAS_BOUND_FOREGROUND_SERVICE);
         synchronized (mFlexibilityController.mLock) {
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(jsHigh));
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(jsDefault));
@@ -900,8 +939,7 @@ public class FlexibilityControllerTest {
             assertFalse(mFlexibilityController.isFlexibilitySatisfiedLocked(jsMin));
         }
 
-        when(mJobSchedulerService.getUidBias(mSourceUid))
-                .thenReturn(JobInfo.BIAS_FOREGROUND_SERVICE);
+        setUidBias(mSourceUid, JobInfo.BIAS_FOREGROUND_SERVICE);
         synchronized (mFlexibilityController.mLock) {
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(jsHigh));
             assertTrue(mFlexibilityController.isFlexibilitySatisfiedLocked(jsDefault));
@@ -1251,9 +1289,9 @@ public class FlexibilityControllerTest {
         JobInfo.Builder jb = createJob(22).setPrefetch(true);
         JobStatus js = createJobStatus("onPrefetchCacheUpdated", jb);
         jobs.add(js);
-        when(mPrefetchController.getLaunchTimeThresholdMs()).thenReturn(7 * HOUR_IN_MILLIS);
-        when(mPrefetchController.getNextEstimatedLaunchTimeLocked(js)).thenReturn(
-                1150L + mFlexibilityController.mConstants.PREFETCH_FORCE_BATCH_RELAX_THRESHOLD_MS);
+        doReturn(7 * HOUR_IN_MILLIS).when(mPrefetchController).getLaunchTimeThresholdMs();
+        doReturn(1150L + mFlexibilityController.mConstants.PREFETCH_FORCE_BATCH_RELAX_THRESHOLD_MS)
+                .when(mPrefetchController).getNextEstimatedLaunchTimeLocked(js);
 
         mFlexibilityController.maybeStartTrackingJobLocked(js, null);
 
@@ -1295,7 +1333,7 @@ public class FlexibilityControllerTest {
 
         final ArraySet<String> pkgs = new ArraySet<>();
         pkgs.add(js.getSourcePackageName());
-        when(mJobSchedulerService.getPackagesForUidLocked(mSourceUid)).thenReturn(pkgs);
+        doReturn(pkgs).when(mJobSchedulerService).getPackagesForUidLocked(mSourceUid);
 
         setUidBias(mSourceUid, BIAS_TOP_APP);
         setUidBias(mSourceUid, BIAS_FOREGROUND_SERVICE);
@@ -1309,7 +1347,6 @@ public class FlexibilityControllerTest {
         setUidBias(mSourceUid, BIAS_FOREGROUND_SERVICE);
         assertEquals(100L, (long) mFlexibilityController
                 .mPrefetchLifeCycleStart.get(js.getSourceUserId(), js.getSourcePackageName()));
-
     }
 
     @Test
@@ -1323,7 +1360,7 @@ public class FlexibilityControllerTest {
     }
 
     private void runTestUnsupportedDevice(String feature) {
-        when(mPackageManager.hasSystemFeature(feature)).thenReturn(true);
+        doReturn(true).when(mPackageManager).hasSystemFeature(feature);
         mFlexibilityController =
                 new FlexibilityController(mJobSchedulerService, mPrefetchController);
         assertFalse(mFlexibilityController.isEnabled());
@@ -1340,6 +1377,16 @@ public class FlexibilityControllerTest {
                 mFlexibilityController.mFlexibilityTracker.getArrayList();
         for (int i = 0; i < jobs.size(); i++) {
             assertEquals(0, jobs.get(i).size());
+        }
+    }
+
+    private void setPowerWhitelistExceptIdle(String... packages) {
+        doReturn(packages == null ? EmptyArray.STRING : packages)
+                .when(mDeviceIdleInternal).getFullPowerWhitelistExceptIdle();
+        if (mBroadcastReceiver != null) {
+            mBroadcastReceiver.onReceive(mContext,
+                    new Intent(PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED));
+            waitForQuietModuleThread();
         }
     }
 

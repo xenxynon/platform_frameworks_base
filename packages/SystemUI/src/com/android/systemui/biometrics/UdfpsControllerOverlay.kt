@@ -45,6 +45,7 @@ import androidx.annotation.LayoutRes
 import androidx.annotation.VisibleForTesting
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.systemui.animation.ActivityLaunchAnimator
+import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor
 import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams
 import com.android.systemui.biometrics.ui.binder.UdfpsTouchOverlayBinder
 import com.android.systemui.biometrics.ui.view.UdfpsTouchOverlay
@@ -57,6 +58,7 @@ import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.res.R
+import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.LockscreenShadeTransitionController
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager
 import com.android.systemui.statusbar.phone.SystemUIDialogManager
@@ -107,6 +109,8 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
     private val selectedUserInteractor: SelectedUserInteractor,
     private val deviceEntryUdfpsTouchOverlayViewModel: Lazy<DeviceEntryUdfpsTouchOverlayViewModel>,
     private val defaultUdfpsTouchOverlayViewModel: Lazy<DefaultUdfpsTouchOverlayViewModel>,
+    private val shadeInteractor: ShadeInteractor,
+    private val udfpsOverlayInteractor: UdfpsOverlayInteractor,
 ) {
     private var overlayViewLegacy: UdfpsView? = null
         private set
@@ -277,9 +281,10 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                         updateAccessibilityViewLocation(sensorBounds)
                     },
                     statusBarStateController,
-                    primaryBouncerInteractor,
+                    shadeInteractor,
                     dialogManager,
-                    dumpManager
+                    dumpManager,
+                    udfpsOverlayInteractor,
                 )
             }
             REASON_AUTH_KEYGUARD -> {
@@ -303,6 +308,8 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                     udfpsKeyguardAccessibilityDelegate,
                     selectedUserInteractor,
                     transitionInteractor,
+                    shadeInteractor,
+                    udfpsOverlayInteractor,
                 )
             }
             REASON_AUTH_BP -> {
@@ -310,9 +317,10 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                 UdfpsBpViewController(
                     view.addUdfpsView(R.layout.udfps_bp_view),
                     statusBarStateController,
-                    primaryBouncerInteractor,
+                    shadeInteractor,
                     dialogManager,
-                    dumpManager
+                    dumpManager,
+                    udfpsOverlayInteractor,
                 )
             }
             REASON_AUTH_OTHER,
@@ -320,9 +328,10 @@ class UdfpsControllerOverlay @JvmOverloads constructor(
                 UdfpsFpmEmptyViewController(
                     view.addUdfpsView(R.layout.udfps_fpm_empty_view),
                     statusBarStateController,
-                    primaryBouncerInteractor,
+                    shadeInteractor,
                     dialogManager,
-                    dumpManager
+                    dumpManager,
+                    udfpsOverlayInteractor,
                 )
             }
             else -> {

@@ -35,6 +35,7 @@ import android.view.WindowInsetsController;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
 import java.util.Objects;
 
 /**
@@ -70,6 +71,8 @@ public final class AutomaticZenRule implements Parcelable {
     public static final int TYPE_SCHEDULE_CALENDAR = 2;
     /**
      * The type for rules triggered by bedtime/sleeping, like time of day, or snore detection.
+     *
+     * <p>Only the 'Wellbeing' app may own rules of this type.
      */
     @FlaggedApi(Flags.FLAG_MODES_API)
     public static final int TYPE_BEDTIME = 3;
@@ -95,6 +98,8 @@ public final class AutomaticZenRule implements Parcelable {
     /**
      * The type for rules created and managed by a device owner. These rules may not be fully
      * editable by the device user.
+     *
+     * <p>Only a 'Device Owner' app may own rules of this type.
      */
     @FlaggedApi(Flags.FLAG_MODES_API)
     public static final int TYPE_MANAGED = 7;
@@ -107,6 +112,28 @@ public final class AutomaticZenRule implements Parcelable {
     @Retention(RetentionPolicy.SOURCE)
     public @interface Type {}
 
+    /**
+     * Enum for the user-modifiable fields in this object.
+     * @hide
+     */
+    @IntDef(flag = true, prefix = { "FIELD_" }, value = {
+            FIELD_NAME,
+            FIELD_INTERRUPTION_FILTER,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ModifiableField {}
+
+    /**
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_MODES_API)
+    public static final int FIELD_NAME = 1 << 0;
+    /**
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_MODES_API)
+    public static final int FIELD_INTERRUPTION_FILTER = 1 << 1;
+
     private boolean enabled;
     private String name;
     private @InterruptionFilter int interruptionFilter;
@@ -116,9 +143,10 @@ public final class AutomaticZenRule implements Parcelable {
     private long creationTime;
     private ZenPolicy mZenPolicy;
     private ZenDeviceEffects mDeviceEffects;
+    // TODO: b/310620812 - Remove this once FLAG_MODES_API is inlined.
     private boolean mModified = false;
     private String mPkg;
-    private int mType = TYPE_UNKNOWN;
+    private int mType = Flags.modesApi() ? TYPE_UNKNOWN : 0;
     private int mIconResId;
     private String mTriggerDescription;
     private boolean mAllowManualInvocation;
@@ -274,6 +302,7 @@ public final class AutomaticZenRule implements Parcelable {
      * Returns whether this rule's name has been modified by the user.
      * @hide
      */
+    // TODO: b/310620812 - Consider removing completely. Seems not be used anywhere except tests.
     public boolean isModified() {
         return mModified;
     }
@@ -524,6 +553,18 @@ public final class AutomaticZenRule implements Parcelable {
         }
 
         return sb.append(']').toString();
+    }
+
+    /** @hide */
+    public static String fieldsToString(@ModifiableField int bitmask) {
+        ArrayList<String> modified = new ArrayList<>();
+        if ((bitmask & FIELD_NAME) != 0) {
+            modified.add("FIELD_NAME");
+        }
+        if ((bitmask & FIELD_INTERRUPTION_FILTER) != 0) {
+            modified.add("FIELD_INTERRUPTION_FILTER");
+        }
+        return "{" + String.join(",", modified) + "}";
     }
 
     @Override

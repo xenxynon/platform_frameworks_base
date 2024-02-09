@@ -771,7 +771,7 @@ public class AudioDeviceInventory {
     /** only public for mocking/spying, do not call outside of AudioService */
     // @GuardedBy("mDeviceBroker.mSetModeLock")
     @VisibleForTesting
-    @GuardedBy("mDeviceBroker.mDeviceStateLock")
+    //@GuardedBy("AudioDeviceBroker.this.mDeviceStateLock")
     public void onSetBtActiveDevice(@NonNull AudioDeviceBroker.BtDeviceInfo btInfo,
                                     @AudioSystem.AudioFormatNativeEnumForBtCodec int codec,
                                     int streamType) {
@@ -2096,7 +2096,7 @@ public class AudioDeviceInventory {
 
         } else {
             AudioService.sDeviceLogger.enqueue(new EventLogger.StringEvent(
-                    "A2DP source device addr=" + Utils.anonymizeBluetoothAddress(address)
+                    "A2DP sink device addr=" + Utils.anonymizeBluetoothAddress(address)
                             + " now available").printLog(TAG));
         }
 

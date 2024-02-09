@@ -67,7 +67,6 @@ final class RemovePackageHelper {
     private final PackageManagerService mPm;
     private final IncrementalManager mIncrementalManager;
     private final Installer mInstaller;
-    private final UserManagerInternal mUserManagerInternal;
     private final PermissionManagerServiceInternal mPermissionManager;
     private final SharedLibrariesImpl mSharedLibraries;
     private final AppDataHelper mAppDataHelper;
@@ -79,7 +78,6 @@ final class RemovePackageHelper {
         mPm = pm;
         mIncrementalManager = mPm.mInjector.getIncrementalManager();
         mInstaller = mPm.mInjector.getInstaller();
-        mUserManagerInternal = mPm.mInjector.getUserManagerInternal();
         mPermissionManager = mPm.mInjector.getPermissionManagerServiceInternal();
         mSharedLibraries = mPm.mInjector.getSharedLibrariesImpl();
         mAppDataHelper = appDataHelper;
@@ -355,16 +353,22 @@ final class RemovePackageHelper {
     // Called to clean up disabled system packages
     public void removePackageData(final PackageSetting deletedPs, @NonNull int[] allUserHandles) {
         synchronized (mPm.mInstallLock) {
-            removePackageDataLIF(deletedPs, allUserHandles, new PackageRemovedInfo(),
-                    /* flags= */ 0, /* writeSettings= */ false);
+            removePackageDataLIF(deletedPs, UserHandle.USER_ALL, allUserHandles,
+                    new PackageRemovedInfo(), /* flags= */ 0, /* writeSettings= */ false);
         }
     }
 
-    /*
+    /**
      * This method deletes the package from internal data structures such as mPackages / mSettings.
+     *
+     * @param targetUserId indicates the target user of the deletion. It equals to
+     *                     {@link UserHandle.USER_ALL} if the deletion was initiated for all users,
+     *                     otherwise it equals to the specific user id that the deletion was meant
+     *                     for.
      */
     @GuardedBy("mPm.mInstallLock")
-    public void removePackageDataLIF(final PackageSetting deletedPs, @NonNull int[] allUserHandles,
+    public void removePackageDataLIF(final PackageSetting deletedPs, int targetUserId,
+            @NonNull int[] allUserHandles,
             @NonNull PackageRemovedInfo outInfo, int flags, boolean writeSettings) {
         String packageName = deletedPs.getPackageName();
         if (DEBUG_REMOVE) Slog.d(TAG, "removePackageDataLI: " + deletedPs);
@@ -372,7 +376,7 @@ final class RemovePackageHelper {
         final AndroidPackage deletedPkg = deletedPs.getPkg();
 
         // Delete all the data and states related to this package.
-        clearPackageStateForUserLIF(deletedPs, UserHandle.USER_ALL, flags);
+        clearPackageStateForUserLIF(deletedPs, targetUserId, flags);
 
         // Delete from mPackages
         removePackageLI(packageName, (flags & PackageManager.DELETE_CHATTY) != 0);
@@ -384,12 +388,11 @@ final class RemovePackageHelper {
             deletedPs.setPkg(null);
         }
 
-        if ((flags & PackageManager.DELETE_KEEP_DATA) == 0) {
+        if (shouldDeletePackageSetting(deletedPs, targetUserId, allUserHandles, flags)) {
             // Delete from mSettings
             final SparseBooleanArray changedUsers = new SparseBooleanArray();
             synchronized (mPm.mLock) {
-                mPm.mSettings.removePackageLPw(packageName);
-                outInfo.mIsAppIdRemoved = true;
+                outInfo.mIsAppIdRemoved = mPm.mSettings.removePackageAndAppIdLPw(packageName);
                 if (!mPm.mSettings.isDisabledSystemPackageLPr(packageName)) {
                     final SharedUserSetting sus = mPm.mSettings.getSharedUserSettingLPr(deletedPs);
                     // If we don't have a disabled system package to reinstall, the package is
@@ -455,6 +458,25 @@ final class RemovePackageHelper {
                 mPm.mSettings.writeKernelMappingLPr(deletedPs);
             }
         }
+    }
+
+    private static boolean shouldDeletePackageSetting(PackageSetting deletedPs, int userId,
+                                                      int[] allUserHandles, int flags) {
+        if ((flags & PackageManager.DELETE_KEEP_DATA) != 0) {
+            return false;
+        }
+        if (userId == UserHandle.USER_ALL) {
+            // Deleting for ALL. Let's wipe the PackageSetting.
+            return true;
+        }
+        if (deletedPs.hasDataOnAnyOtherUser(allUserHandles, userId)) {
+            // We arrived here because we are uninstalling the package for a specified user, and the
+            // package isn't installed on any other user. Before we proceed to completely delete the
+            // PackageSetting from mSettings, let's first check if data exists on any other user.
+            // If so, do not wipe the PackageSetting.
+            return false;
+        }
+        return true;
     }
 
     void cleanUpResources(@Nullable String packageName, @Nullable File codeFile,

@@ -132,6 +132,7 @@ filegroup {
         ":libcamera_client_aidl",
         ":libcamera_client_framework_aidl",
         ":libupdate_engine_aidl",
+        ":libupdate_engine_stable-V2-java-source",
         ":logd_aidl",
         ":resourcemanager_aidl",
         ":storaged_aidl",
@@ -148,6 +149,7 @@ filegroup {
         ":framework-javastream-protos",
         ":statslog-framework-java-gen", // FrameworkStatsLog.java
         ":audio_policy_configuration_V7_0",
+        ":perfetto_trace_javastream_protos",
     ],
 }
 
@@ -217,6 +219,7 @@ java_library {
         "updatable-driver-protos",
         "ota_metadata_proto_java",
         "android.hidl.base-V1.0-java",
+        "android.hidl.manager-V1.2-java",
         "android.hardware.cas-V1-java", // AIDL
         "android.hardware.cas-V1.0-java",
         "android.hardware.cas-V1.1-java",
@@ -435,7 +438,6 @@ java_library {
     name: "framework-non-updatable-unbundled-impl-libs",
     static_libs: [
         "framework-location.impl",
-        "framework-nfc.impl",
     ],
     sdk_version: "core_platform",
     installable: false,
@@ -509,6 +511,9 @@ java_library {
             "-Xep:AndroidFrameworkUid:ERROR",
         ],
     },
+    lint: {
+        baseline_filename: "lint-baseline.xml",
+    },
 }
 
 java_library {
@@ -523,6 +528,7 @@ java_library {
     },
     lint: {
         enabled: false,
+
     },
 }
 
@@ -641,6 +647,10 @@ java_library {
         "//frameworks/base/services/net",
         "//packages/modules/Wifi/framework",
     ],
+    lint: {
+        baseline_filename: "lint-baseline.xml",
+    },
+    apex_available: ["com.android.wifi"],
 }
 
 filegroup {

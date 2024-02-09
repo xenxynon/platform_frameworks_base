@@ -301,9 +301,7 @@
             granted to the system companion device manager service -->
         <flag name="companion" value="0x800000" />
         <!-- Additional flag from base permission type: this permission will be granted to the
-             retail demo app, as defined by the OEM.
-             This flag has been replaced by the retail demo role and is a no-op since Android V.
-          -->
+             retail demo app, as defined by the OEM. -->
         <flag name="retailDemo" value="0x1000000" />
         <!-- Additional flag from base permission type: this permission will be granted to the
              recents app. -->
@@ -1746,6 +1744,12 @@
             TODO: b/258855262 mark this field as {@code hide} once this bug is fixed.
             <flag name="fileManagement" value="0x1000" />
         -->
+        <!-- Media processing use cases such as video or photo editing and processing.
+            <p>Requires the app to hold the permission
+            {@link android.Manifest.permission#FOREGROUND_SERVICE_MEDIA_PROCESSING} in order to use
+            this type.
+        -->
+        <flag name="mediaProcessing" value="0x2000" />
         <!-- Use cases that can't be categorized into any other foreground service types, but also
             can't use @link android.app.job.JobInfo.Builder} APIs.
             See {@link android.content.pm.ServiceInfo#FOREGROUND_SERVICE_TYPE_SPECIAL_USE} for the
@@ -1808,6 +1812,12 @@
     <attr name="attributionTags" format="string" />
 
     <attr name="allowUpdateOwnership" format="boolean" />
+
+    <!-- This attribute can be applied to any tag in the manifest. The system uses its value to
+         determine whether the element (e.g., a permission) should be enabled or disabled
+         depending on the state of feature flags.
+         @hide @SystemApi @FlaggedApi("android.content.res.manifest_flagging") -->
+    <attr name="featureFlag" format="string" />
 
     <!-- The <code>manifest</code> tag is the root of an
          <code>AndroidManifest.xml</code> file,
@@ -2986,7 +2996,12 @@
              depends on the number of isolated services that an application starts,
              and how much memory those services save by preloading and sharing memory with
              the app zygote. Therefore, it is recommended to measure memory usage under
-             typical workloads to determine whether it makes sense to use this flag. -->
+             typical workloads to determine whether it makes sense to use this flag.
+
+             <p>There is a limit to the number of isolated services that can be spawned from
+                the Application Zygote; the absolute limit is 100, but due to potential
+                delays in service process cleanup, a much safer limit to use in practice is 50.
+             -->
         <attr name="useAppZygote" format="boolean" />
         <!-- If this is a foreground service, specify its category. -->
         <attr name="foregroundServiceType" />

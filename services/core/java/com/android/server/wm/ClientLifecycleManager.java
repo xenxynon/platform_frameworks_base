@@ -24,6 +24,7 @@ import android.app.servertransaction.ClientTransactionItem;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.Trace;
 import android.util.ArrayMap;
 import android.util.Slog;
 
@@ -74,13 +75,13 @@ class ClientLifecycleManager {
     }
 
     /**
-     * Similar to {@link #scheduleTransactionItem}, but is called without WM lock.
+     * Similar to {@link #scheduleTransactionItem}, but it sends the transaction immediately and
+     * it can be called without WM lock.
      *
      * @see WindowProcessController#setReportedProcState(int)
      */
-    void scheduleTransactionItemUnlocked(@NonNull IApplicationThread client,
+    void scheduleTransactionItemNow(@NonNull IApplicationThread client,
             @NonNull ClientTransactionItem transactionItem) throws RemoteException {
-        // Immediately dispatching to client, and must not access WMS.
         final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
         if (transactionItem.isActivityLifecycleItem()) {
             clientTransaction.setLifecycleStateRequest((ActivityLifecycleItem) transactionItem);
@@ -146,9 +147,10 @@ class ClientLifecycleManager {
 
     /** Executes all the pending transactions. */
     void dispatchPendingTransactions() {
-        if (!Flags.bundleClientTransactionFlag()) {
+        if (!Flags.bundleClientTransactionFlag() || mPendingTransactions.isEmpty()) {
             return;
         }
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "clientTransactionsDispatched");
         final int size = mPendingTransactions.size();
         for (int i = 0; i < size; i++) {
             final ClientTransaction transaction = mPendingTransactions.valueAt(i);
@@ -159,6 +161,7 @@ class ClientLifecycleManager {
             }
         }
         mPendingTransactions.clear();
+        Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
     }
 
     /**

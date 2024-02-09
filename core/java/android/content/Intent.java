@@ -4219,7 +4219,9 @@ public class Intent implements Parcelable, Cloneable {
      * new state of quiet mode. This is only sent to registered receivers, not manifest receivers.
      *
      * <p>This broadcast is similar to {@link #ACTION_MANAGED_PROFILE_AVAILABLE} but functions as a
-     * generic broadcast for all profile users.
+     * generic broadcast for all users of type {@link android.os.UserManager#isProfile()}}. In
+     * case of a managed profile, both {@link #ACTION_MANAGED_PROFILE_AVAILABLE} and
+     * {@link #ACTION_PROFILE_AVAILABLE} broadcasts are sent.
      */
     @FlaggedApi(FLAG_ALLOW_PRIVATE_PROFILE)
     public static final String ACTION_PROFILE_AVAILABLE =
@@ -4233,7 +4235,9 @@ public class Intent implements Parcelable, Cloneable {
      * new state of quiet mode. This is only sent to registered receivers, not manifest receivers.
      *
      * <p>This broadcast is similar to {@link #ACTION_MANAGED_PROFILE_UNAVAILABLE} but functions as
-     * a generic broadcast for all profile users.
+     * a generic broadcast for all users of type {@link android.os.UserManager#isProfile()}}. In
+     * case of a managed profile, both {@link #ACTION_MANAGED_PROFILE_UNAVAILABLE} and
+     * {@link #ACTION_PROFILE_UNAVAILABLE} broadcasts are sent.
      */
     @FlaggedApi(FLAG_ALLOW_PRIVATE_PROFILE)
     public static final String ACTION_PROFILE_UNAVAILABLE =
@@ -6983,16 +6987,21 @@ public class Intent implements Parcelable, Cloneable {
     public static final int FLAG_DEBUG_LOG_RESOLUTION = 0x00000008;
     /**
      * If set, this intent will not match any components in packages that
-     * are currently stopped.  If this is not set, then the default behavior
-     * is to include such applications in the result.
+     * are currently
+     * {@linkplain android.content.pm.ApplicationInfo#FLAG_STOPPED stopped}.
+     * If this is not set, then the default behavior is to include such
+     * applications in the result.
      */
     public static final int FLAG_EXCLUDE_STOPPED_PACKAGES = 0x00000010;
     /**
      * If set, this intent will always match any components in packages that
-     * are currently stopped.  This is the default behavior when
+     * are currently
+     * {@linkplain android.content.pm.ApplicationInfo#FLAG_STOPPED stopped}.
+     * This is the default behavior when
      * {@link #FLAG_EXCLUDE_STOPPED_PACKAGES} is not set.  If both of these
      * flags are set, this one wins (it allows overriding of exclude for
-     * places where the framework may automatically set the exclude flag).
+     * places where the framework may automatically set the exclude flag,
+     * such as broadcasts).
      */
     public static final int FLAG_INCLUDE_STOPPED_PACKAGES = 0x00000020;
 
@@ -8102,7 +8111,7 @@ public class Intent implements Parcelable, Cloneable {
                         int end = data.indexOf('/', 14);
                         if (end < 0) {
                             // All we have is a package name.
-                            intent.mPackage = data.substring(14);
+                            intent.mPackage = Uri.decodeIfNeeded(data.substring(14));
                             if (!explicitAction) {
                                 intent.setAction(ACTION_MAIN);
                             }
@@ -8110,21 +8119,22 @@ public class Intent implements Parcelable, Cloneable {
                         } else {
                             // Target the Intent at the given package name always.
                             String authority = null;
-                            intent.mPackage = data.substring(14, end);
+                            intent.mPackage = Uri.decodeIfNeeded(data.substring(14, end));
                             int newEnd;
                             if ((end+1) < data.length()) {
                                 if ((newEnd=data.indexOf('/', end+1)) >= 0) {
                                     // Found a scheme, remember it.
-                                    scheme = data.substring(end+1, newEnd);
+                                    scheme = Uri.decodeIfNeeded(data.substring(end + 1, newEnd));
                                     end = newEnd;
                                     if (end < data.length() && (newEnd=data.indexOf('/', end+1)) >= 0) {
                                         // Found a authority, remember it.
-                                        authority = data.substring(end+1, newEnd);
+                                        authority = Uri.decodeIfNeeded(
+                                                data.substring(end + 1, newEnd));
                                         end = newEnd;
                                     }
                                 } else {
                                     // All we have is a scheme.
-                                    scheme = data.substring(end+1);
+                                    scheme = Uri.decodeIfNeeded(data.substring(end + 1));
                                 }
                             }
                             if (scheme == null) {
@@ -11765,27 +11775,33 @@ public class Intent implements Parcelable, Cloneable {
                         + this);
             }
             uri.append("android-app://");
-            uri.append(mPackage);
+            uri.append(Uri.encode(mPackage));
             String scheme = null;
             if (mData != null) {
-                scheme = mData.getScheme();
+                // All values here must be wrapped with Uri#encodeIfNotEncoded because it is
+                // possible to exploit the Uri API to return a raw unencoded value, which will
+                // not deserialize properly and may cause the resulting Intent to be transformed
+                // to a malicious value.
+                scheme = Uri.encodeIfNotEncoded(mData.getScheme(), null);
                 if (scheme != null) {
                     uri.append('/');
                     uri.append(scheme);
-                    String authority = mData.getEncodedAuthority();
+                    String authority = Uri.encodeIfNotEncoded(mData.getEncodedAuthority(), null);
                     if (authority != null) {
                         uri.append('/');
                         uri.append(authority);
-                        String path = mData.getEncodedPath();
+
+                        // Multiple path segments are allowed, don't encode the path / separator
+                        String path = Uri.encodeIfNotEncoded(mData.getEncodedPath(), "/");
                         if (path != null) {
                             uri.append(path);
                         }
-                        String queryParams = mData.getEncodedQuery();
+                        String queryParams = Uri.encodeIfNotEncoded(mData.getEncodedQuery(), null);
                         if (queryParams != null) {
                             uri.append('?');
                             uri.append(queryParams);
                         }
-                        String fragment = mData.getEncodedFragment();
+                        String fragment = Uri.encodeIfNotEncoded(mData.getEncodedFragment(), null);
                         if (fragment != null) {
                             uri.append('#');
                             uri.append(fragment);

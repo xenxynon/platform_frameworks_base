@@ -23,6 +23,7 @@ import static com.android.internal.util.XmlUtils.readIntAttribute;
 import static com.android.internal.util.XmlUtils.writeBooleanAttribute;
 import static com.android.internal.util.XmlUtils.writeIntAttribute;
 import static com.android.server.companion.DataStoreUtils.createStorageFileForUser;
+import static com.android.server.companion.DataStoreUtils.fileToByteArray;
 import static com.android.server.companion.DataStoreUtils.isEndOfTag;
 import static com.android.server.companion.DataStoreUtils.isStartOfTag;
 import static com.android.server.companion.DataStoreUtils.writeToFileSafely;
@@ -44,6 +45,7 @@ import com.android.modules.utils.TypedXmlSerializer;
 
 import org.xmlpull.v1.XmlPullParserException;
 
+import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -67,7 +69,6 @@ import java.util.concurrent.TimeoutException;
  *   <request
  *     association_id="1"
  *     data_type="1"
- *     user_id="12"
  *     is_user_consented="true"
  *   </request>
  * </requests>
@@ -84,7 +85,6 @@ public class SystemDataTransferRequestStore {
 
     private static final String XML_ATTR_ASSOCIATION_ID = "association_id";
     private static final String XML_ATTR_DATA_TYPE = "data_type";
-    private static final String XML_ATTR_USER_ID = "user_id";
     private static final String XML_ATTR_IS_USER_CONSENTED = "is_user_consented";
 
     private static final int READ_FROM_DISK_TIMEOUT = 5; // in seconds
@@ -152,6 +152,33 @@ public class SystemDataTransferRequestStore {
         mExecutor.execute(() -> writeRequestsToStore(userId, cachedRequests));
     }
 
+    /**
+     * Return the byte contents of the XML file storing current system data transfer requests.
+     */
+    public byte[] getBackupPayload(@UserIdInt int userId) {
+        final AtomicFile file = getStorageFileForUser(userId);
+
+        synchronized (file) {
+            return fileToByteArray(file);
+        }
+    }
+
+    /**
+     * Parse the byte array containing XML information of system data transfer requests into
+     * an array list of requests.
+     */
+    public List<SystemDataTransferRequest> readRequestsFromPayload(byte[] payload, int userId) {
+        try (ByteArrayInputStream in = new ByteArrayInputStream(payload)) {
+            final TypedXmlPullParser parser = Xml.resolvePullParser(in);
+            XmlUtils.beginDocument(parser, XML_TAG_REQUESTS);
+
+            return readRequestsFromXml(parser, userId);
+        } catch (XmlPullParserException | IOException e) {
+            Slog.e(LOG_TAG, "Error while reading requests file", e);
+            return new ArrayList<>();
+        }
+    }
+
     @GuardedBy("mLock")
     private ArrayList<SystemDataTransferRequest> readRequestsFromCache(@UserIdInt int userId) {
         ArrayList<SystemDataTransferRequest> cachedRequests = mCachedPerUser.get(userId);
@@ -197,7 +224,7 @@ public class SystemDataTransferRequestStore {
                 final TypedXmlPullParser parser = Xml.resolvePullParser(in);
                 XmlUtils.beginDocument(parser, XML_TAG_REQUESTS);
 
-                return readRequestsFromXml(parser);
+                return readRequestsFromXml(parser, userId);
             } catch (XmlPullParserException | IOException e) {
                 Slog.e(LOG_TAG, "Error while reading requests file", e);
                 return new ArrayList<>();
@@ -207,7 +234,8 @@ public class SystemDataTransferRequestStore {
 
     @NonNull
     private ArrayList<SystemDataTransferRequest> readRequestsFromXml(
-            @NonNull TypedXmlPullParser parser) throws XmlPullParserException, IOException {
+            @NonNull TypedXmlPullParser parser, int userId)
+            throws XmlPullParserException, IOException {
         if (!isStartOfTag(parser, XML_TAG_REQUESTS)) {
             throw new XmlPullParserException("The XML doesn't have start tag: " + XML_TAG_REQUESTS);
         }
@@ -220,14 +248,15 @@ public class SystemDataTransferRequestStore {
                 break;
             }
             if (isStartOfTag(parser, XML_TAG_REQUEST)) {
-                requests.add(readRequestFromXml(parser));
+                requests.add(readRequestFromXml(parser, userId));
             }
         }
 
         return requests;
     }
 
-    private SystemDataTransferRequest readRequestFromXml(@NonNull TypedXmlPullParser parser)
+    private SystemDataTransferRequest readRequestFromXml(@NonNull TypedXmlPullParser parser,
+            int userId)
             throws XmlPullParserException, IOException {
         if (!isStartOfTag(parser, XML_TAG_REQUEST)) {
             throw new XmlPullParserException("XML doesn't have start tag: " + XML_TAG_REQUEST);
@@ -235,7 +264,6 @@ public class SystemDataTransferRequestStore {
 
         final int associationId = readIntAttribute(parser, XML_ATTR_ASSOCIATION_ID);
         final int dataType = readIntAttribute(parser, XML_ATTR_DATA_TYPE);
-        final int userId = readIntAttribute(parser, XML_ATTR_USER_ID);
         final boolean isUserConsented = readBooleanAttribute(parser, XML_ATTR_IS_USER_CONSENTED);
 
         switch (dataType) {
@@ -292,7 +320,6 @@ public class SystemDataTransferRequestStore {
 
         writeIntAttribute(serializer, XML_ATTR_ASSOCIATION_ID, request.getAssociationId());
         writeIntAttribute(serializer, XML_ATTR_DATA_TYPE, request.getDataType());
-        writeIntAttribute(serializer, XML_ATTR_USER_ID, request.getUserId());
         writeBooleanAttribute(serializer, XML_ATTR_IS_USER_CONSENTED, request.isUserConsented());
 
         serializer.endTag(null, XML_TAG_REQUEST);

@@ -23,15 +23,19 @@ import com.android.systemui.bouncer.domain.interactor.PrimaryBouncerInteractor
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.deviceentry.shared.DeviceEntryUdfpsRefactor
+import com.android.systemui.keyguard.data.repository.BiometricType
 import com.android.systemui.keyguard.data.repository.DeviceEntryFingerprintAuthRepository
 import com.android.systemui.res.R
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.launch
 
 /**
  * Encapsulates business logic for device entry events that impact the side fingerprint sensor
@@ -41,6 +45,7 @@ import kotlinx.coroutines.flow.merge
 class DeviceEntrySideFpsOverlayInteractor
 @Inject
 constructor(
+    @Application private val applicationScope: CoroutineScope,
     @Application private val context: Context,
     deviceEntryFingerprintAuthRepository: DeviceEntryFingerprintAuthRepository,
     private val primaryBouncerInteractor: PrimaryBouncerInteractor,
@@ -50,7 +55,13 @@ constructor(
 
     init {
         if (!DeviceEntryUdfpsRefactor.isEnabled) {
-            alternateBouncerInteractor.setAlternateBouncerUIAvailable(true, TAG)
+            applicationScope.launch {
+                deviceEntryFingerprintAuthRepository.availableFpSensorType.collect { sensorType ->
+                    if (sensorType == BiometricType.SIDE_FINGERPRINT) {
+                        alternateBouncerInteractor.setAlternateBouncerUIAvailable(true, TAG)
+                    }
+                }
+            }
         }
     }
 
@@ -72,10 +83,11 @@ constructor(
      */
     val showIndicatorForDeviceEntry: Flow<Boolean> =
         combine(showIndicatorForPrimaryBouncer, showIndicatorForAlternateBouncer) {
-            showForPrimaryBouncer,
-            showForAlternateBouncer ->
-            showForPrimaryBouncer || showForAlternateBouncer
-        }
+                showForPrimaryBouncer,
+                showForAlternateBouncer ->
+                showForPrimaryBouncer || showForAlternateBouncer
+            }
+            .distinctUntilChanged()
 
     private fun shouldShowIndicatorForPrimaryBouncer(): Boolean {
         val sfpsEnabled: Boolean =

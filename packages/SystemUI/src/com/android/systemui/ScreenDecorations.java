@@ -68,7 +68,7 @@ import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.util.Preconditions;
 import com.android.settingslib.Utils;
-import com.android.systemui.biometrics.AuthController;
+import com.android.systemui.biometrics.data.repository.FacePropertyRepository;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.decor.CutoutDecorProviderFactory;
 import com.android.systemui.decor.DebugRoundedCornerDelegate;
@@ -89,8 +89,10 @@ import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.commandline.CommandRegistry;
 import com.android.systemui.statusbar.events.PrivacyDotViewController;
+import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.util.concurrency.DelayableExecutor;
 import com.android.systemui.util.concurrency.ThreadFactory;
+import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.util.settings.SecureSettings;
 
 import dalvik.annotation.optimization.NeverCompile;
@@ -109,7 +111,8 @@ import javax.inject.Inject;
  * for antialiasing and emulation purposes.
  */
 @SysUISingleton
-public class ScreenDecorations implements CoreStartable, Dumpable {
+public class ScreenDecorations implements
+        CoreStartable, ConfigurationController.ConfigurationListener, Dumpable {
     private static final boolean DEBUG_LOGGING = false;
     private static final String TAG = "ScreenDecorations";
 
@@ -132,8 +135,6 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
             R.id.display_cutout_bottom
     };
     private final ScreenDecorationsLogger mLogger;
-
-    private final AuthController mAuthController;
 
     private DisplayTracker mDisplayTracker;
     @VisibleForTesting
@@ -184,6 +185,9 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
     protected DisplayInfo mDisplayInfo = new DisplayInfo();
     private DisplayCutout mDisplayCutout;
     private boolean mPendingManualConfigUpdate;
+
+    private FacePropertyRepository mFacePropertyRepository;
+    private JavaAdapter mJavaAdapter;
 
     @VisibleForTesting
     protected void showCameraProtection(@NonNull Path protectionPath, @NonNull Rect bounds) {
@@ -332,7 +336,8 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
             PrivacyDotDecorProviderFactory dotFactory,
             FaceScanningProviderFactory faceScanningFactory,
             ScreenDecorationsLogger logger,
-            AuthController authController) {
+            FacePropertyRepository facePropertyRepository,
+            JavaAdapter javaAdapter) {
         mContext = context;
         mSecureSettings = secureSettings;
         mCommandRegistry = commandRegistry;
@@ -344,21 +349,9 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
         mFaceScanningFactory = faceScanningFactory;
         mFaceScanningViewId = com.android.systemui.res.R.id.face_scanning_anim;
         mLogger = logger;
-        mAuthController = authController;
+        mFacePropertyRepository = facePropertyRepository;
+        mJavaAdapter = javaAdapter;
     }
-
-
-    private final AuthController.Callback mAuthControllerCallback = new AuthController.Callback() {
-        @Override
-        public void onFaceSensorLocationChanged() {
-            mLogger.onSensorLocationChanged();
-            if (mExecutor != null) {
-                mExecutor.execute(
-                        () -> updateOverlayProviderViews(
-                                new Integer[]{mFaceScanningViewId}));
-            }
-        }
-    };
 
     private final ScreenDecorCommand.Callback mScreenDecorCommandCallback = (cmd, pw) -> {
         // If we are exiting debug mode, we can set it (false) and bail, otherwise we will
@@ -409,7 +402,8 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
         mExecutor = mThreadFactory.buildDelayableExecutorOnHandler(mHandler);
         mExecutor.execute(this::startOnScreenDecorationsThread);
         mDotViewController.setUiExecutor(mExecutor);
-        mAuthController.addCallback(mAuthControllerCallback);
+        mJavaAdapter.alwaysCollectFlow(mFacePropertyRepository.getSensorLocation(),
+                this::onFaceSensorLocationChanged);
         mCommandRegistry.registerCommand(ScreenDecorCommand.SCREEN_DECOR_CMD_NAME,
                 () -> new ScreenDecorCommand(mScreenDecorCommandCallback));
     }
@@ -579,7 +573,7 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
 
                     if (mPendingManualConfigUpdate) {
                         mPendingManualConfigUpdate = false;
-                        onConfigurationChanged(mContext.getResources().getConfiguration());
+                        onConfigChanged(mContext.getResources().getConfiguration());
                     }
                 }
             }
@@ -1066,7 +1060,7 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
+    public void onConfigChanged(Configuration newConfig) {
         if (DEBUG_DISABLE_SCREEN_DECORATIONS) {
             Log.i(TAG, "ScreenDecorations is disabled");
             return;
@@ -1324,6 +1318,16 @@ public class ScreenDecorations implements CoreStartable, Dumpable {
         params.width = pixelSize.getWidth();
         params.height = pixelSize.getHeight();
         view.setLayoutParams(params);
+    }
+
+    @VisibleForTesting
+    void onFaceSensorLocationChanged(Point location) {
+        mLogger.onSensorLocationChanged();
+        if (mExecutor != null) {
+            mExecutor.execute(
+                    () -> updateOverlayProviderViews(
+                            new Integer[]{mFaceScanningViewId}));
+        }
     }
 
     public static class DisplayCutoutView extends DisplayCutoutBaseView {

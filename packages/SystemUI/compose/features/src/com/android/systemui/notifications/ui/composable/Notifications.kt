@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -43,21 +44,16 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.scene.ElementKey
 import com.android.compose.animation.scene.SceneScope
-import com.android.compose.animation.scene.ValueKey
-import com.android.compose.animation.scene.animateSharedFloatAsState
+import com.android.compose.modifiers.height
 import com.android.systemui.notifications.ui.composable.Notifications.Form
-import com.android.systemui.notifications.ui.composable.Notifications.SharedValues.SharedExpansionValue
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.NotificationsPlaceholderViewModel
+import kotlin.math.roundToInt
 
 object Notifications {
     object Elements {
         val NotificationScrim = ElementKey("NotificationScrim")
         val NotificationPlaceholder = ElementKey("NotificationPlaceholder")
         val ShelfSpace = ElementKey("ShelfSpace")
-    }
-
-    object SharedValues {
-        val SharedExpansionValue = ValueKey("SharedExpansionValue")
     }
 
     enum class Form {
@@ -84,32 +80,52 @@ fun SceneScope.HeadsUpNotificationSpace(
     )
 }
 
-/** Adds the space where notification stack will appear in the scene. */
+/** Adds the space where notification stack should appear in the scene. */
 @Composable
 fun SceneScope.NotificationStack(
     viewModel: NotificationsPlaceholderViewModel,
-    isScrimVisible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    NotificationPlaceholder(
+        viewModel = viewModel,
+        form = Form.Stack,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Adds the space where notification stack should appear in the scene, with a scrim and nested
+ * scrolling.
+ */
+@Composable
+fun SceneScope.NotificationScrollingStack(
+    viewModel: NotificationsPlaceholderViewModel,
     modifier: Modifier = Modifier,
 ) {
     val cornerRadius by viewModel.cornerRadiusDp.collectAsState()
 
-    Box(modifier = modifier) {
-        if (isScrimVisible) {
-            Box(
-                modifier =
-                    Modifier.element(Notifications.Elements.NotificationScrim)
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            shape = RoundedCornerShape(cornerRadius.dp)
-                            clip = true
-                        }
-                        .background(MaterialTheme.colorScheme.surface)
-            )
-        }
+    val contentHeight by viewModel.intrinsicContentHeight.collectAsState()
+
+    val expansionFraction by viewModel.expandFraction.collectAsState(0f)
+
+    Box(
+        modifier =
+            modifier
+                .verticalNestedScrollToScene()
+                .fillMaxWidth()
+                .element(Notifications.Elements.NotificationScrim)
+                .graphicsLayer {
+                    shape = RoundedCornerShape(cornerRadius.dp)
+                    clip = true
+                    alpha = expansionFraction
+                }
+                .background(MaterialTheme.colorScheme.surface)
+                .debugBackground(viewModel, Color(0.5f, 0.5f, 0f, 0.2f))
+    ) {
         NotificationPlaceholder(
             viewModel = viewModel,
             form = Form.Stack,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth().height { contentHeight.roundToInt() }
         )
     }
 }
@@ -157,15 +173,16 @@ private fun SceneScope.NotificationPlaceholder(
     modifier: Modifier = Modifier,
 ) {
     val elementKey = Notifications.Elements.NotificationPlaceholder
-    Box(
+    Element(
+        elementKey,
         modifier =
             modifier
-                .element(elementKey)
                 .debugBackground(viewModel)
                 .onSizeChanged { size: IntSize ->
                     debugLog(viewModel) { "STACK onSizeChanged: size=$size" }
                 }
                 .onPlaced { coordinates: LayoutCoordinates ->
+                    viewModel.onContentTopChanged(coordinates.positionInWindow().y)
                     debugLog(viewModel) {
                         "STACK onPlaced:" +
                             " size=${coordinates.size}" +
@@ -181,20 +198,17 @@ private fun SceneScope.NotificationPlaceholder(
                     )
                 }
     ) {
-        val animatedExpansion by
-            animateSharedFloatAsState(
-                value = if (form == Form.HunFromTop) 0f else 1f,
-                key = SharedExpansionValue,
-                element = elementKey
-            )
-        debugLog(viewModel) { "STACK composed: expansion=$animatedExpansion" }
-        if (viewModel.isPlaceholderTextVisible) {
-            Text(
-                text = "Notifications",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.align(Alignment.Center),
-            )
+        content {
+            if (viewModel.isPlaceholderTextVisible) {
+                Box(Modifier.fillMaxSize()) {
+                    Text(
+                        text = "Notifications",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
         }
     }
 }

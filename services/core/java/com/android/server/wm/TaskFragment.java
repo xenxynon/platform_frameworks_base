@@ -16,6 +16,7 @@
 
 package com.android.server.wm;
 
+import static android.Manifest.permission.MANAGE_ACTIVITY_TASKS;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_ASSISTANT;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
@@ -38,6 +39,7 @@ import static android.os.Process.INVALID_UID;
 import static android.os.Process.SYSTEM_UID;
 import static android.os.UserHandle.USER_NULL;
 import static android.view.Display.INVALID_DISPLAY;
+import static android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND;
 import static android.view.WindowManager.TRANSIT_CLOSE;
 import static android.view.WindowManager.TRANSIT_FLAG_OPEN_BEHIND;
 import static android.view.WindowManager.TRANSIT_NONE;
@@ -57,7 +59,7 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.POSTFIX_SWITC
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.POSTFIX_TRANSITION;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
-import static com.android.server.wm.ActivityTaskSupervisor.PRESERVE_WINDOWS;
+import static com.android.server.wm.ActivityTaskManagerService.checkPermission;
 import static com.android.server.wm.ActivityTaskSupervisor.printThisActivity;
 import static com.android.server.wm.IdentifierProto.HASH_CODE;
 import static com.android.server.wm.IdentifierProto.TITLE;
@@ -81,7 +83,9 @@ import android.app.servertransaction.ClientTransaction;
 import android.app.servertransaction.NewIntentItem;
 import android.app.servertransaction.PauseActivityItem;
 import android.app.servertransaction.ResumeActivityItem;
+import android.content.PermissionChecker;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -364,6 +368,12 @@ class TaskFragment extends WindowContainer<WindowContainer> {
      * Note that only an embedded TaskFragment can be isolated.
      */
     private boolean mIsolatedNav;
+
+    /**
+     * Whether the TaskFragment should move to bottom of task when any activity below it is
+     * launched in clear top mode.
+     */
+    private boolean mMoveToBottomIfClearWhenLaunch;
 
     /** When set, will force the task to report as invisible. */
     static final int FLAG_FORCE_HIDDEN_FOR_PINNED_TASK = 1;
@@ -751,7 +761,17 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         // The system is trusted to embed other apps securely and for all users.
         return UserHandle.getAppId(uid) == SYSTEM_UID
                 // Activities from the same UID can be embedded freely by the host.
-                || a.isUid(uid);
+                || a.isUid(uid)
+                // Apps which have the signature MANAGE_ACTIVITY_TASK permission are trusted.
+                || hasManageTaskPermission(uid);
+    }
+
+    /**
+     * Checks if a particular app uid has the {@link MANAGE_ACTIVITY_TASKS} permission.
+     */
+    private static boolean hasManageTaskPermission(int uid) {
+        return checkPermission(MANAGE_ACTIVITY_TASKS, PermissionChecker.PID_UNKNOWN, uid)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     /**
@@ -933,10 +953,14 @@ class TaskFragment extends WindowContainer<WindowContainer> {
     boolean sleepIfPossible(boolean shuttingDown) {
         boolean shouldSleep = true;
         if (mResumedActivity != null) {
-            // Still have something resumed; can't sleep until it is paused.
-            ProtoLog.v(WM_DEBUG_STATES, "Sleep needs to pause %s", mResumedActivity);
-            startPausing(false /* userLeaving */, true /* uiSleeping */, null /* resuming */,
-                    "sleep");
+            if (!shuttingDown && mResumedActivity.canTurnScreenOn()) {
+                ProtoLog.v(WM_DEBUG_STATES, "Waiting for screen on due to %s", mResumedActivity);
+            } else {
+                // Still have something resumed; can't sleep until it is paused.
+                ProtoLog.v(WM_DEBUG_STATES, "Sleep needs to pause %s", mResumedActivity);
+                startPausing(false /* userLeaving */, true /* uiSleeping */, null /* resuming */,
+                        "sleep");
+            }
             shouldSleep = false;
         } else if (mPausingActivity != null) {
             // Still waiting for something to pause; can't sleep yet.
@@ -956,8 +980,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         }
 
         if (shouldSleep) {
-            updateActivityVisibilities(null /* starting */, 0 /* configChanges */,
-                    !PRESERVE_WINDOWS, true /* notifyClients */);
+            updateActivityVisibilities(null /* starting */, true /* notifyClients */);
         }
 
         return shouldSleep;
@@ -1224,12 +1247,11 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         return top != null && top.mLaunchTaskBehind;
     }
 
-    final void updateActivityVisibilities(@Nullable ActivityRecord starting, int configChanges,
-            boolean preserveWindows, boolean notifyClients) {
+    final void updateActivityVisibilities(@Nullable ActivityRecord starting,
+            boolean notifyClients) {
         mTaskSupervisor.beginActivityVisibilityUpdate();
         try {
-            mEnsureActivitiesVisibleHelper.process(
-                    starting, configChanges, preserveWindows, notifyClients);
+            mEnsureActivitiesVisibleHelper.process(starting, notifyClients);
         } finally {
             mTaskSupervisor.endActivityVisibilityUpdate();
         }
@@ -1255,8 +1277,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         if (mResumedActivity == next && next.isState(RESUMED)
                 && taskDisplayArea.allResumedActivitiesComplete()) {
             // Ensure the visibility gets updated before execute app transition.
-            taskDisplayArea.ensureActivitiesVisible(null /* starting */, 0 /* configChanges */,
-                    false /* preserveWindows */, true /* notifyClients */);
+            taskDisplayArea.ensureActivitiesVisible(null /* starting */, true /* notifyClients */);
             // Make sure we have executed any pending transitions, since there
             // should be nothing left to do at this point.
             executeAppTransition(options);
@@ -1952,7 +1973,7 @@ class TaskFragment extends WindowContainer<WindowContainer> {
             prev.resumeKeyDispatchingLocked();
         }
 
-        mRootWindowContainer.ensureActivitiesVisible(resuming, 0, !PRESERVE_WINDOWS);
+        mRootWindowContainer.ensureActivitiesVisible(resuming);
 
         // Notify when the task stack has changed, but only if visibilities changed (not just
         // focus). Also if there is an active root pinned task - we always want to notify it about
@@ -3026,10 +3047,34 @@ class TaskFragment extends WindowContainer<WindowContainer> {
         }, false /* traverseTopToBottom */);
     }
 
+    boolean shouldBoostDimmer() {
+        if (asTask() != null || !isDimmingOnParentTask()) {
+            // early return if not embedded or should not dim on parent Task.
+            return false;
+        }
+
+        final TaskFragment adjacentTf = getAdjacentTaskFragment();
+        if (adjacentTf == null) {
+            // early return if no adjacent TF.
+            return false;
+        }
+
+        if (getParent().mChildren.indexOf(adjacentTf) < getParent().mChildren.indexOf(this)) {
+            // early return if this TF already has higher z-ordering.
+            return false;
+        }
+
+        // boost if there's an Activity window that has FLAG_DIM_BEHIND flag.
+        return forAllWindows(
+                (w) -> (w.mAttrs.flags & FLAG_DIM_BEHIND) != 0 && w.mActivityRecord != null
+                        && w.mActivityRecord.isEmbedded() && (w.mActivityRecord.isVisibleRequested()
+                        || w.mActivityRecord.isVisible()), true);
+    }
+
     @Override
     Dimmer getDimmer() {
         // If this is in an embedded TaskFragment and we want the dim applies on the TaskFragment.
-        if (mIsEmbedded && mEmbeddedDimArea == EMBEDDED_DIM_AREA_TASK_FRAGMENT) {
+        if (mIsEmbedded && !isDimmingOnParentTask()) {
             return mDimmer;
         }
 
@@ -3038,7 +3083,9 @@ class TaskFragment extends WindowContainer<WindowContainer> {
 
     /** Bounds to be used for dimming, as well as touch related tests. */
     void getDimBounds(@NonNull Rect out) {
-        if (mIsEmbedded && mEmbeddedDimArea == EMBEDDED_DIM_AREA_PARENT_TASK) {
+        if (mIsEmbedded && isDimmingOnParentTask() && getDimmer().getDimBounds() != null) {
+            // Return the task bounds if the dimmer is showing and should cover on the Task (not
+            // just on this embedded TaskFragment).
             out.set(getTask().getBounds());
         } else {
             out.set(getBounds());
@@ -3047,6 +3094,19 @@ class TaskFragment extends WindowContainer<WindowContainer> {
 
     void setEmbeddedDimArea(@EmbeddedDimArea int embeddedDimArea) {
         mEmbeddedDimArea = embeddedDimArea;
+    }
+
+    void setMoveToBottomIfClearWhenLaunch(boolean moveToBottomIfClearWhenLaunch) {
+        mMoveToBottomIfClearWhenLaunch = moveToBottomIfClearWhenLaunch;
+    }
+
+    boolean isMoveToBottomIfClearWhenLaunch() {
+        return mMoveToBottomIfClearWhenLaunch;
+    }
+
+    @VisibleForTesting
+    boolean isDimmingOnParentTask() {
+        return mEmbeddedDimArea == EMBEDDED_DIM_AREA_PARENT_TASK;
     }
 
     @Override

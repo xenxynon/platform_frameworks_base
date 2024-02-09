@@ -442,8 +442,8 @@ public class TelecomManager {
             "android.telecom.extra.CALL_CREATED_TIME_MILLIS";
 
     /**
-     * The extra for call log uri that was used to mark missed calls as read when dialer gets the
-     * notification on reboot.
+     * Extra URI that is used by a dialer to query the {@link android.provider.CallLog} content
+     * provider and associate a missed call notification with a call log entry.
      */
     @FlaggedApi(Flags.FLAG_ADD_CALL_URI_FOR_MISSED_CALLS)
     public static final String EXTRA_CALL_LOG_URI =
@@ -1076,8 +1076,17 @@ public class TelecomManager {
     public static final int PRESENTATION_UNAVAILABLE = 5;
 
 
+    /**
+     * Controls audio route for video calls.
+     * 0 - Use the default audio routing strategy.
+     * 1 - Disable the speaker. Route the audio to Headset or Bluetooth
+     *     or Earpiece, based on the default audio routing strategy.
+     * @hide
+     */
+    public static final String PROPERTY_VIDEOCALL_AUDIO_OUTPUT = "persist.radio.call.audio.output";
+
     /*
-     * Values for the adb property "persist.radio.videocall.audio.output"
+     * Values for the adb property "persist.radio.call.audio.output"
      */
     /** @hide */
     public static final int AUDIO_OUTPUT_ENABLE_SPEAKER = 0;

@@ -43,7 +43,6 @@ import android.view.WindowManagerGlobal;
 import android.view.accessibility.IRemoteMagnificationAnimationCallback;
 import android.view.animation.AccelerateInterpolator;
 
-import androidx.test.filters.FlakyTest;
 import androidx.test.filters.LargeTest;
 
 import com.android.internal.graphics.SfVsyncFrameCallbackProvider;
@@ -68,7 +67,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @LargeTest
 @RunWith(AndroidTestingRunner.class)
-@FlakyTest(bugId = 308501761)
 public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
 
     @Rule
@@ -642,11 +640,10 @@ public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
     @Test
     public void deleteWindowMagnification_enabling_expectedValuesAndInvokeCallback()
             throws RemoteException {
-
         enableWindowMagnificationAndWaitAnimating(mWaitPartialAnimationDuration,
                 mAnimationCallback);
 
-        Mockito.reset(mSpyController);
+        resetMockObjects();
         getInstrumentation().runOnMainSync(() -> {
             mWindowMagnificationAnimationController.deleteWindowMagnification(
                     mAnimationCallback2);
@@ -660,6 +657,11 @@ public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
             mValueAnimator.end();
         });
 
+        // wait for animation returns
+        waitForIdleSync();
+
+        // {@link ValueAnimator.AnimatorUpdateListener#onAnimationUpdate(ValueAnimator)} will only
+        // be triggered once in {@link ValueAnimator#end()}
         verify(mSpyController).enableWindowMagnificationInternal(
                 mScaleCaptor.capture(),
                 mCenterXCaptor.capture(), mCenterYCaptor.capture(),
@@ -719,7 +721,11 @@ public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
         deleteWindowMagnificationAndWaitAnimating(mWaitPartialAnimationDuration,
                 mAnimationCallback);
 
-        deleteWindowMagnificationAndWaitAnimating(0, null);
+        // Verifying that WindowMagnificationController#deleteWindowMagnification is never called
+        // in previous steps
+        verify(mSpyController, never()).deleteWindowMagnification();
+
+        deleteWindowMagnificationWithoutAnimation();
 
         verify(mSpyController).deleteWindowMagnification();
         verifyFinalSpec(Float.NaN, Float.NaN, Float.NaN);
@@ -812,6 +818,8 @@ public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
             mWindowMagnificationAnimationController.enableWindowMagnification(
                     targetScale, targetCenterX, targetCenterY, null);
         });
+        // wait for animation returns
+        waitForIdleSync();
     }
 
     private void enableWindowMagnificationAndWaitAnimating(long duration,
@@ -831,12 +839,16 @@ public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
                     targetScale, targetCenterX, targetCenterY, callback);
             advanceTimeBy(duration);
         });
+        // wait for animation returns
+        waitForIdleSync();
     }
 
     private void deleteWindowMagnificationWithoutAnimation() {
         getInstrumentation().runOnMainSync(() -> {
             mWindowMagnificationAnimationController.deleteWindowMagnification(null);
         });
+        // wait for animation returns
+        waitForIdleSync();
     }
 
     private void deleteWindowMagnificationAndWaitAnimating(long duration,
@@ -845,6 +857,8 @@ public class WindowMagnificationAnimationControllerTest extends SysuiTestCase {
             mWindowMagnificationAnimationController.deleteWindowMagnification(callback);
             advanceTimeBy(duration);
         });
+        // wait for animation returns
+        waitForIdleSync();
     }
 
     private void verifyStartValue(ArgumentCaptor<Float> captor, float startValue) {

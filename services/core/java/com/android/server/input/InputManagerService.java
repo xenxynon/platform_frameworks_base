@@ -48,6 +48,7 @@ import android.hardware.input.IInputDevicesChangedListener;
 import android.hardware.input.IInputManager;
 import android.hardware.input.IInputSensorEventListener;
 import android.hardware.input.IKeyboardBacklightListener;
+import android.hardware.input.IStickyModifierStateListener;
 import android.hardware.input.ITabletModeChangedListener;
 import android.hardware.input.InputDeviceIdentifier;
 import android.hardware.input.InputManager;
@@ -63,7 +64,6 @@ import android.os.CombinedVibration;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
-import android.os.IInputConstants;
 import android.os.IVibratorStateListener;
 import android.os.InputEventInjectionResult;
 import android.os.InputEventInjectionSync;
@@ -319,6 +319,9 @@ public class InputManagerService extends IInputManager.Stub
     // Manages Keyboard backlight
     private final KeyboardBacklightControllerInterface mKeyboardBacklightController;
 
+    // Manages Sticky modifier state
+    private final StickyModifierStateController mStickyModifierStateController;
+
     // Manages Keyboard modifier keys remapping
     private final KeyRemapper mKeyRemapper;
 
@@ -464,6 +467,7 @@ public class InputManagerService extends IInputManager.Stub
                 ? new KeyboardBacklightController(mContext, mNative, mDataStore,
                         injector.getLooper(), injector.getUEventManager())
                 : new KeyboardBacklightControllerInterface() {};
+        mStickyModifierStateController = new StickyModifierStateController();
         mKeyRemapper = new KeyRemapper(mContext, mNative, mDataStore, injector.getLooper());
 
         mUseDevInputEventForAudioJack =
@@ -1367,9 +1371,9 @@ public class InputManagerService extends IInputManager.Stub
         mNative.setPointerSpeed(speed);
     }
 
-    private void setPointerAcceleration(float acceleration, int displayId) {
+    private void setMousePointerAccelerationEnabled(boolean enabled, int displayId) {
         updateAdditionalDisplayInputProperties(displayId,
-                properties -> properties.pointerAcceleration = acceleration);
+                properties -> properties.mousePointerAccelerationEnabled = enabled);
     }
 
     private void setPointerIconVisible(boolean visible, int displayId) {
@@ -2256,7 +2260,8 @@ public class InputManagerService extends IInputManager.Stub
                             + mAdditionalDisplayInputProperties.keyAt(i));
                     final AdditionalDisplayInputProperties properties =
                             mAdditionalDisplayInputProperties.valueAt(i);
-                    pw.println("pointerAcceleration: " + properties.pointerAcceleration);
+                    pw.println("mousePointerAccelerationEnabled: "
+                            + properties.mousePointerAccelerationEnabled);
                     pw.println("pointerIconVisible: " + properties.pointerIconVisible);
                 }
                 pw.decreaseIndent();
@@ -2523,9 +2528,9 @@ public class InputManagerService extends IInputManager.Stub
     // Native callback.
     @SuppressWarnings("unused")
     private int interceptMotionBeforeQueueingNonInteractive(int displayId,
-            long whenNanos, int policyFlags) {
+            int source, int action, long whenNanos, int policyFlags) {
         return mWindowManagerCallbacks.interceptMotionBeforeQueueingNonInteractive(
-                displayId, whenNanos, policyFlags);
+                displayId, source, action, whenNanos, policyFlags);
     }
 
     // Native callback.
@@ -2827,6 +2832,33 @@ public class InputManagerService extends IInputManager.Stub
                         yPosition)).sendToTarget();
     }
 
+    @Override
+    @EnforcePermission(Manifest.permission.MONITOR_STICKY_MODIFIER_STATE)
+    public void registerStickyModifierStateListener(
+            @NonNull IStickyModifierStateListener listener) {
+        super.registerStickyModifierStateListener_enforcePermission();
+        Objects.requireNonNull(listener);
+        mStickyModifierStateController.registerStickyModifierStateListener(listener,
+                Binder.getCallingPid());
+    }
+
+    @Override
+    @EnforcePermission(Manifest.permission.MONITOR_STICKY_MODIFIER_STATE)
+    public void unregisterStickyModifierStateListener(
+            @NonNull IStickyModifierStateListener listener) {
+        super.unregisterStickyModifierStateListener_enforcePermission();
+        Objects.requireNonNull(listener);
+        mStickyModifierStateController.unregisterStickyModifierStateListener(listener,
+                Binder.getCallingPid());
+    }
+
+    // Native callback
+    @SuppressWarnings("unused")
+    void notifyStickyModifierStateChanged(int modifierState, int lockedModifierState) {
+        mStickyModifierStateController.notifyStickyModifierStateChanged(modifierState,
+                lockedModifierState);
+    }
+
     // Native callback.
     @SuppressWarnings("unused")
     boolean isInputMethodConnectionActive() {
@@ -2901,8 +2933,8 @@ public class InputManagerService extends IInputManager.Stub
          * processing when the device is in a non-interactive state since these events are normally
          * dropped.
          */
-        int interceptMotionBeforeQueueingNonInteractive(int displayId, long whenNanos,
-                int policyFlags);
+        int interceptMotionBeforeQueueingNonInteractive(int displayId, int source, int action,
+                long whenNanos, int policyFlags);
 
         /**
          * This callback is invoked just before the key is about to be sent to an application.
@@ -3257,8 +3289,8 @@ public class InputManagerService extends IInputManager.Stub
         }
 
         @Override
-        public void setPointerAcceleration(float acceleration, int displayId) {
-            InputManagerService.this.setPointerAcceleration(acceleration, displayId);
+        public void setMousePointerAccelerationEnabled(boolean enabled, int displayId) {
+            InputManagerService.this.setMousePointerAccelerationEnabled(enabled, displayId);
         }
 
         @Override
@@ -3350,11 +3382,15 @@ public class InputManagerService extends IInputManager.Stub
     private static class AdditionalDisplayInputProperties {
 
         static final boolean DEFAULT_POINTER_ICON_VISIBLE = true;
-        static final float DEFAULT_POINTER_ACCELERATION =
-                (float) IInputConstants.DEFAULT_POINTER_ACCELERATION;
+        static final boolean DEFAULT_MOUSE_POINTER_ACCELERATION_ENABLED = true;
 
-        // The pointer acceleration for this display.
-        public float pointerAcceleration;
+        /**
+         * Whether to enable mouse pointer acceleration on this display. Note that this only affects
+         * pointer movements from mice (that is, pointing devices which send relative motions,
+         * including trackballs and pointing sticks), not from other pointer devices such as
+         * touchpads and styluses.
+         */
+        public boolean mousePointerAccelerationEnabled;
 
         // Whether the pointer icon should be visible or hidden on this display.
         public boolean pointerIconVisible;
@@ -3364,12 +3400,12 @@ public class InputManagerService extends IInputManager.Stub
         }
 
         public boolean allDefaults() {
-            return Float.compare(pointerAcceleration, DEFAULT_POINTER_ACCELERATION) == 0
+            return mousePointerAccelerationEnabled == DEFAULT_MOUSE_POINTER_ACCELERATION_ENABLED
                     && pointerIconVisible == DEFAULT_POINTER_ICON_VISIBLE;
         }
 
         public void reset() {
-            pointerAcceleration = DEFAULT_POINTER_ACCELERATION;
+            mousePointerAccelerationEnabled = DEFAULT_MOUSE_POINTER_ACCELERATION_ENABLED;
             pointerIconVisible = DEFAULT_POINTER_ICON_VISIBLE;
         }
     }
@@ -3401,9 +3437,11 @@ public class InputManagerService extends IInputManager.Stub
             }
         }
 
-        if (properties.pointerAcceleration != mCurrentDisplayProperties.pointerAcceleration) {
-            mCurrentDisplayProperties.pointerAcceleration = properties.pointerAcceleration;
-            mNative.setPointerAcceleration(properties.pointerAcceleration);
+        if (properties.mousePointerAccelerationEnabled
+                != mCurrentDisplayProperties.mousePointerAccelerationEnabled) {
+            mCurrentDisplayProperties.mousePointerAccelerationEnabled =
+                    properties.mousePointerAccelerationEnabled;
+            mNative.setMousePointerAccelerationEnabled(properties.mousePointerAccelerationEnabled);
         }
     }
 

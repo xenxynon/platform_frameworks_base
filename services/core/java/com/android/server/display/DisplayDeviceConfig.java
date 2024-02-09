@@ -16,6 +16,7 @@
 
 package com.android.server.display;
 
+import static com.android.server.display.BrightnessMappingStrategy.INVALID_NITS;
 import static com.android.server.display.utils.DeviceConfigParsingUtils.ambientBrightnessThresholdsIntToFloat;
 import static com.android.server.display.utils.DeviceConfigParsingUtils.displayBrightnessThresholdsIntToFloat;
 
@@ -567,7 +568,8 @@ public class DisplayDeviceConfig {
 
     public static final int DEFAULT_LOW_REFRESH_RATE = 60;
 
-    private static final float BRIGHTNESS_DEFAULT = 0.5f;
+    @VisibleForTesting
+    static final float BRIGHTNESS_DEFAULT = 0.5f;
     private static final String ETC_DIR = "etc";
     private static final String DISPLAY_CONFIG_DIR = "displayconfig";
     private static final String CONFIG_FILE_FORMAT = "display_%s.xml";
@@ -596,8 +598,6 @@ public class DisplayDeviceConfig {
     // Float.NaN (used as invalid for brightness) cannot be stored in config.xml
     // so -2 is used instead
     private static final float INVALID_BRIGHTNESS_IN_CONFIG = -2f;
-
-    static final float NITS_INVALID = -1;
 
     // Length of the ambient light horizon used to calculate the long term estimate of ambient
     // light.
@@ -1031,11 +1031,12 @@ public class DisplayDeviceConfig {
     /**
      * Calculates the nits value for the specified backlight value if a mapping exists.
      *
-     * @return The mapped nits or {@link #NITS_INVALID} if no mapping exits.
+     * @return The mapped nits or {@link BrightnessMappingStrategy.INVALID_NITS} if no mapping
+     * exits.
      */
     public float getNitsFromBacklight(float backlight) {
         if (mBacklightToNitsSpline == null) {
-            return NITS_INVALID;
+            return INVALID_NITS;
         }
         backlight = Math.max(backlight, mBacklightMinimum);
         return mBacklightToNitsSpline.interpolate(backlight);
@@ -1061,7 +1062,7 @@ public class DisplayDeviceConfig {
 
         float backlight = getBacklightFromBrightness(brightness);
         float nits = getNitsFromBacklight(backlight);
-        if (nits == NITS_INVALID) {
+        if (nits == INVALID_NITS) {
             return PowerManager.BRIGHTNESS_INVALID;
         }
 
@@ -1591,25 +1592,18 @@ public class DisplayDeviceConfig {
     }
 
     /**
-     * @return The default auto-brightness brightening ambient lux levels
-     */
-    public float[] getAutoBrightnessBrighteningLevelsLux() {
-        if (mDisplayBrightnessMapping == null) {
-            return null;
-        }
-        return mDisplayBrightnessMapping.getLuxArray();
-    }
-
-    /**
      * @param mode The auto-brightness mode
-     * @param setting The brightness setting
-     * @return Auto brightness brightening ambient lux levels for the specified mode and setting
+     * @param preset The brightness preset. Presets are used on devices that allow users to choose
+     *               from a set of predefined options in display auto-brightness settings.
+     * @return The default auto-brightness brightening ambient lux levels for the specified mode
+     * and preset
      */
-    public float[] getAutoBrightnessBrighteningLevelsLux(String mode, String setting) {
+    public float[] getAutoBrightnessBrighteningLevelsLux(
+            @AutomaticBrightnessController.AutomaticBrightnessMode int mode, int preset) {
         if (mDisplayBrightnessMapping == null) {
             return null;
         }
-        return mDisplayBrightnessMapping.getLuxArray(mode, setting);
+        return mDisplayBrightnessMapping.getLuxArray(mode, preset);
     }
 
     /**
@@ -1623,25 +1617,17 @@ public class DisplayDeviceConfig {
     }
 
     /**
-     * @return The default auto-brightness brightening levels
-     */
-    public float[] getAutoBrightnessBrighteningLevels() {
-        if (mDisplayBrightnessMapping == null) {
-            return null;
-        }
-        return mDisplayBrightnessMapping.getBrightnessArray();
-    }
-
-    /**
      * @param mode The auto-brightness mode
-     * @param setting The brightness setting
-     * @return Auto brightness brightening backlight levels for the specified mode and setting
+     * @param preset The brightness preset. Presets are used on devices that allow users to choose
+     *               from a set of predefined options in display auto-brightness settings.
+     * @return The default auto-brightness brightening levels for the specified mode and preset
      */
-    public float[] getAutoBrightnessBrighteningLevels(String mode, String setting) {
+    public float[] getAutoBrightnessBrighteningLevels(
+            @AutomaticBrightnessController.AutomaticBrightnessMode int mode, int preset) {
         if (mDisplayBrightnessMapping == null) {
             return null;
         }
-        return mDisplayBrightnessMapping.getBrightnessArray(mode, setting);
+        return mDisplayBrightnessMapping.getBrightnessArray(mode, preset);
     }
 
     /**

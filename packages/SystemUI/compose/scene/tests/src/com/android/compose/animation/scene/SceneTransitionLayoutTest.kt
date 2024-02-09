@@ -63,7 +63,7 @@ class SceneTransitionLayoutTest {
     }
 
     private var currentScene by mutableStateOf(TestScenes.SceneA)
-    private val layoutState = SceneTransitionLayoutState(currentScene)
+    private lateinit var layoutState: SceneTransitionLayoutState
 
     // We use createAndroidComposeRule() here and not createComposeRule() because we need an
     // activity for testBack().
@@ -72,10 +72,14 @@ class SceneTransitionLayoutTest {
     /** The content under test. */
     @Composable
     private fun TestContent() {
+        layoutState =
+            updateSceneTransitionLayoutState(
+                currentScene,
+                { currentScene = it },
+                EmptyTestTransitions
+            )
+
         SceneTransitionLayout(
-            currentScene,
-            { currentScene = it },
-            EmptyTestTransitions,
             state = layoutState,
             modifier = Modifier.size(LayoutSize),
         ) {
@@ -113,25 +117,21 @@ class SceneTransitionLayoutTest {
 
     @Composable
     private fun SceneScope.SharedFoo(size: Dp, childOffset: Dp, modifier: Modifier = Modifier) {
-        Box(
-            modifier
-                .size(size)
-                .background(Color.Red)
-                .element(TestElements.Foo)
-                .testTag(TestElements.Foo.debugName)
-        ) {
+        Element(TestElements.Foo, modifier.size(size).background(Color.Red)) {
             // Offset the single child of Foo by some animated shared offset.
-            val offset by animateSharedDpAsState(childOffset, TestValues.Value1, TestElements.Foo)
+            val offset by animateElementDpAsState(childOffset, TestValues.Value1)
 
-            Box(
-                Modifier.offset {
-                        val pxOffset = offset.roundToPx()
-                        IntOffset(pxOffset, pxOffset)
-                    }
-                    .size(30.dp)
-                    .background(Color.Blue)
-                    .testTag(TestElements.Bar.debugName)
-            )
+            content {
+                Box(
+                    Modifier.offset {
+                            val pxOffset = offset.roundToPx()
+                            IntOffset(pxOffset, pxOffset)
+                        }
+                        .size(30.dp)
+                        .background(Color.Blue)
+                        .testTag(TestElements.Bar.debugName)
+                )
+            }
         }
     }
 

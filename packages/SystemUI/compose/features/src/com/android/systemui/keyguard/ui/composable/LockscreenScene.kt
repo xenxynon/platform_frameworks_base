@@ -14,36 +14,15 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalFoundationApi::class)
-
 package com.android.systemui.keyguard.ui.composable
 
-import android.view.View
-import android.view.ViewGroup
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.toComposeRect
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.isVisible
 import com.android.compose.animation.scene.SceneScope
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.keyguard.qualifiers.KeyguardRootView
-import com.android.systemui.keyguard.ui.viewmodel.KeyguardLongPressViewModel
 import com.android.systemui.keyguard.ui.viewmodel.LockscreenSceneViewModel
-import com.android.systemui.notifications.ui.composable.NotificationStack
-import com.android.systemui.res.R
 import com.android.systemui.scene.shared.model.Direction
 import com.android.systemui.scene.shared.model.Edge
 import com.android.systemui.scene.shared.model.SceneKey
@@ -58,9 +37,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
-/** Set this to `true` to use the LockscreenContent replacement of KeyguardRootView. */
-private val UseLockscreenContent = false
-
 /** The lock screen scene shows when the device is locked. */
 @SysUISingleton
 class LockscreenScene
@@ -68,7 +44,6 @@ class LockscreenScene
 constructor(
     @Application private val applicationScope: CoroutineScope,
     private val viewModel: LockscreenSceneViewModel,
-    @KeyguardRootView private val viewProvider: () -> @JvmSuppressWildcards View,
     private val lockscreenContent: Lazy<LockscreenContent>,
 ) : ComposableScene {
     override val key = SceneKey.Lockscreen
@@ -93,8 +68,6 @@ constructor(
         modifier: Modifier,
     ) {
         LockscreenScene(
-            viewProvider = viewProvider,
-            viewModel = viewModel,
             lockscreenContent = lockscreenContent,
             modifier = modifier,
         )
@@ -115,99 +88,13 @@ constructor(
 }
 
 @Composable
-private fun SceneScope.LockscreenScene(
-    viewProvider: () -> View,
-    viewModel: LockscreenSceneViewModel,
+private fun LockscreenScene(
     lockscreenContent: Lazy<LockscreenContent>,
     modifier: Modifier = Modifier,
 ) {
-    fun findSettingsMenu(): View {
-        return viewProvider().requireViewById(R.id.keyguard_settings_button)
-    }
-
-    Box(
-        modifier = modifier,
-    ) {
-        LongPressSurface(
-            viewModel = viewModel.longPress,
-            isSettingsMenuVisible = { findSettingsMenu().isVisible },
-            settingsMenuBounds = {
-                val bounds = android.graphics.Rect()
-                findSettingsMenu().getHitRect(bounds)
-                bounds.toComposeRect()
-            },
-            modifier = Modifier.fillMaxSize(),
+    lockscreenContent
+        .get()
+        .Content(
+            modifier = modifier.fillMaxSize(),
         )
-
-        if (UseLockscreenContent) {
-            lockscreenContent
-                .get()
-                .Content(
-                    modifier = Modifier.fillMaxSize(),
-                )
-        } else {
-            AndroidView(
-                factory = { _ ->
-                    val keyguardRootView = viewProvider()
-                    // Remove the KeyguardRootView from any parent it might already have in legacy
-                    // code just in case (a view can't have two parents).
-                    (keyguardRootView.parent as? ViewGroup)?.removeView(keyguardRootView)
-                    keyguardRootView
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
-        val notificationStackPosition by viewModel.keyguardRoot.notificationBounds.collectAsState()
-
-        Layout(
-            modifier = Modifier.fillMaxSize(),
-            content = {
-                NotificationStack(
-                    viewModel = viewModel.notifications,
-                    isScrimVisible = false,
-                )
-            }
-        ) { measurables, constraints ->
-            check(measurables.size == 1)
-            val height = notificationStackPosition.height.toInt()
-            val childConstraints = constraints.copy(minHeight = height, maxHeight = height)
-            val placeable = measurables[0].measure(childConstraints)
-            layout(constraints.maxWidth, constraints.maxHeight) {
-                val start = (constraints.maxWidth - placeable.measuredWidth) / 2
-                placeable.placeRelative(x = start, y = notificationStackPosition.top.toInt())
-            }
-        }
-    }
-}
-
-@Composable
-private fun LongPressSurface(
-    viewModel: KeyguardLongPressViewModel,
-    isSettingsMenuVisible: () -> Boolean,
-    settingsMenuBounds: () -> Rect,
-    modifier: Modifier = Modifier,
-) {
-    val isEnabled: Boolean by viewModel.isLongPressHandlingEnabled.collectAsState(initial = false)
-
-    Box(
-        modifier =
-            modifier
-                .combinedClickable(
-                    enabled = isEnabled,
-                    onLongClick = viewModel::onLongPress,
-                    onClick = {},
-                )
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val pointerInputChange = awaitFirstDown()
-                        if (
-                            isSettingsMenuVisible() &&
-                                !settingsMenuBounds().contains(pointerInputChange.position)
-                        ) {
-                            viewModel.onTouchedOutside()
-                        }
-                    }
-                },
-    )
 }

@@ -375,11 +375,13 @@ public final class Telephony {
          * <p>
          * As of Android 11 apps will need specific permission to query other packages. To use
          * this method an app must include in their AndroidManifest:
+         * <pre>{@code
          * <queries>
          *   <intent>
          *     <action android:name="android.provider.Telephony.SMS_DELIVER"/>
          *   </intent>
          * </queries>
+         * }</pre>
          * Which will allow them to query packages which declare intent filters that include
          * the {@link android.provider.Telephony.Sms.Intents#SMS_DELIVER_ACTION} intent.
          * </p>
@@ -4991,6 +4993,13 @@ public final class Telephony {
          */
         public static final String COLUMN_IS_NTN = "is_ntn";
 
+        /**
+         * TelephonyProvider column name to indicate the service capability bitmasks.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SERVICE_CAPABILITIES = "service_capabilities";
+
         /** All columns in {@link SimInfo} table. */
         private static final List<String> ALL_COLUMNS = List.of(
                 COLUMN_UNIQUE_KEY_SUBSCRIPTION_ID,
@@ -5062,7 +5071,8 @@ public final class Telephony {
                 COLUMN_USER_HANDLE,
                 COLUMN_SATELLITE_ENABLED,
                 COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER,
-                COLUMN_IS_NTN
+                COLUMN_IS_NTN,
+                COLUMN_SERVICE_CAPABILITIES
         );
 
         /**

@@ -18,6 +18,10 @@ package com.android.server.wm;
 
 import static android.Manifest.permission.START_ACTIVITIES_FROM_BACKGROUND;
 import static android.app.ActivityManager.PROCESS_STATE_NONEXISTENT;
+import static android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED;
+import static android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED;
+import static android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED;
+import static android.app.ComponentOptions.BackgroundActivityStartMode;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE;
@@ -31,11 +35,13 @@ import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_ALLOW;
 import static com.android.server.wm.ActivityTaskManagerService.APP_SWITCH_FG_ONLY;
 import static com.android.server.wm.ActivityTaskSupervisor.getApplicationLabel;
 import static com.android.window.flags.Flags.balRequireOptInByPendingIntentCreator;
+import static com.android.window.flags.Flags.balRequireOptInSameUid;
 import static com.android.window.flags.Flags.balShowToasts;
 import static com.android.window.flags.Flags.balShowToastsBlocked;
 import static com.android.server.wm.PendingRemoteAnimationRegistry.TIMEOUT_MS;
 
 import static java.lang.annotation.RetentionPolicy.SOURCE;
+import static java.util.Objects.requireNonNull;
 
 import android.annotation.IntDef;
 import android.annotation.NonNull;
@@ -61,6 +67,7 @@ import android.widget.Toast;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.FrameworkStatsLog;
+import com.android.internal.util.Preconditions;
 import com.android.server.UiThread;
 import com.android.server.am.PendingIntentRecord;
 import com.android.window.flags.Flags;
@@ -93,9 +100,9 @@ public class BackgroundActivityStartController {
     public static final ActivityOptions ACTIVITY_OPTIONS_SYSTEM_DEFINED =
             ActivityOptions.makeBasic()
                     .setPendingIntentBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED)
+                            MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED)
                     .setPendingIntentCreatorBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED);
+                            MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED);
 
     private final ActivityTaskManagerService mService;
 
@@ -119,70 +126,78 @@ public class BackgroundActivityStartController {
 
     static final int BAL_BLOCK = 0;
 
-    static final int BAL_ALLOW_DEFAULT = 1;
+    static final int BAL_ALLOW_DEFAULT =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_DEFAULT;
 
     // Following codes are in order of precedence
 
     /** Important UIDs which should be always allowed to launch activities */
-    static final int BAL_ALLOW_ALLOWLISTED_UID = 2;
+    static final int BAL_ALLOW_ALLOWLISTED_UID =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_ALLOWLISTED_UID;
 
     /** Apps that fulfill a certain role that can can always launch new tasks */
-    static final int BAL_ALLOW_ALLOWLISTED_COMPONENT = 3;
+    static final int BAL_ALLOW_ALLOWLISTED_COMPONENT =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_ALLOWLISTED_COMPONENT;
 
-    /** Apps which currently have a visible window or are bound by a service with a visible
-     * window */
-    static final int BAL_ALLOW_VISIBLE_WINDOW = 4;
+    /**
+     * Apps which currently have a visible window or are bound by a service with a visible
+     * window
+     */
+    static final int BAL_ALLOW_VISIBLE_WINDOW =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_VISIBLE_WINDOW;
 
     /** Allowed due to the PendingIntent sender */
-    static final int BAL_ALLOW_PENDING_INTENT = 5;
+    static final int BAL_ALLOW_PENDING_INTENT =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_PENDING_INTENT;
 
-    /** App has START_ACTIVITIES_FROM_BACKGROUND permission or BAL instrumentation privileges
-     * granted to it */
-    static final int BAL_ALLOW_PERMISSION = 6;
+    /**
+     * App has START_ACTIVITIES_FROM_BACKGROUND permission or BAL instrumentation privileges
+     * granted to it
+     */
+    static final int BAL_ALLOW_PERMISSION =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_BAL_PERMISSION;
 
     /** Process has SYSTEM_ALERT_WINDOW permission granted to it */
-    static final int BAL_ALLOW_SAW_PERMISSION = 7;
+    static final int BAL_ALLOW_SAW_PERMISSION =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_SAW_PERMISSION;
 
     /** App is in grace period after an activity was started or finished */
-    static final int BAL_ALLOW_GRACE_PERIOD = 8;
+    static final int BAL_ALLOW_GRACE_PERIOD =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_GRACE_PERIOD;
 
     /** App is in a foreground task or bound to a foreground service (but not itself visible) */
-    static final int BAL_ALLOW_FOREGROUND = 9;
+    static final int BAL_ALLOW_FOREGROUND =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_FOREGROUND;
 
     /** Process belongs to a SDK sandbox */
-    static final int BAL_ALLOW_SDK_SANDBOX = 10;
+    static final int BAL_ALLOW_SDK_SANDBOX =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_SDK_SANDBOX;
+
+    /** Process belongs to a SDK sandbox */
+    static final int BAL_ALLOW_NON_APP_VISIBLE_WINDOW =
+            FrameworkStatsLog.BAL_ALLOWED__ALLOWED_REASON__BAL_ALLOW_NON_APP_VISIBLE_WINDOW;
 
     static String balCodeToString(@BalCode int balCode) {
-        switch (balCode) {
-            case BAL_ALLOW_ALLOWLISTED_COMPONENT:
-                return "BAL_ALLOW_ALLOWLISTED_COMPONENT";
-            case BAL_ALLOW_ALLOWLISTED_UID:
-                return "BAL_ALLOW_ALLOWLISTED_UID";
-            case BAL_ALLOW_DEFAULT:
-                return "BAL_ALLOW_DEFAULT";
-            case BAL_ALLOW_FOREGROUND:
-                return "BAL_ALLOW_FOREGROUND";
-            case BAL_ALLOW_GRACE_PERIOD:
-                return "BAL_ALLOW_GRACE_PERIOD";
-            case BAL_ALLOW_PENDING_INTENT:
-                return "BAL_ALLOW_PENDING_INTENT";
-            case BAL_ALLOW_PERMISSION:
-                return "BAL_ALLOW_PERMISSION";
-            case BAL_ALLOW_SAW_PERMISSION:
-                return "BAL_ALLOW_SAW_PERMISSION";
-            case BAL_ALLOW_SDK_SANDBOX:
-                return "BAL_ALLOW_SDK_SANDBOX";
-            case BAL_ALLOW_VISIBLE_WINDOW:
-                return "BAL_ALLOW_VISIBLE_WINDOW";
-            case BAL_BLOCK:
-                return "BAL_BLOCK";
-            default:
-                throw new IllegalArgumentException("Unexpected value: " + balCode);
-        }
+        return switch (balCode) {
+            case BAL_ALLOW_ALLOWLISTED_COMPONENT -> "BAL_ALLOW_ALLOWLISTED_COMPONENT";
+            case BAL_ALLOW_ALLOWLISTED_UID -> "BAL_ALLOW_ALLOWLISTED_UID";
+            case BAL_ALLOW_DEFAULT -> "BAL_ALLOW_DEFAULT";
+            case BAL_ALLOW_FOREGROUND -> "BAL_ALLOW_FOREGROUND";
+            case BAL_ALLOW_GRACE_PERIOD -> "BAL_ALLOW_GRACE_PERIOD";
+            case BAL_ALLOW_NON_APP_VISIBLE_WINDOW -> "BAL_ALLOW_NON_APP_VISIBLE_WINDOW";
+            case BAL_ALLOW_PENDING_INTENT -> "BAL_ALLOW_PENDING_INTENT";
+            case BAL_ALLOW_PERMISSION -> "BAL_ALLOW_PERMISSION";
+            case BAL_ALLOW_SAW_PERMISSION -> "BAL_ALLOW_SAW_PERMISSION";
+            case BAL_ALLOW_SDK_SANDBOX -> "BAL_ALLOW_SDK_SANDBOX";
+            case BAL_ALLOW_VISIBLE_WINDOW -> "BAL_ALLOW_VISIBLE_WINDOW";
+            case BAL_BLOCK -> "BAL_BLOCK";
+            default -> throw new IllegalArgumentException("Unexpected value: " + balCode);
+        };
     }
 
     @GuardedBy("mService.mGlobalLock")
-    private HashMap<Integer, FinishedActivityEntry> mTaskIdToFinishedActivity = new HashMap<>();
+    private final HashMap<Integer, FinishedActivityEntry> mTaskIdToFinishedActivity =
+            new HashMap<>();
     @GuardedBy("mService.mGlobalLock")
     private FinishedActivityEntry mTopFinishedActivity = null;
 
@@ -230,6 +245,10 @@ public class BackgroundActivityStartController {
         private final WindowProcessController mCallerApp;
         private final WindowProcessController mRealCallerApp;
         private final boolean mIsCallForResult;
+        private final ActivityOptions mCheckedOptions;
+        private final String mAutoOptInReason;
+        private BalVerdict mResultForCaller;
+        private BalVerdict mResultForRealCaller;
 
         private BalState(int callingUid, int callingPid, final String callingPackage,
                  int realCallingUid, int realCallingPid,
@@ -250,28 +269,39 @@ public class BackgroundActivityStartController {
             mIntent = intent;
             mRealCallingPackage = mService.getPackageNameIfUnique(realCallingUid, realCallingPid);
             mIsCallForResult = resultRecord != null;
-            if (balRequireOptInByPendingIntentCreator() // auto-opt in introduced with this feature
-                    && (originatingPendingIntent == null // not a PendingIntent
-                    || mIsCallForResult) // sent for result
-            ) {
+            mCheckedOptions = checkedOptions;
+            @BackgroundActivityStartMode int callerBackgroundActivityStartMode =
+                    checkedOptions.getPendingIntentCreatorBackgroundActivityStartMode();
+            @BackgroundActivityStartMode int realCallerBackgroundActivityStartMode =
+                    checkedOptions.getPendingIntentBackgroundActivityStartMode();
+
+            if (balRequireOptInByPendingIntentCreator() && originatingPendingIntent == null) {
+                mAutoOptInReason = "notPendingIntent";
+            } else if (balRequireOptInByPendingIntentCreator() && mIsCallForResult) {
+                mAutoOptInReason = "callForResult";
+            } else if (callingUid == realCallingUid && !balRequireOptInSameUid()) {
+                mAutoOptInReason = "sameUid";
+            } else {
+                mAutoOptInReason = null;
+            }
+
+            if (mAutoOptInReason != null) {
                 // grant BAL privileges unless explicitly opted out
                 mBalAllowedByPiCreatorWithHardening = mBalAllowedByPiCreator =
-                        checkedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
-                                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED
+                        callerBackgroundActivityStartMode == MODE_BACKGROUND_ACTIVITY_START_DENIED
                                 ? BackgroundStartPrivileges.NONE
                                 : BackgroundStartPrivileges.ALLOW_BAL;
-                mBalAllowedByPiSender =
-                        checkedOptions.getPendingIntentBackgroundActivityStartMode()
-                                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED
-                                ? BackgroundStartPrivileges.NONE
-                                : BackgroundStartPrivileges.ALLOW_BAL;
+                mBalAllowedByPiSender = realCallerBackgroundActivityStartMode
+                        == MODE_BACKGROUND_ACTIVITY_START_DENIED
+                        ? BackgroundStartPrivileges.NONE
+                        : BackgroundStartPrivileges.ALLOW_BAL;
             } else {
                 // for PendingIntents we restrict BAL based on target_sdk
                 mBalAllowedByPiCreatorWithHardening = getBackgroundStartPrivilegesAllowedByCreator(
                         callingUid, callingPackage, checkedOptions);
                 final BackgroundStartPrivileges mBalAllowedByPiCreatorWithoutHardening =
-                        checkedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
-                                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED
+                        callerBackgroundActivityStartMode
+                                == MODE_BACKGROUND_ACTIVITY_START_DENIED
                                 ? BackgroundStartPrivileges.NONE
                                 : BackgroundStartPrivileges.ALLOW_BAL;
                 mBalAllowedByPiCreator = balRequireOptInByPendingIntentCreator()
@@ -313,11 +343,11 @@ public class BackgroundActivityStartController {
         private BackgroundStartPrivileges getBackgroundStartPrivilegesAllowedByCreator(
                 int callingUid, String callingPackage, ActivityOptions checkedOptions) {
             switch (checkedOptions.getPendingIntentCreatorBackgroundActivityStartMode()) {
-                case ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED:
+                case MODE_BACKGROUND_ACTIVITY_START_ALLOWED:
                     return BackgroundStartPrivileges.ALLOW_BAL;
-                case ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED:
+                case MODE_BACKGROUND_ACTIVITY_START_DENIED:
                     return BackgroundStartPrivileges.NONE;
-                case ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED:
+                case MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED:
                     // no explicit choice by the app - let us decide what to do
                     if (callingPackage != null) {
                         // determine based on the calling/creating package
@@ -380,8 +410,19 @@ public class BackgroundActivityStartController {
             return mCallingUid == mRealCallingUid;
         }
 
-        private String dump(BalVerdict resultIfPiCreatorAllowsBal,
-                            BalVerdict resultIfPiSenderAllowsBal) {
+        public void setResultForCaller(BalVerdict resultForCaller) {
+            Preconditions.checkState(mResultForCaller == null,
+                    "mResultForCaller can only be set once");
+            this.mResultForCaller = resultForCaller;
+        }
+
+        public void setResultForRealCaller(BalVerdict resultForRealCaller) {
+            Preconditions.checkState(mResultForRealCaller == null,
+                    "mResultForRealCaller can only be set once");
+            this.mResultForRealCaller = resultForRealCaller;
+        }
+
+        private String dump() {
             StringBuilder sb = new StringBuilder(2048);
             sb.append("[callingPackage: ")
                     .append(getDebugPackageName(mCallingPackage, mCallingUid));
@@ -403,10 +444,11 @@ public class BackgroundActivityStartController {
             sb.append("; balAllowedByPiCreator: ").append(mBalAllowedByPiCreator);
             sb.append("; balAllowedByPiCreatorWithHardening: ")
                     .append(mBalAllowedByPiCreatorWithHardening);
-            sb.append("; resultIfPiCreatorAllowsBal: ").append(resultIfPiCreatorAllowsBal);
+            sb.append("; resultIfPiCreatorAllowsBal: ").append(mResultForCaller);
             sb.append("; hasRealCaller: ").append(hasRealCaller());
             sb.append("; isCallForResult: ").append(mIsCallForResult);
             sb.append("; isPendingIntent: ").append(isPendingIntent());
+            sb.append("; autoOptInReason: ").append(mAutoOptInReason);
             if (hasRealCaller()) {
                 sb.append("; realCallingPackage: ")
                         .append(getDebugPackageName(mRealCallingPackage, mRealCallingUid));
@@ -427,10 +469,54 @@ public class BackgroundActivityStartController {
                             .append(mRealCallerApp.hasActivityInVisibleTask());
                 }
                 sb.append("; balAllowedByPiSender: ").append(mBalAllowedByPiSender);
-                sb.append("; resultIfPiSenderAllowsBal: ").append(resultIfPiSenderAllowsBal);
+                sb.append("; resultIfPiSenderAllowsBal: ").append(mResultForRealCaller);
             }
             sb.append("]");
             return sb.toString();
+        }
+
+        public boolean isPendingIntentBalAllowedByPermission() {
+            return PendingIntentRecord.isPendingIntentBalAllowedByPermission(mCheckedOptions);
+        }
+
+        public boolean callerExplicitOptInOrAutoOptIn() {
+            if (mAutoOptInReason == null) {
+                return mCheckedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
+                        == MODE_BACKGROUND_ACTIVITY_START_ALLOWED;
+            } else {
+                return mCheckedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
+                        != MODE_BACKGROUND_ACTIVITY_START_DENIED;
+            }
+        }
+
+        public boolean realCallerExplicitOptInOrAutoOptIn() {
+            if (mAutoOptInReason == null) {
+                return mCheckedOptions.getPendingIntentBackgroundActivityStartMode()
+                        == MODE_BACKGROUND_ACTIVITY_START_ALLOWED;
+            } else {
+                return mCheckedOptions.getPendingIntentBackgroundActivityStartMode()
+                        != MODE_BACKGROUND_ACTIVITY_START_DENIED;
+            }
+        }
+
+        public boolean callerExplicitOptOut() {
+            return mCheckedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
+                    == MODE_BACKGROUND_ACTIVITY_START_DENIED;
+        }
+
+        public boolean realCallerExplicitOptOut() {
+            return mCheckedOptions.getPendingIntentBackgroundActivityStartMode()
+                    == MODE_BACKGROUND_ACTIVITY_START_DENIED;
+        }
+
+        public boolean callerExplicitOptInOrOut() {
+            return mCheckedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
+                    != MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED;
+        }
+
+        public boolean realCallerExplicitOptInOrOut() {
+            return mCheckedOptions.getPendingIntentBackgroundActivityStartMode()
+                    != MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED;
         }
     }
 
@@ -468,9 +554,8 @@ public class BackgroundActivityStartController {
             return !blocks();
         }
 
-        BalVerdict setOnlyCreatorAllows(boolean onlyCreatorAllows) {
+        void setOnlyCreatorAllows(boolean onlyCreatorAllows) {
             mOnlyCreatorAllows = onlyCreatorAllows;
-            return this;
         }
 
         boolean onlyCreatorAllows() {
@@ -480,10 +565,6 @@ public class BackgroundActivityStartController {
         private BalVerdict setBasedOnRealCaller() {
             mBasedOnRealCaller = true;
             return this;
-        }
-
-        private boolean isBasedOnRealCaller() {
-            return mBasedOnRealCaller;
         }
 
         public String toString() {
@@ -575,24 +656,25 @@ public class BackgroundActivityStartController {
             // realCallingSdkSandboxUidToAppUid should probably just be used instead (or in addition
             // to realCallingUid when calculating resultForRealCaller below.
             if (mService.hasActiveVisibleWindow(realCallingSdkSandboxUidToAppUid)) {
-                BalVerdict balVerdict = new BalVerdict(BAL_ALLOW_SDK_SANDBOX, /*background*/ false,
-                        "uid in SDK sandbox has visible (non-toast) window");
-                return statsLog(balVerdict, state);
+                state.setResultForRealCaller(new BalVerdict(BAL_ALLOW_SDK_SANDBOX,
+                        /*background*/ false,
+                        "uid in SDK sandbox has visible (non-toast) window"));
+                return allowBasedOnRealCaller(state);
             }
         }
 
         BalVerdict resultForCaller = checkBackgroundActivityStartAllowedByCaller(state);
+        state.setResultForCaller(resultForCaller);
 
         if (!state.hasRealCaller()) {
-            BalVerdict resultForRealCaller = null; // nothing to compute
             if (resultForCaller.allows()) {
                 if (DEBUG_ACTIVITY_STARTS) {
                     Slog.d(TAG, "Background activity start allowed. "
-                            + state.dump(resultForCaller, resultForRealCaller));
+                            + state.dump());
                 }
-                return statsLog(resultForCaller, state);
+                return allowBasedOnCaller(state);
             }
-            return abortLaunch(state, resultForCaller, resultForRealCaller);
+            return abortLaunch(state);
         }
 
         // The realCaller result is only calculated for PendingIntents (indicated by a valid
@@ -604,65 +686,58 @@ public class BackgroundActivityStartController {
         // PendingIntents is null).
         BalVerdict resultForRealCaller = state.callerIsRealCaller() && resultForCaller.allows()
                 ? resultForCaller
-                : checkBackgroundActivityStartAllowedBySender(state, checkedOptions)
+                : checkBackgroundActivityStartAllowedBySender(state)
                         .setBasedOnRealCaller();
+        state.setResultForRealCaller(resultForRealCaller);
+
         if (state.isPendingIntent()) {
             resultForCaller.setOnlyCreatorAllows(
                     resultForCaller.allows() && resultForRealCaller.blocks());
         }
 
         // Handle cases with explicit opt-in
-        if (resultForCaller.allows()
-                && checkedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
-                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED) {
+        if (resultForCaller.allows() && state.callerExplicitOptInOrAutoOptIn()) {
             if (DEBUG_ACTIVITY_STARTS) {
                 Slog.d(TAG, "Activity start explicitly allowed by caller. "
-                        + state.dump(resultForCaller, resultForRealCaller));
+                        + state.dump());
             }
-            return statsLog(resultForCaller, state);
+            return allowBasedOnCaller(state);
         }
-        if (resultForRealCaller.allows()
-                && checkedOptions.getPendingIntentBackgroundActivityStartMode()
-                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED) {
+        if (resultForRealCaller.allows() && state.realCallerExplicitOptInOrAutoOptIn()) {
             if (DEBUG_ACTIVITY_STARTS) {
                 Slog.d(TAG, "Activity start explicitly allowed by real caller. "
-                        + state.dump(resultForCaller, resultForRealCaller));
+                        + state.dump());
             }
-            return statsLog(resultForRealCaller, state);
+            return allowBasedOnRealCaller(state);
         }
         // Handle PendingIntent cases with default behavior next
-        boolean callerCanAllow = resultForCaller.allows()
-                && checkedOptions.getPendingIntentCreatorBackgroundActivityStartMode()
-                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED;
+        boolean callerCanAllow = resultForCaller.allows() && !state.callerExplicitOptOut();
         boolean realCallerCanAllow = resultForRealCaller.allows()
-                && checkedOptions.getPendingIntentBackgroundActivityStartMode()
-                == ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED;
+                && !state.realCallerExplicitOptOut();
         if (callerCanAllow && realCallerCanAllow) {
             // Both caller and real caller allow with system defined behavior
             if (state.mBalAllowedByPiCreatorWithHardening.allowsBackgroundActivityStarts()) {
                 // Will be allowed even with BAL hardening.
                 if (DEBUG_ACTIVITY_STARTS) {
                     Slog.d(TAG, "Activity start allowed by caller. "
-                            + state.dump(resultForCaller, resultForRealCaller));
+                            + state.dump());
                 }
-                // return the realCaller result for backwards compatibility
-                return statsLog(resultForRealCaller, state);
+                return allowBasedOnCaller(state);
             }
             if (state.mBalAllowedByPiCreator.allowsBackgroundActivityStarts()) {
                 Slog.wtf(TAG,
                         "With Android 15 BAL hardening this activity start may be blocked"
                                 + " if the PI creator upgrades target_sdk to 35+"
                                 + " AND the PI sender upgrades target_sdk to 34+! "
-                                + state.dump(resultForCaller, resultForRealCaller));
-                showBalRiskToast("BAL would be blocked", state);
-                // return the realCaller result for backwards compatibility
-                return statsLog(resultForRealCaller, state);
+                                + state.dump());
+                showBalRiskToast();
+                return allowBasedOnCaller(state);
             }
             Slog.wtf(TAG,
                     "Without Android 15 BAL hardening this activity start would be allowed"
                             + " (missing opt in by PI creator or sender)! "
-                            + state.dump(resultForCaller, resultForRealCaller));
-            return abortLaunch(state, resultForCaller, resultForRealCaller);
+                            + state.dump());
+            return abortLaunch(state);
         }
         if (callerCanAllow) {
             // Allowed before V by creator
@@ -670,24 +745,24 @@ public class BackgroundActivityStartController {
                 // Will be allowed even with BAL hardening.
                 if (DEBUG_ACTIVITY_STARTS) {
                     Slog.d(TAG, "Activity start allowed by caller. "
-                            + state.dump(resultForCaller, resultForRealCaller));
+                            + state.dump());
                 }
-                return statsLog(resultForCaller, state);
+                return allowBasedOnCaller(state);
             }
             if (state.mBalAllowedByPiCreator.allowsBackgroundActivityStarts()) {
                 Slog.wtf(TAG,
                         "With Android 15 BAL hardening this activity start may be blocked"
                                 + " if the PI creator upgrades target_sdk to 35+! "
                                 + " (missing opt in by PI creator)! "
-                                + state.dump(resultForCaller, resultForRealCaller));
-                showBalRiskToast("BAL would be blocked", state);
-                return statsLog(resultForCaller, state);
+                                + state.dump());
+                showBalRiskToast();
+                return allowBasedOnCaller(state);
             }
             Slog.wtf(TAG,
                     "Without Android 15 BAL hardening this activity start would be allowed"
                             + " (missing opt in by PI creator)! "
-                            + state.dump(resultForCaller, resultForRealCaller));
-            return abortLaunch(state, resultForCaller, resultForRealCaller);
+                            + state.dump());
+            return abortLaunch(state);
         }
         if (realCallerCanAllow) {
             // Allowed before U by sender
@@ -696,24 +771,39 @@ public class BackgroundActivityStartController {
                         "With Android 14 BAL hardening this activity start will be blocked"
                                 + " if the PI sender upgrades target_sdk to 34+! "
                                 + " (missing opt in by PI sender)! "
-                                + state.dump(resultForCaller, resultForRealCaller));
-                showBalRiskToast("BAL would be blocked", state);
-                return statsLog(resultForRealCaller, state);
+                                + state.dump());
+                showBalRiskToast();
+                return allowBasedOnRealCaller(state);
             }
             Slog.wtf(TAG, "Without Android 14 BAL hardening this activity start would be allowed"
                     + " (missing opt in by PI sender)! "
-                    + state.dump(resultForCaller, resultForRealCaller));
-            return abortLaunch(state, resultForCaller, resultForRealCaller);
+                    + state.dump());
+            return abortLaunch(state);
         }
         // neither the caller not the realCaller can allow or have explicitly opted out
-        return abortLaunch(state, resultForCaller, resultForRealCaller);
+        return abortLaunch(state);
     }
 
-    private BalVerdict abortLaunch(BalState state, BalVerdict resultForCaller,
-            BalVerdict resultForRealCaller) {
+    private BalVerdict allowBasedOnCaller(BalState state) {
+        if (DEBUG_ACTIVITY_STARTS) {
+            Slog.d(TAG, "Background activity launch allowed based on caller. "
+                    + state.dump());
+        }
+        return statsLog(state.mResultForCaller, state);
+    }
+
+    private BalVerdict allowBasedOnRealCaller(BalState state) {
+        if (DEBUG_ACTIVITY_STARTS) {
+            Slog.d(TAG, "Background activity launch allowed based on real caller. "
+                    + state.dump());
+        }
+        return statsLog(state.mResultForRealCaller, state);
+    }
+
+    private BalVerdict abortLaunch(BalState state) {
         Slog.w(TAG, "Background activity launch blocked! "
-                + state.dump(resultForCaller, resultForRealCaller));
-        showBalBlockedToast("BAL blocked", state);
+                + state.dump());
+        showBalBlockedToast();
         return statsLog(BalVerdict.BLOCK, state);
     }
 
@@ -779,7 +869,7 @@ public class BackgroundActivityStartController {
                     /*background*/ false, "callingUid has visible window");
         }
         if (mService.mActiveUids.hasNonAppVisibleWindow(callingUid)) {
-            return new BalVerdict(BAL_ALLOW_VISIBLE_WINDOW,
+            return new BalVerdict(BAL_ALLOW_NON_APP_VISIBLE_WINDOW,
                     /*background*/ false, "callingUid has non-app visible window");
         }
 
@@ -852,11 +942,9 @@ public class BackgroundActivityStartController {
      * @return A code denoting which BAL rule allows an activity to be started,
      * or {@link #BAL_BLOCK} if the launch should be blocked
      */
-    BalVerdict checkBackgroundActivityStartAllowedBySender(
-            BalState state,
-            ActivityOptions checkedOptions) {
+    BalVerdict checkBackgroundActivityStartAllowedBySender(BalState state) {
 
-        if (PendingIntentRecord.isPendingIntentBalAllowedByPermission(checkedOptions)
+        if (state.isPendingIntentBalAllowedByPermission()
                 && ActivityManager.checkComponentPermission(
                 android.Manifest.permission.START_ACTIVITIES_FROM_BACKGROUND,
                 state.mRealCallingUid, NO_PROCESS_UID, true) == PackageManager.PERMISSION_GRANTED) {
@@ -875,7 +963,7 @@ public class BackgroundActivityStartController {
                         /*background*/ false, "realCallingUid has visible window");
             }
             if (mService.mActiveUids.hasNonAppVisibleWindow(state.mRealCallingUid)) {
-                return new BalVerdict(BAL_ALLOW_VISIBLE_WINDOW,
+                return new BalVerdict(BAL_ALLOW_NON_APP_VISIBLE_WINDOW,
                         /*background*/ false, "realCallingUid has non-app visible window");
             }
         } else {
@@ -918,7 +1006,7 @@ public class BackgroundActivityStartController {
 
     /**
      * Check if the app allows BAL.
-     *
+     * <p>
      * See {@link BackgroundLaunchProcessController#areBackgroundActivityStartsAllowed(int, int,
      * String, int, boolean, boolean, boolean, long, long, long)} for details on the
      * exceptions.
@@ -980,7 +1068,8 @@ public class BackgroundActivityStartController {
                     || balCode == BAL_ALLOW_PERMISSION
                     || balCode == BAL_ALLOW_PENDING_INTENT
                     || balCode == BAL_ALLOW_SAW_PERMISSION
-                    || balCode == BAL_ALLOW_VISIBLE_WINDOW) {
+                    || balCode == BAL_ALLOW_VISIBLE_WINDOW
+                    || balCode == BAL_ALLOW_NON_APP_VISIBLE_WINDOW) {
                 return true;
             }
         }
@@ -1112,19 +1201,15 @@ public class BackgroundActivityStartController {
         return true;
     }
 
-    private void showBalBlockedToast(String toastText, BalState state) {
+    private void showBalBlockedToast() {
         if (balShowToastsBlocked()) {
-            showToast(toastText
-                    + " caller:" + state.mCallingPackage
-                    + " realCaller:" + state.mRealCallingPackage);
+            showToast("BAL blocked. go/debug-bal");
         }
     }
 
-    private void showBalRiskToast(String toastText, BalState state) {
+    private void showBalRiskToast() {
         if (balShowToasts()) {
-            showToast(toastText
-                    + " caller:" + state.mCallingPackage
-                    + " realCaller:" + state.mRealCallingPackage);
+            showToast("BAL allowed in compat mode. go/debug-bal");
         }
     }
 
@@ -1289,7 +1374,7 @@ public class BackgroundActivityStartController {
      * 2. Or top of an adjacent task fragment to (1)
      * <p>
      * The 'sourceRecord' can be considered top even if it is 'finishing'
-     *
+     * <p>
      * Returns a class where the elements are:
      * <pre>
      * shouldBlockActivityStart: {@code true} if we should actually block the transition (takes into
@@ -1352,7 +1437,7 @@ public class BackgroundActivityStartController {
     /**
      * Determines if a source is allowed to add or remove activities from the task,
      * if the current ActivityRecord is above it in the stack
-     *
+     * <p>
      * A transition is blocked ({@code false} returned) if all of the following are met:
      * <pre>
      * 1. The source activity and the current activity record belong to different apps
@@ -1496,25 +1581,36 @@ public class BackgroundActivityStartController {
         Intent intent = state.mIntent;
 
         if (code == BAL_ALLOW_PENDING_INTENT
-                && (callingUid == Process.SYSTEM_UID || realCallingUid == Process.SYSTEM_UID)) {
-            String activityName =
-                    intent != null ? intent.getComponent().flattenToShortString() : "";
-            FrameworkStatsLog.write(FrameworkStatsLog.BAL_ALLOWED,
-                    activityName,
-                    BAL_ALLOW_PENDING_INTENT,
-                    callingUid,
-                    realCallingUid);
+                && (callingUid < Process.FIRST_APPLICATION_UID
+                || realCallingUid < Process.FIRST_APPLICATION_UID)) {
+            String activityName = intent != null
+                    ? requireNonNull(intent.getComponent()).flattenToShortString() : "";
+            writeBalAllowedLog(activityName, BAL_ALLOW_PENDING_INTENT,
+                    state);
         }
         if (code == BAL_ALLOW_PERMISSION || code == BAL_ALLOW_FOREGROUND
-                    || code == BAL_ALLOW_SAW_PERMISSION) {
+                || code == BAL_ALLOW_SAW_PERMISSION) {
             // We don't need to know which activity in this case.
-            FrameworkStatsLog.write(FrameworkStatsLog.BAL_ALLOWED,
-                    /*activityName*/ "",
-                    code,
-                    callingUid,
-                    realCallingUid);
+            writeBalAllowedLog("", code, state);
+
         }
         return finalVerdict;
+    }
+
+    private static void writeBalAllowedLog(String activityName, int code, BalState state) {
+        FrameworkStatsLog.write(FrameworkStatsLog.BAL_ALLOWED,
+                activityName,
+                code,
+                state.mCallingUid,
+                state.mRealCallingUid,
+                state.mResultForCaller == null ? BAL_BLOCK : state.mResultForCaller.getRawCode(),
+                state.mBalAllowedByPiCreator.allowsBackgroundActivityStarts(),
+                state.callerExplicitOptInOrOut(),
+                state.mResultForRealCaller == null ? BAL_BLOCK
+                        : state.mResultForRealCaller.getRawCode(),
+                state.mBalAllowedByPiSender.allowsBackgroundActivityStarts(),
+                state.realCallerExplicitOptInOrOut()
+        );
     }
 
     /**

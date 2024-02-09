@@ -26,16 +26,21 @@ import static com.android.internal.accessibility.common.ShortcutConstants.Access
 import static com.android.internal.accessibility.util.AccessibilityUtils.getAccessibilityServiceFragmentType;
 import static com.android.internal.accessibility.util.AccessibilityUtils.setAccessibilityServiceState;
 import static com.android.systemui.accessibility.floatingmenu.MenuMessageView.Index;
+import static com.android.systemui.accessibility.floatingmenu.MenuNotificationFactory.ACTION_DELETE;
+import static com.android.systemui.accessibility.floatingmenu.MenuNotificationFactory.ACTION_UNDO;
 import static com.android.systemui.util.PluralMessageFormaterKt.icuMessageFormat;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.annotation.IntDef;
 import android.annotation.StringDef;
 import android.annotation.SuppressLint;
+import android.app.NotificationManager;
+import android.content.BroadcastReceiver;
 import android.content.ComponentCallbacks;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Rect;
@@ -58,6 +63,7 @@ import androidx.lifecycle.Observer;
 
 import com.android.internal.accessibility.dialog.AccessibilityTarget;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.messages.nano.SystemMessageProto;
 import com.android.internal.util.Preconditions;
 import com.android.systemui.Flags;
 import com.android.systemui.res.R;
@@ -91,10 +97,12 @@ class MenuViewLayer extends FrameLayout implements
     private final MenuViewAppearance mMenuViewAppearance;
     private final MenuAnimationController mMenuAnimationController;
     private final AccessibilityManager mAccessibilityManager;
+    private final NotificationManager mNotificationManager;
+    private final MenuNotificationFactory mNotificationFactory;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private final IAccessibilityFloatingMenu mFloatingMenu;
     private final SecureSettings mSecureSettings;
-    private final DismissAnimationController mDismissAnimationController;
+    private final DragToInteractAnimationController mDragToInteractAnimationController;
     private final MenuViewModel mMenuViewModel;
     private final Observer<Boolean> mDockTooltipObserver =
             this::onDockTooltipVisibilityChanged;
@@ -103,7 +111,9 @@ class MenuViewLayer extends FrameLayout implements
     private final Rect mImeInsetsRect = new Rect();
     private boolean mIsMigrationTooltipShowing;
     private boolean mShouldShowDockTooltip;
+    private boolean mIsNotificationShown;
     private Optional<MenuEduTooltipView> mEduTooltipView = Optional.empty();
+    private BroadcastReceiver mNotificationActionReceiver;
 
     @IntDef({
             LayerIndex.MENU_VIEW,
@@ -184,51 +194,69 @@ class MenuViewLayer extends FrameLayout implements
         mMenuViewAppearance = new MenuViewAppearance(context, windowManager);
         mMenuView = new MenuView(context, mMenuViewModel, mMenuViewAppearance);
         mMenuAnimationController = mMenuView.getMenuAnimationController();
-        mMenuAnimationController.setDismissCallback(this::hideMenuAndShowMessage);
+        if (Flags.floatingMenuDragToHide()) {
+            mMenuAnimationController.setDismissCallback(this::hideMenuAndShowNotification);
+        } else {
+            mMenuAnimationController.setDismissCallback(this::hideMenuAndShowMessage);
+        }
         mMenuAnimationController.setSpringAnimationsEndAction(this::onSpringAnimationsEndAction);
         mDismissView = new DismissView(context);
         DismissViewUtils.setup(mDismissView);
-        mDismissAnimationController = new DismissAnimationController(mDismissView, mMenuView);
-        mDismissAnimationController.setMagnetListener(new MagnetizedObject.MagnetListener() {
+        mNotificationFactory = new MenuNotificationFactory(context);
+        mNotificationManager = context.getSystemService(NotificationManager.class);
+        mDragToInteractAnimationController = new DragToInteractAnimationController(
+                mDismissView, mMenuView);
+        mDragToInteractAnimationController.setMagnetListener(new MagnetizedObject.MagnetListener() {
             @Override
             public void onStuckToTarget(@NonNull MagnetizedObject.MagneticTarget target) {
-                mDismissAnimationController.animateDismissMenu(/* scaleUp= */ true);
+                mDragToInteractAnimationController.animateDismissMenu(/* scaleUp= */ true);
             }
 
             @Override
             public void onUnstuckFromTarget(@NonNull MagnetizedObject.MagneticTarget target,
                     float velocityX, float velocityY, boolean wasFlungOut) {
-                mDismissAnimationController.animateDismissMenu(/* scaleUp= */ false);
+                mDragToInteractAnimationController.animateDismissMenu(/* scaleUp= */ false);
             }
 
             @Override
             public void onReleasedInTarget(@NonNull MagnetizedObject.MagneticTarget target) {
-                hideMenuAndShowMessage();
+                if (Flags.floatingMenuDragToHide()) {
+                    hideMenuAndShowNotification();
+                } else {
+                    hideMenuAndShowMessage();
+                }
                 mDismissView.hide();
-                mDismissAnimationController.animateDismissMenu(/* scaleUp= */ false);
+                mDragToInteractAnimationController.animateDismissMenu(/* scaleUp= */ false);
             }
         });
 
         mMenuListViewTouchHandler = new MenuListViewTouchHandler(mMenuAnimationController,
-                mDismissAnimationController);
+                mDragToInteractAnimationController);
         mMenuView.addOnItemTouchListenerToList(mMenuListViewTouchHandler);
         mMenuView.setMoveToTuckedListener(this);
 
         mMessageView = new MenuMessageView(context);
 
         mMenuView.setOnTargetFeaturesChangeListener(newTargetFeatures -> {
-            if (newTargetFeatures.size() < 1) {
-                return;
-            }
-
-            // During the undo action period, the pending action will be canceled and undo back
-            // to the previous state if users did any action related to the accessibility features.
-            if (mMessageView.getVisibility() == VISIBLE) {
+            if (Flags.floatingMenuDragToHide()) {
+                dismissNotification();
                 undo();
-            }
+            } else {
+                if (newTargetFeatures.size() < 1) {
+                    return;
+                }
 
-            final TextView messageText = (TextView) mMessageView.getChildAt(Index.TEXT_VIEW);
-            messageText.setText(getMessageText(newTargetFeatures));
+                // During the undo action period, the pending action will be canceled and undo back
+                // to the previous state if users did any action related to the accessibility
+                // features.
+                if (mMessageView.getVisibility() == VISIBLE) {
+                    undo();
+                }
+
+
+                final TextView messageText = (TextView) mMessageView.getChildAt(Index.TEXT_VIEW);
+                messageText.setText(getMessageText(newTargetFeatures));
+            }
         });
 
         addView(mMenuView, LayerIndex.MENU_VIEW);
@@ -243,7 +271,7 @@ class MenuViewLayer extends FrameLayout implements
     @Override
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         mDismissView.updateResources();
-        mDismissAnimationController.updateResources();
+        mDragToInteractAnimationController.updateResources();
     }
 
     @Override
@@ -455,6 +483,50 @@ class MenuViewLayer extends FrameLayout implements
         mMenuAnimationController.startShrinkAnimation(() -> mMenuView.setVisibility(GONE));
     }
 
+    private void hideMenuAndShowNotification() {
+        mMenuAnimationController.startShrinkAnimation(() -> mMenuView.setVisibility(GONE));
+        showNotification();
+    }
+
+    private void showNotification() {
+        registerReceiverIfNeeded();
+        if (!mIsNotificationShown) {
+            mNotificationManager.notify(
+                    SystemMessageProto.SystemMessage.NOTE_A11Y_FLOATING_MENU_HIDDEN,
+                    mNotificationFactory.createHiddenNotification());
+            mIsNotificationShown = true;
+        }
+    }
+
+    private void dismissNotification() {
+        unregisterReceiverIfNeeded();
+        if (mIsNotificationShown) {
+            mNotificationManager.cancel(
+                    SystemMessageProto.SystemMessage.NOTE_A11Y_FLOATING_MENU_HIDDEN);
+            mIsNotificationShown = false;
+        }
+    }
+
+    private void registerReceiverIfNeeded() {
+        if (mNotificationActionReceiver != null) {
+            return;
+        }
+        mNotificationActionReceiver = new MenuNotificationActionReceiver();
+        final IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(ACTION_UNDO);
+        intentFilter.addAction(ACTION_DELETE);
+        getContext().registerReceiver(mNotificationActionReceiver, intentFilter,
+                Context.RECEIVER_EXPORTED);
+    }
+
+    private void unregisterReceiverIfNeeded() {
+        if (mNotificationActionReceiver == null) {
+            return;
+        }
+        getContext().unregisterReceiver(mNotificationActionReceiver);
+        mNotificationActionReceiver = null;
+    }
+
     private void undo() {
         mHandler.removeCallbacksAndMessages(/* token= */ null);
         mMessageView.setVisibility(GONE);
@@ -462,5 +534,24 @@ class MenuViewLayer extends FrameLayout implements
         mMenuView.onPositionChanged();
         mMenuView.setVisibility(VISIBLE);
         mMenuAnimationController.startGrowAnimation();
+    }
+
+    @VisibleForTesting
+    DragToInteractAnimationController getDragToInteractAnimationController() {
+        return mDragToInteractAnimationController;
+    }
+
+    private class MenuNotificationActionReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (ACTION_UNDO.equals(action)) {
+                dismissNotification();
+                undo();
+            } else if (ACTION_DELETE.equals(action)) {
+                dismissNotification();
+                mDismissMenuAction.run();
+            }
+        }
     }
 }

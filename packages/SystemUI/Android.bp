@@ -65,6 +65,7 @@ systemui_compose_java_defaults {
 
                 "androidx.compose.runtime_runtime",
                 "androidx.compose.material3_material3",
+                "androidx.compose.material_material-icons-extended",
                 "androidx.activity_activity-compose",
                 "androidx.compose.animation_animation-graphics",
             ],
@@ -153,7 +154,7 @@ android_library {
         "SystemUI-res",
         "WifiTrackerLib",
         "WindowManager-Shell",
-        "SystemUIAnimationLib",
+        "PlatformAnimationLib",
         "SystemUICommon",
         "SystemUICustomizationLib",
         "SystemUILogLib",
@@ -280,7 +281,7 @@ android_library {
     static_libs: [
         "SystemUI-res",
         "WifiTrackerLib",
-        "SystemUIAnimationLib",
+        "PlatformAnimationLib",
         "SystemUIPluginLib",
         "SystemUISharedLib",
         "SystemUICustomizationLib",
@@ -446,6 +447,7 @@ android_robolectric_test {
         "androidx.core_core-animation-testing",
         "androidx.test.ext.junit",
         "inline-mockito-robolectric-prebuilt",
+        "platform-parametric-runner-lib",
     ],
     libs: [
         "android.test.runner",

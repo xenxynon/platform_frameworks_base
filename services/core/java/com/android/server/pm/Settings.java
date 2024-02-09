@@ -64,6 +64,7 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.PatternMatcher;
 import android.os.PersistableBundle;
+import android.os.Process;
 import android.os.SELinux;
 import android.os.SystemClock;
 import android.os.Trace;
@@ -91,7 +92,6 @@ import android.util.proto.ProtoOutputStream;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.BackgroundThread;
-import com.android.internal.pm.parsing.pkg.PackageImpl;
 import com.android.internal.pm.pkg.component.ParsedComponent;
 import com.android.internal.pm.pkg.component.ParsedIntentInfo;
 import com.android.internal.pm.pkg.component.ParsedPermission;
@@ -1459,22 +1459,28 @@ public final class Settings implements Watchable, Snappable, ResilientAtomicFile
         return false;
     }
 
-    int removePackageLPw(String name) {
+
+    /**
+     * Remove package from mPackages and its corresponding AppId.
+     *
+     * @return True if the AppId has been removed.
+     * False if the app doesn't exist, or if the app has a shared UID and there are other apps that
+     * still use the same shared UID even after the target app is removed.
+     */
+    boolean removePackageAndAppIdLPw(String name) {
         final PackageSetting p = mPackages.remove(name);
         if (p != null) {
             removeInstallerPackageStatus(name);
             SharedUserSetting sharedUserSetting = getSharedUserSettingLPr(p);
             if (sharedUserSetting != null) {
                 sharedUserSetting.removePackage(p);
-                if (checkAndPruneSharedUserLPw(sharedUserSetting, false)) {
-                    return sharedUserSetting.mAppId;
-                }
+                return checkAndPruneSharedUserLPw(sharedUserSetting, false);
             } else {
                 removeAppIdLPw(p.getAppId());
-                return p.getAppId();
+                return true;
             }
         }
-        return -1;
+        return false;
     }
 
     /**
@@ -3189,6 +3195,9 @@ public final class Settings implements Watchable, Snappable, ResilientAtomicFile
             pkg.isScannedAsStoppedSystemApp());
         if (!pkg.hasSharedUser()) {
             serializer.attributeInt(null, "userId", pkg.getAppId());
+
+            serializer.attributeBoolean(null, "isSdkLibrary",
+                    pkg.getAndroidPackage() != null && pkg.getAndroidPackage().isSdkLibrary());
         } else {
             serializer.attributeInt(null, "sharedUserId", pkg.getAppId());
         }
@@ -4039,10 +4048,12 @@ public final class Settings implements Watchable, Snappable, ResilientAtomicFile
         int targetSdkVersion = 0;
         byte[] restrictUpdateHash = null;
         boolean isScannedAsStoppedSystemApp = false;
+        boolean isSdkLibrary = false;
         try {
             name = parser.getAttributeValue(null, ATTR_NAME);
             realName = parser.getAttributeValue(null, "realName");
             appId = parseAppId(parser);
+            isSdkLibrary = parser.getAttributeBoolean(null, "isSdkLibrary", false);
             sharedUserAppId = parseSharedUserAppId(parser);
             codePathStr = parser.getAttributeValue(null, "codePath");
 
@@ -4157,7 +4168,8 @@ public final class Settings implements Watchable, Snappable, ResilientAtomicFile
                 PackageManagerService.reportSettingsProblem(Log.WARN,
                         "Error in package manager settings: <package> has no codePath at "
                                 + parser.getPositionDescription());
-            } else if (appId > 0) {
+            } else if (appId > 0 || (appId == Process.INVALID_UID && isSdkLibrary
+                    && Flags.disallowSdkLibsToBeApps())) {
                 packageSetting = addPackageLPw(name.intern(), realName, new File(codePathStr),
                         appId, pkgFlags, pkgPrivateFlags, domainSetId);
                 if (PackageManagerService.DEBUG_SETTINGS)

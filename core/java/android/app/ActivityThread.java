@@ -43,6 +43,7 @@ import static com.android.sdksandbox.flags.Flags.sandboxActivitySdkBasedContext;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityOptions.SceneTransitionInfo;
 import android.app.RemoteServiceException.BadForegroundServiceNotificationException;
 import android.app.RemoteServiceException.BadUserInitiatedJobNotificationException;
 import android.app.RemoteServiceException.CannotPostForegroundServiceNotificationException;
@@ -209,9 +210,11 @@ import android.view.contentcapture.IContentCaptureOptionsCallback;
 import android.view.translation.TranslationSpec;
 import android.view.translation.UiTranslationSpec;
 import android.webkit.WebView;
+import android.window.ITaskFragmentOrganizer;
 import android.window.SizeConfigurationBuckets;
 import android.window.SplashScreen;
 import android.window.SplashScreenView;
+import android.window.TaskFragmentTransaction;
 import android.window.WindowContextInfo;
 import android.window.WindowProviderService;
 import android.window.WindowTokenClientController;
@@ -408,7 +411,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
     private int mLastSessionId;
     // Holds the value of the last reported device ID value from the server for the top activity.
-    int mLastReportedDeviceId;
+    int mLastReportedDeviceId = Context.DEVICE_ID_DEFAULT;
     final ArrayMap<IBinder, CreateServiceData> mServicesData = new ArrayMap<>();
     @UnsupportedAppUsage
     final ArrayMap<IBinder, Service> mServices = new ArrayMap<>();
@@ -631,8 +634,8 @@ public final class ActivityThread extends ClientTransactionHandler
         @UnsupportedAppUsage
         boolean mPreserveWindow;
 
-        /** The options for scene transition. */
-        ActivityOptions mActivityOptions;
+        /** The scene transition info. */
+        SceneTransitionInfo mSceneTransitionInfo;
 
         /** Whether this activiy was launched from a bubble. */
         boolean mLaunchedFromBubble;
@@ -659,7 +662,7 @@ public final class ActivityThread extends ClientTransactionHandler
                 ActivityInfo info, Configuration overrideConfig,
                 String referrer, IVoiceInteractor voiceInteractor, Bundle state,
                 PersistableBundle persistentState, List<ResultInfo> pendingResults,
-                List<ReferrerIntent> pendingNewIntents, ActivityOptions activityOptions,
+                List<ReferrerIntent> pendingNewIntents, SceneTransitionInfo sceneTransitionInfo,
                 boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client,
                 IBinder assistToken, IBinder shareableActivityToken, boolean launchedFromBubble,
                 IBinder taskFragmentToken) {
@@ -679,7 +682,7 @@ public final class ActivityThread extends ClientTransactionHandler
             this.profilerInfo = profilerInfo;
             this.overrideConfig = overrideConfig;
             this.packageInfo = client.getPackageInfoNoCheck(activityInfo.applicationInfo);
-            mActivityOptions = activityOptions;
+            mSceneTransitionInfo = sceneTransitionInfo;
             mLaunchedFromBubble = launchedFromBubble;
             mTaskFragmentToken = taskFragmentToken;
             init();
@@ -1959,9 +1962,9 @@ public final class ActivityThread extends ClientTransactionHandler
             sendMessage(H.TRANSLUCENT_CONVERSION_COMPLETE, token, drawComplete ? 1 : 0);
         }
 
-        public void scheduleOnNewActivityOptions(IBinder token, Bundle options) {
-            sendMessage(H.ON_NEW_ACTIVITY_OPTIONS,
-                    new Pair<IBinder, ActivityOptions>(token, ActivityOptions.fromBundle(options)));
+        public void scheduleOnNewSceneTransitionInfo(IBinder token, SceneTransitionInfo info) {
+            sendMessage(H.ON_NEW_SCENE_TRANSITION_INFO,
+                    new Pair<IBinder, SceneTransitionInfo>(token, info));
         }
 
         public void setProcessState(int state) {
@@ -2045,6 +2048,14 @@ public final class ActivityThread extends ClientTransactionHandler
         @Override
         public void scheduleTransaction(ClientTransaction transaction) throws RemoteException {
             ActivityThread.this.scheduleTransaction(transaction);
+        }
+
+        @Override
+        public void scheduleTaskFragmentTransaction(@NonNull ITaskFragmentOrganizer organizer,
+                @NonNull TaskFragmentTransaction transaction) throws RemoteException {
+            // TODO(b/260873529): ITaskFragmentOrganizer can be cleanup to be a IBinder token
+            // after flag removal.
+            organizer.onTransactionReady(transaction);
         }
 
         @Override
@@ -2249,7 +2260,7 @@ public final class ActivityThread extends ClientTransactionHandler
         public static final int TRANSLUCENT_CONVERSION_COMPLETE = 144;
         @UnsupportedAppUsage
         public static final int INSTALL_PROVIDER        = 145;
-        public static final int ON_NEW_ACTIVITY_OPTIONS = 146;
+        public static final int ON_NEW_SCENE_TRANSITION_INFO = 146;
         @UnsupportedAppUsage
         public static final int ENTER_ANIMATION_COMPLETE = 149;
         public static final int START_BINDER_TRACKING = 150;
@@ -2305,7 +2316,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     case REQUEST_ASSIST_CONTEXT_EXTRAS: return "REQUEST_ASSIST_CONTEXT_EXTRAS";
                     case TRANSLUCENT_CONVERSION_COMPLETE: return "TRANSLUCENT_CONVERSION_COMPLETE";
                     case INSTALL_PROVIDER: return "INSTALL_PROVIDER";
-                    case ON_NEW_ACTIVITY_OPTIONS: return "ON_NEW_ACTIVITY_OPTIONS";
+                    case ON_NEW_SCENE_TRANSITION_INFO: return "ON_NEW_SCENE_TRANSITION_INFO";
                     case ENTER_ANIMATION_COMPLETE: return "ENTER_ANIMATION_COMPLETE";
                     case LOCAL_VOICE_INTERACTION_STARTED: return "LOCAL_VOICE_INTERACTION_STARTED";
                     case ATTACH_AGENT: return "ATTACH_AGENT";
@@ -2511,9 +2522,10 @@ public final class ActivityThread extends ClientTransactionHandler
                         Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     }
                     break;
-                case ON_NEW_ACTIVITY_OPTIONS:
-                    Pair<IBinder, ActivityOptions> pair = (Pair<IBinder, ActivityOptions>) msg.obj;
-                    onNewActivityOptions(pair.first, pair.second);
+                case ON_NEW_SCENE_TRANSITION_INFO:
+                    Pair<IBinder, SceneTransitionInfo> pair =
+                            (Pair<IBinder, SceneTransitionInfo>) msg.obj;
+                    onNewSceneTransitionInfo(pair.first, pair.second);
                     break;
                 case ENTER_ANIMATION_COMPLETE:
                     handleEnterAnimationComplete((IBinder) msg.obj);
@@ -3912,9 +3924,9 @@ public final class ActivityThread extends ClientTransactionHandler
                     activity.setTheme(theme);
                 }
 
-                if (r.mActivityOptions != null) {
-                    activity.mPendingOptions = r.mActivityOptions;
-                    r.mActivityOptions = null;
+                if (r.mSceneTransitionInfo != null) {
+                    activity.mSceneTransitionInfo = r.mSceneTransitionInfo;
+                    r.mSceneTransitionInfo = null;
                 }
                 activity.mLaunchedFromBubble = r.mLaunchedFromBubble;
                 activity.mCalled = false;
@@ -3953,7 +3965,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
     @Override
     public void handleStartActivity(ActivityClientRecord r,
-            PendingTransactionActions pendingActions, ActivityOptions activityOptions) {
+            PendingTransactionActions pendingActions, SceneTransitionInfo sceneTransitionInfo) {
         final Activity activity = r.activity;
         if (!r.stopped) {
             throw new IllegalStateException("Can't start activity that is not stopped.");
@@ -3964,8 +3976,8 @@ public final class ActivityThread extends ClientTransactionHandler
         }
 
         unscheduleGcIdler();
-        if (activityOptions != null) {
-            activity.mPendingOptions = activityOptions;
+        if (sceneTransitionInfo != null) {
+            activity.mSceneTransitionInfo = sceneTransitionInfo;
         }
 
         // Start
@@ -4340,10 +4352,10 @@ public final class ActivityThread extends ClientTransactionHandler
         }
     }
 
-    public void onNewActivityOptions(IBinder token, ActivityOptions options) {
+    public void onNewSceneTransitionInfo(IBinder token, SceneTransitionInfo info) {
         ActivityClientRecord r = mActivities.get(token);
         if (r != null) {
-            r.activity.onNewActivityOptions(options);
+            r.activity.onNewSceneTransitionInfo(info);
         }
     }
 
@@ -4857,10 +4869,13 @@ public final class ActivityThread extends ClientTransactionHandler
             service.attach(context, this, data.info.name, data.token, app,
                     ActivityManager.getService());
             if (!service.isUiContext()) { // WindowProviderService is a UI Context.
-                VirtualDeviceManager vdm = context.getSystemService(VirtualDeviceManager.class);
-                if (mLastReportedDeviceId == Context.DEVICE_ID_DEFAULT
-                        || vdm.isValidVirtualDeviceId(mLastReportedDeviceId)) {
+                if (mLastReportedDeviceId == Context.DEVICE_ID_DEFAULT) {
                     service.updateDeviceId(mLastReportedDeviceId);
+                } else {
+                    VirtualDeviceManager vdm = context.getSystemService(VirtualDeviceManager.class);
+                    if (vdm != null && vdm.isValidVirtualDeviceId(mLastReportedDeviceId)) {
+                        service.updateDeviceId(mLastReportedDeviceId);
+                    }
                 }
             }
             service.onCreate();

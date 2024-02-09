@@ -19,6 +19,7 @@ package android.view;
 import static android.view.accessibility.Flags.FLAG_FORCE_INVERT_COLOR;
 import static android.view.flags.Flags.FLAG_TOOLKIT_SET_FRAME_RATE_READ_ONLY;
 import static android.view.Surface.FRAME_RATE_CATEGORY_HIGH;
+import static android.view.Surface.FRAME_RATE_CATEGORY_HIGH_HINT;
 import static android.view.Surface.FRAME_RATE_CATEGORY_LOW;
 import static android.view.Surface.FRAME_RATE_CATEGORY_NORMAL;
 import static android.view.Surface.FRAME_RATE_CATEGORY_NO_PREFERENCE;
@@ -575,7 +576,12 @@ public class ViewRootImplTest {
             assertEquals(viewRootImpl.getPreferredFrameRateCategory(), FRAME_RATE_CATEGORY_LOW);
             viewRootImpl.votePreferredFrameRateCategory(FRAME_RATE_CATEGORY_NORMAL);
             assertEquals(viewRootImpl.getPreferredFrameRateCategory(), FRAME_RATE_CATEGORY_NORMAL);
+            viewRootImpl.votePreferredFrameRateCategory(FRAME_RATE_CATEGORY_HIGH_HINT);
+            assertEquals(viewRootImpl.getPreferredFrameRateCategory(),
+                    FRAME_RATE_CATEGORY_HIGH_HINT);
             viewRootImpl.votePreferredFrameRateCategory(FRAME_RATE_CATEGORY_HIGH);
+            assertEquals(viewRootImpl.getPreferredFrameRateCategory(), FRAME_RATE_CATEGORY_HIGH);
+            viewRootImpl.votePreferredFrameRateCategory(FRAME_RATE_CATEGORY_HIGH_HINT);
             assertEquals(viewRootImpl.getPreferredFrameRateCategory(), FRAME_RATE_CATEGORY_HIGH);
             viewRootImpl.votePreferredFrameRateCategory(FRAME_RATE_CATEGORY_NORMAL);
             assertEquals(viewRootImpl.getPreferredFrameRateCategory(), FRAME_RATE_CATEGORY_HIGH);
@@ -659,8 +665,6 @@ public class ViewRootImplTest {
         ViewRootImpl viewRootImpl = view.getViewRootImpl();
         sInstrumentation.runOnMainSync(() -> {
             view.invalidate();
-            assertEquals(viewRootImpl.getLastPreferredFrameRateCategory(),
-                    FRAME_RATE_CATEGORY_NORMAL);
             viewRootImpl.notifyInsetsAnimationRunningStateChanged(true);
             view.invalidate();
         });
@@ -669,6 +673,37 @@ public class ViewRootImplTest {
         sInstrumentation.runOnMainSync(() -> {
             assertEquals(viewRootImpl.getLastPreferredFrameRateCategory(),
                     FRAME_RATE_CATEGORY_HIGH);
+        });
+    }
+
+
+    /**
+     * Test FrameRateBoostOnTouchEnabled API
+     */
+    @Test
+    @RequiresFlagsEnabled(FLAG_TOOLKIT_SET_FRAME_RATE_READ_ONLY)
+    public void votePreferredFrameRate_frameRateBoostOnTouch() {
+        View view = new View(sContext);
+        attachViewToWindow(view);
+        sInstrumentation.waitForIdleSync();
+
+        ViewRootImpl viewRootImpl = view.getViewRootImpl();
+        final WindowManager.LayoutParams attrs = viewRootImpl.mWindowAttributes;
+        assertEquals(attrs.getFrameRateBoostOnTouchEnabled(), true);
+        assertEquals(viewRootImpl.getFrameRateBoostOnTouchEnabled(),
+                attrs.getFrameRateBoostOnTouchEnabled());
+
+        sInstrumentation.runOnMainSync(() -> {
+            attrs.setFrameRateBoostOnTouchEnabled(false);
+            viewRootImpl.setLayoutParams(attrs, false);
+        });
+        sInstrumentation.waitForIdleSync();
+
+        sInstrumentation.runOnMainSync(() -> {
+            final WindowManager.LayoutParams newAttrs = viewRootImpl.mWindowAttributes;
+            assertEquals(newAttrs.getFrameRateBoostOnTouchEnabled(), false);
+            assertEquals(viewRootImpl.getFrameRateBoostOnTouchEnabled(),
+                    newAttrs.getFrameRateBoostOnTouchEnabled());
         });
     }
 

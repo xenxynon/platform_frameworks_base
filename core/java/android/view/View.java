@@ -32,6 +32,8 @@ import static android.view.displayhash.DisplayHashResultCallback.EXTRA_DISPLAY_H
 import static android.view.displayhash.DisplayHashResultCallback.EXTRA_DISPLAY_HASH_ERROR_CODE;
 import static android.view.flags.Flags.FLAG_TOOLKIT_SET_FRAME_RATE_READ_ONLY;
 import static android.view.flags.Flags.FLAG_VIEW_VELOCITY_API;
+import static android.view.flags.Flags.enableUseMeasureCacheDuringForceLayout;
+import static android.view.flags.Flags.toolkitMetricsForFrameRateDecision;
 import static android.view.flags.Flags.toolkitSetFrameRateReadOnly;
 import static android.view.flags.Flags.viewVelocityApi;
 import static android.view.inputmethod.Flags.FLAG_HOME_SCREEN_HANDWRITING_DELEGATOR;
@@ -953,6 +955,12 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      * Ignore an optimization that skips unnecessary EXACTLY layout passes.
      */
     private static boolean sAlwaysRemeasureExactly = false;
+
+    /**
+     * When true makes it possible to use onMeasure caches also when the force layout flag is
+     * enabled. This helps avoiding multiple measures in the same frame with the same dimensions.
+     */
+    private static boolean sUseMeasureCacheDuringForceLayoutFlagValue;
 
     /**
      * Allow setForeground/setBackground to be called (and ignored) on a textureview,
@@ -2310,6 +2318,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     protected static final int[] PRESSED_ENABLED_FOCUSED_SELECTED_WINDOW_FOCUSED_STATE_SET;
 
     private static boolean sToolkitSetFrameRateReadOnlyFlagValue;
+    private static boolean sToolkitMetricsForFrameRateDecisionFlagValue;
 
     static {
         EMPTY_STATE_SET = StateSet.get(0);
@@ -2394,6 +2403,8 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
                         | StateSet.VIEW_STATE_PRESSED);
 
         sToolkitSetFrameRateReadOnlyFlagValue = toolkitSetFrameRateReadOnly();
+        sToolkitMetricsForFrameRateDecisionFlagValue = toolkitMetricsForFrameRateDecision();
+        sUseMeasureCacheDuringForceLayoutFlagValue = enableUseMeasureCacheDuringForceLayout();
     }
 
     /**
@@ -10763,11 +10774,11 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
             return;
         }
 
-        session.internalNotifyViewTreeEvent(/* started= */ true);
+        session.notifyViewTreeEvent(/* started= */ true);
         try {
             dispatchProvideContentCaptureStructure();
         } finally {
-            session.internalNotifyViewTreeEvent(/* started= */ false);
+            session.notifyViewTreeEvent(/* started= */ false);
         }
     }
 
@@ -15010,6 +15021,7 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /** @hide */
+    @Nullable
     View getSelfOrParentImportantForA11y() {
         if (isImportantForAccessibility()) return this;
         ViewParent parent = getParentForAccessibility();
@@ -22859,6 +22871,36 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     /**
+     * Determines whether an unprocessed input event is available on the window.
+     *
+     * This is only a performance hint (a.k.a. the Input Hint) and may return false negative
+     * results.  Callers should not rely on availability of the input event based on the return
+     * value of this method.
+     *
+     * The Input Hint functionality is experimental, and can be removed in the future OS releases.
+     *
+     * This method only returns nontrivial results on a View that is attached to a Window. Such View
+     * can be acquired using `Activity.getWindow().getDecorView()`, and only after the view
+     * hierarchy is attached (via {@link android.app.Activity#setContentView(android.view.View)}).
+     *
+     * In multi-window mode the View can provide the Input Hint only for the window it is attached
+     * to. Therefore, checking input availability for the whole application would require asking
+     * for the hint from more than one View.
+     *
+     * The initial implementation does not return false positives, but callers should not rely on
+     * it: false positives may occur in future OS releases.
+     *
+     * @hide
+     */
+    public boolean probablyHasInput() {
+        ViewRootImpl viewRootImpl = getViewRootImpl();
+        if (viewRootImpl == null) {
+            return false;
+        }
+        return viewRootImpl.probablyHasInput();
+    }
+
+    /**
      * Destroys all hardware rendering resources. This method is invoked
      * when the system needs to reclaim resources. Upon execution of this
      * method, you should free any OpenGL resources created by the view.
@@ -27428,7 +27470,13 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
 
             resolveRtlPropertiesIfNeeded();
 
-            int cacheIndex = forceLayout ? -1 : mMeasureCache.indexOfKey(key);
+            int cacheIndex;
+            if (sUseMeasureCacheDuringForceLayoutFlagValue) {
+                cacheIndex =  mMeasureCache.indexOfKey(key);
+            } else {
+                cacheIndex = forceLayout ? -1 : mMeasureCache.indexOfKey(key);
+            }
+
             if (cacheIndex < 0 || sIgnoreMeasureCache) {
                 if (isTraversalTracingEnabled()) {
                     Trace.beginSection(mTracingStrings.onMeasure);
@@ -33070,7 +33118,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     }
 
     private float getSizePercentage() {
-        if (mResources == null || getVisibility() != VISIBLE) {
+        float alpha = mTransformationInfo != null ? mTransformationInfo.mAlpha : 1;
+        int visibility = mViewFlags & VISIBILITY_MASK;
+
+        if (mResources == null || alpha == 0 || visibility != VISIBLE) {
             return 0;
         }
 
@@ -33098,22 +33149,26 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
         ViewRootImpl viewRootImpl = getViewRootImpl();
         float sizePercentage = getSizePercentage();
         int frameRateCateogry = calculateFrameRateCategory(sizePercentage);
-        if (sToolkitSetFrameRateReadOnlyFlagValue && viewRootImpl != null
-                && sizePercentage > 0) {
-            if (mPreferredFrameRate < 0) {
-                if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE) {
-                    frameRateCateogry = FRAME_RATE_CATEGORY_NO_PREFERENCE;
-                } else if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_LOW) {
-                    frameRateCateogry = FRAME_RATE_CATEGORY_LOW;
-                } else if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_NORMAL) {
-                    frameRateCateogry = FRAME_RATE_CATEGORY_NORMAL;
-                } else if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_HIGH) {
-                    frameRateCateogry = FRAME_RATE_CATEGORY_HIGH;
+        if (viewRootImpl != null && sizePercentage > 0) {
+            if (sToolkitSetFrameRateReadOnlyFlagValue) {
+                if (mPreferredFrameRate < 0) {
+                    if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_NO_PREFERENCE) {
+                        frameRateCateogry = FRAME_RATE_CATEGORY_NO_PREFERENCE;
+                    } else if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_LOW) {
+                        frameRateCateogry = FRAME_RATE_CATEGORY_LOW;
+                    } else if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_NORMAL) {
+                        frameRateCateogry = FRAME_RATE_CATEGORY_NORMAL;
+                    } else if (mPreferredFrameRate == REQUESTED_FRAME_RATE_CATEGORY_HIGH) {
+                        frameRateCateogry = FRAME_RATE_CATEGORY_HIGH;
+                    }
+                } else {
+                    viewRootImpl.votePreferredFrameRate(mPreferredFrameRate);
                 }
-            } else {
-                viewRootImpl.votePreferredFrameRate(mPreferredFrameRate);
+                viewRootImpl.votePreferredFrameRateCategory(frameRateCateogry);
             }
-            viewRootImpl.votePreferredFrameRateCategory(frameRateCateogry);
+            if (sToolkitMetricsForFrameRateDecisionFlagValue) {
+                viewRootImpl.recordViewPercentage(sizePercentage);
+            }
         }
     }
 
@@ -33130,6 +33185,10 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
     public void setFrameContentVelocity(float pixelsPerSecond) {
         if (viewVelocityApi()) {
             mFrameContentVelocity = Math.abs(pixelsPerSecond);
+
+            if (sToolkitMetricsForFrameRateDecisionFlagValue) {
+                Trace.setCounter("Set frame velocity", (long) mFrameContentVelocity);
+            }
         }
     }
 

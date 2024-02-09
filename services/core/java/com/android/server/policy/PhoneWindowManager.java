@@ -105,6 +105,7 @@ import android.app.ActivityManager;
 import android.app.ActivityManager.RecentTaskInfo;
 import android.app.ActivityManagerInternal;
 import android.app.ActivityTaskManager;
+import android.app.ActivityTaskManager.RootTaskInfo;
 import android.app.AppOpsManager;
 import android.app.CrossDeviceManager;
 import android.app.IActivityManager;
@@ -477,6 +478,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     private TalkbackShortcutController mTalkbackShortcutController;
 
+    private WindowWakeUpPolicy mWindowWakeUpPolicy;
+
     boolean mSafeMode;
 
     // Whether to allow dock apps with METADATA_DOCK_HOME to temporarily take over the Home key.
@@ -589,6 +592,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private int mLongPressOnStemPrimaryBehavior;
     private RecentTaskInfo mBackgroundRecentTaskInfoOnStemPrimarySingleKeyUp;
 
+    // The focused task at the time when the first STEM_PRIMARY key was released. This can only
+    // be accessed from the looper thread.
+    private RootTaskInfo mFocusedTaskInfoOnStemPrimarySingleKeyUp;
+
     private boolean mHandleVolumeKeysInWM;
 
     private boolean mPendingKeyguardOccluded;
@@ -639,15 +646,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     // Whether to lock the device after the next dreaming transition has finished.
     private boolean mLockAfterDreamingTransitionFinished;
-
-    // Allowed theater mode wake actions
-    private boolean mAllowTheaterModeWakeFromKey;
-    private boolean mAllowTheaterModeWakeFromPowerKey;
-    private boolean mAllowTheaterModeWakeFromMotion;
-    private boolean mAllowTheaterModeWakeFromMotionWhenNotDreaming;
-    private boolean mAllowTheaterModeWakeFromCameraLens;
-    private boolean mAllowTheaterModeWakeFromLidSwitch;
-    private boolean mAllowTheaterModeWakeFromWakeGesture;
 
     // If true, the power button long press behavior will be invoked even if the default display is
     // non-interactive. If false, the power button long press behavior will be skipped if the
@@ -946,8 +944,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 if (shouldEnableWakeGestureLp()) {
                     performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY, false,
                             "Wake Up");
-                    wakeUp(SystemClock.uptimeMillis(), mAllowTheaterModeWakeFromWakeGesture,
-                            PowerManager.WAKE_REASON_GESTURE, "android.policy:GESTURE");
+                    mWindowWakeUpPolicy.wakeUpFromWakeGesture();
                 }
             }
         }
@@ -1083,7 +1080,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 || handledByPowerManager || mKeyCombinationManager.isPowerKeyIntercepted();
         if (!mPowerKeyHandled) {
             if (!interactive) {
-                wakeUpFromPowerKey(event.getDownTime());
+                wakeUpFromWakeKey(event);
             }
         } else {
             // handled by another power key policy.
@@ -1330,7 +1327,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     Settings.Global.putInt(mContext.getContentResolver(),
                             Settings.Global.THEATER_MODE_ON, 0);
                     if (!interactive) {
-                        wakeUpFromPowerKey(eventTime);
+                        wakeUpFromWakeKey(eventTime, KEYCODE_POWER, /* isDown= */ false);
                     }
                 } else {
                     Slog.i(TAG, "Toggling theater mode on.");
@@ -1346,7 +1343,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case MULTI_PRESS_POWER_BRIGHTNESS_BOOST:
                 Slog.i(TAG, "Starting brightness boost.");
                 if (!interactive) {
-                    wakeUpFromPowerKey(eventTime);
+                    wakeUpFromWakeKey(eventTime, KEYCODE_POWER, /* isDown= */ false);
                 }
                 mPowerManager.boostScreenBrightness(eventTime);
                 break;
@@ -2161,12 +2158,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     static class Injector {
         private final Context mContext;
         private final WindowManagerFuncs mWindowManagerFuncs;
-        private final Looper mLooper;
 
-        Injector(Context context, WindowManagerFuncs funcs, Looper looper) {
+        Injector(Context context, WindowManagerFuncs funcs) {
             mContext = context;
             mWindowManagerFuncs = funcs;
-            mLooper = looper;
         }
 
         Context getContext() {
@@ -2178,7 +2173,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         Looper getLooper() {
-            return mLooper;
+            return Looper.myLooper();
         }
 
         AccessibilityShortcutController getAccessibilityShortcutController(
@@ -2221,7 +2216,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     /** {@inheritDoc} */
     @Override
     public void init(Context context, WindowManagerFuncs funcs) {
-        init(new Injector(context, funcs, Looper.myLooper()));
+        init(new Injector(context, funcs));
     }
 
     @VisibleForTesting
@@ -2334,22 +2329,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 com.android.internal.R.integer.config_lidKeyboardAccessibility);
         mLidNavigationAccessibility = mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_lidNavigationAccessibility);
-
-        mAllowTheaterModeWakeFromKey = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromKey);
-        mAllowTheaterModeWakeFromPowerKey = mAllowTheaterModeWakeFromKey
-                || mContext.getResources().getBoolean(
-                    com.android.internal.R.bool.config_allowTheaterModeWakeFromPowerKey);
-        mAllowTheaterModeWakeFromMotion = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromMotion);
-        mAllowTheaterModeWakeFromMotionWhenNotDreaming = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromMotionWhenNotDreaming);
-        mAllowTheaterModeWakeFromCameraLens = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromCameraLens);
-        mAllowTheaterModeWakeFromLidSwitch = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromLidSwitch);
-        mAllowTheaterModeWakeFromWakeGesture = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromGesture);
 
         mGoToSleepOnButtonPressTheaterMode = mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_goToSleepOnButtonPressTheaterMode);
@@ -2488,6 +2467,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 com.android.internal.R.integer.config_keyguardDrawnTimeout);
         mKeyguardDelegate = injector.getKeyguardServiceDelegate();
         mTalkbackShortcutController = injector.getTalkbackShortcutController();
+        mWindowWakeUpPolicy = new WindowWakeUpPolicy(mContext);
         initKeyCombinationRules();
         initSingleKeyGestureRules(injector.getLooper());
         mButtonOverridePermissionChecker = injector.getButtonOverridePermissionChecker();
@@ -2757,7 +2737,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
         @Override
         void onPress(long downTime, int unusedDisplayId) {
-            if (mShouldEarlyShortPressOnStemPrimary) {
+            if (shouldHandleStemPrimaryEarlyShortPress()) {
                 return;
             }
             // Short-press should be triggered only if app doesn't handle it.
@@ -2781,11 +2761,37 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             if (count == 3
                     && mTriplePressOnStemPrimaryBehavior
                     == TRIPLE_PRESS_PRIMARY_TOGGLE_ACCESSIBILITY) {
+                // Cancel any queued actions for current key code to prevent them from being
+                // launched after a11y layer enabled. If the action happens early,
+                // undoEarlySinglePress will make sure the correct task is on top.
+                mDeferredKeyActionExecutor.cancelQueuedAction(KeyEvent.KEYCODE_STEM_PRIMARY);
+                undoEarlySinglePress();
                 stemPrimaryPress(count);
             } else {
                 // Other multi-press gestures should be triggered only if app doesn't handle it.
                 mDeferredKeyActionExecutor.queueKeyAction(
                         KeyEvent.KEYCODE_STEM_PRIMARY, downTime, () -> stemPrimaryPress(count));
+            }
+        }
+
+        /**
+         * This method undo the previously launched early-single-press action by bringing the
+         * focused task before launching early-single-press back to top.
+         */
+        private void undoEarlySinglePress() {
+            if (shouldHandleStemPrimaryEarlyShortPress()
+                    && mFocusedTaskInfoOnStemPrimarySingleKeyUp != null) {
+                try {
+                    mActivityManagerService.startActivityFromRecents(
+                            mFocusedTaskInfoOnStemPrimarySingleKeyUp.taskId, null);
+                } catch (RemoteException | IllegalArgumentException e) {
+                    Slog.e(
+                            TAG,
+                            "Failed to start task "
+                                    + mFocusedTaskInfoOnStemPrimarySingleKeyUp.taskId
+                                    + " from recents",
+                            e);
+                }
             }
         }
 
@@ -2797,14 +2803,48 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 // It is possible that we may navigate away from this task before the double
                 // press is detected, as a result of the first press, so we save the  current
                 // most recent task before that happens.
+                // TODO(b/311497918): guard this with DOUBLE_PRESS_PRIMARY_SWITCH_RECENT_APP
                 mBackgroundRecentTaskInfoOnStemPrimarySingleKeyUp =
                         mActivityTaskManagerInternal.getMostRecentTaskFromBackground();
-                if (mShouldEarlyShortPressOnStemPrimary) {
+
+                mFocusedTaskInfoOnStemPrimarySingleKeyUp = null;
+
+                if (shouldHandleStemPrimaryEarlyShortPress()) {
                     // Key-up gesture should be triggered only if app doesn't handle it.
                     mDeferredKeyActionExecutor.queueKeyAction(
-                            KeyEvent.KEYCODE_STEM_PRIMARY, eventTime, () -> stemPrimaryPress(1));
+                            KeyEvent.KEYCODE_STEM_PRIMARY,
+                            eventTime,
+                            () -> {
+                                // Save the info of the focused task on screen. This may be used
+                                // later to bring the current focused task back to top. For
+                                // example, stem primary triple press enables the A11y interface
+                                // on top of the current focused task. When early single press is
+                                // enabled for stem primary, the focused task could change to
+                                // something else upon first key up event. In that case, we will
+                                // bring the task recorded by this variable back to top. Then, start
+                                // A11y interface.
+                                try {
+                                    mFocusedTaskInfoOnStemPrimarySingleKeyUp =
+                                            mActivityManagerService.getFocusedRootTaskInfo();
+                                } catch (RemoteException e) {
+                                    Slog.e(
+                                            TAG,
+                                            "StemPrimaryKeyRule: onKeyUp: error while getting "
+                                                    + "focused task "
+                                                    + "info.",
+                                            e);
+                                }
+
+                                stemPrimaryPress(1);
+                            });
                 }
             }
+        }
+
+        // TODO(b/311497918): make a shouldHandlePowerEarlyShortPress for power button.
+        private boolean shouldHandleStemPrimaryEarlyShortPress() {
+            return mShouldEarlyShortPressOnStemPrimary
+                    && mShortPressOnStemPrimaryBehavior == SHORT_PRESS_PRIMARY_LAUNCH_ALL_APPS;
         }
     }
 
@@ -4211,6 +4251,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         return redoLayout;
     }
 
+    /**
+     * Shows the keyguard without immediately locking the device.
+     */
+    @Override
+    public void showDismissibleKeyguard() {
+        mKeyguardDelegate.showDismissibleKeyguard();
+    }
+
     // There are several different flavors of "assistant" that can be launched from
     // various parts of the UI.
 
@@ -4460,8 +4508,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         updateRotation(true);
 
         if (lidOpen) {
-            wakeUp(SystemClock.uptimeMillis(), mAllowTheaterModeWakeFromLidSwitch,
-                    PowerManager.WAKE_REASON_LID, "android.policy:LID");
+            mWindowWakeUpPolicy.wakeUpFromLid();
         } else if (getLidBehavior() != LID_BEHAVIOR_SLEEP) {
             mPowerManager.userActivity(SystemClock.uptimeMillis(), false);
         }
@@ -4487,8 +4534,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             } else {
                 intent = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
             }
-            wakeUp(whenNanos / 1000000, mAllowTheaterModeWakeFromCameraLens,
-                    PowerManager.WAKE_REASON_CAMERA_LAUNCH, "android.policy:CAMERA_COVER");
+            mWindowWakeUpPolicy.wakeUpFromCameraCover(whenNanos / 1000000);
             startActivityAsUser(intent, UserHandle.CURRENT_OR_SELF);
         }
         mCameraLensCoverState = lensCoverState;
@@ -4568,7 +4614,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             boolean shouldTurnOnTv = false;
             if (down && (keyCode == KeyEvent.KEYCODE_POWER
                     || keyCode == KeyEvent.KEYCODE_TV_POWER)) {
-                wakeUpFromPowerKey(event.getDownTime());
+                wakeUpFromWakeKey(event);
                 shouldTurnOnTv = true;
             } else if (down && (isWakeKey || keyCode == KeyEvent.KEYCODE_WAKEUP)
                     && isWakeKeyWhenScreenOff(keyCode)) {
@@ -5083,9 +5129,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (mRequestedOrSleepingDefaultDisplay) {
             mCameraGestureTriggeredDuringGoingToSleep = true;
             // Wake device up early to prevent display doing redundant turning off/on stuff.
-            wakeUp(SystemClock.uptimeMillis(), mAllowTheaterModeWakeFromPowerKey,
-                    PowerManager.WAKE_REASON_CAMERA_LAUNCH,
-                    "android.policy:CAMERA_GESTURE_PREVENT_LOCK");
+            mWindowWakeUpPolicy.wakeUpFromPowerKeyCameraGesture();
         }
         return true;
     }
@@ -5180,11 +5224,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     // TODO(b/117479243): handle it in InputPolicy
     /** {@inheritDoc} */
     @Override
-    public int interceptMotionBeforeQueueingNonInteractive(int displayId, long whenNanos,
-            int policyFlags) {
+    public int interceptMotionBeforeQueueingNonInteractive(int displayId, int source, int action,
+            long whenNanos, int policyFlags) {
         if ((policyFlags & FLAG_WAKE) != 0) {
-            if (wakeUp(whenNanos / 1000000, mAllowTheaterModeWakeFromMotion,
-                    PowerManager.WAKE_REASON_WAKE_MOTION, "android.policy:MOTION")) {
+            if (mWindowWakeUpPolicy.wakeUpFromMotion(
+                        whenNanos / 1000000, source, action == MotionEvent.ACTION_DOWN)) {
                 // Woke up. Pass motion events to user.
                 return ACTION_PASS_TO_USER;
             }
@@ -5198,8 +5242,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         // there will be no dream to intercept the touch and wake into ambient.  The device should
         // wake up in this case.
         if (isTheaterModeEnabled() && (policyFlags & FLAG_WAKE) != 0) {
-            if (wakeUp(whenNanos / 1000000, mAllowTheaterModeWakeFromMotionWhenNotDreaming,
-                    PowerManager.WAKE_REASON_WAKE_MOTION, "android.policy:MOTION")) {
+            if (mWindowWakeUpPolicy.wakeUpFromMotion(
+                        whenNanos / 1000000, source, action == MotionEvent.ACTION_DOWN)) {
                 // Woke up. Pass motion events to user.
                 return ACTION_PASS_TO_USER;
             }
@@ -5533,37 +5577,25 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         return sleepDurationRealtime > mWakeUpToLastStateTimeout;
     }
 
-    private void wakeUpFromPowerKey(long eventTime) {
-        if (wakeUp(eventTime, mAllowTheaterModeWakeFromPowerKey,
-                PowerManager.WAKE_REASON_POWER_BUTTON, "android.policy:POWER")) {
-            // Start HOME with "reason" extra if sleeping for more than mWakeUpToLastStateTimeout
-            if (shouldWakeUpWithHomeIntent()) {
-                startDockOrHome(DEFAULT_DISPLAY, /*fromHomeKey*/ false, /*wakenFromDreams*/ true,
-                        PowerManager.wakeReasonToString(PowerManager.WAKE_REASON_POWER_BUTTON));
-            }
-        }
-    }
-
     private void wakeUpFromWakeKey(KeyEvent event) {
-        if (wakeUp(event.getEventTime(), mAllowTheaterModeWakeFromKey,
-                PowerManager.WAKE_REASON_WAKE_KEY, "android.policy:KEY")) {
-            // Start HOME with "reason" extra if sleeping for more than mWakeUpToLastStateTimeout
-            if (shouldWakeUpWithHomeIntent() && event.getKeyCode() == KEYCODE_HOME) {
-                startDockOrHome(DEFAULT_DISPLAY, /*fromHomeKey*/ true, /*wakenFromDreams*/ true,
-                        PowerManager.wakeReasonToString(PowerManager.WAKE_REASON_WAKE_KEY));
-            }
-        }
+        wakeUpFromWakeKey(
+                event.getEventTime(),
+                event.getKeyCode(),
+                event.getAction() == KeyEvent.ACTION_DOWN);
     }
 
-    private boolean wakeUp(long wakeTime, boolean wakeInTheaterMode, @WakeReason int reason,
-            String details) {
-        final boolean theaterModeEnabled = isTheaterModeEnabled();
-        if (!wakeInTheaterMode && theaterModeEnabled) {
-            return false;
+    private void wakeUpFromWakeKey(long eventTime, int keyCode, boolean isDown) {
+        if (mWindowWakeUpPolicy.wakeUpFromKey(eventTime, keyCode, isDown)) {
+            final boolean keyCanLaunchHome = keyCode == KEYCODE_HOME || keyCode == KEYCODE_POWER;
+            // Start HOME with "reason" extra if sleeping for more than mWakeUpToLastStateTimeout
+            if (shouldWakeUpWithHomeIntent() &&  keyCanLaunchHome) {
+                startDockOrHome(
+                        DEFAULT_DISPLAY,
+                        /*fromHomeKey*/ keyCode == KEYCODE_HOME,
+                        /*wakenFromDreams*/ true,
+                        "Wake from " + KeyEvent. keyCodeToString(keyCode));
+            }
         }
-
-        mPowerManager.wakeUp(wakeTime, reason, details);
-        return true;
     }
 
     private void finishKeyguardDrawn() {

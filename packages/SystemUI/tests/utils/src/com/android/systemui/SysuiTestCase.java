@@ -33,11 +33,13 @@ import android.testing.TestWithLooperRule;
 import android.testing.TestableLooper;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.core.animation.AndroidXAnimatorIsolationRule;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.uiautomator.UiDevice;
 
 import com.android.systemui.broadcast.FakeBroadcastDispatcher;
+import com.android.systemui.flags.SceneContainerRule;
 
 import org.junit.After;
 import org.junit.AfterClass;
@@ -67,9 +69,24 @@ public abstract class SysuiTestCase {
     @Rule
     public final SetFlagsRule mSetFlagsRule = new SetFlagsRule(DEVICE_DEFAULT);
 
+    @Rule(order = 10)
+    public final SceneContainerRule mSceneContainerRule = new SceneContainerRule();
+
     @Rule
-    public SysuiTestableContext mContext = new SysuiTestableContext(
-            InstrumentationRegistry.getContext(), getLeakCheck());
+    public SysuiTestableContext mContext = createTestableContext();
+
+    @NonNull
+    private SysuiTestableContext createTestableContext() {
+        SysuiTestableContext context = new SysuiTestableContext(
+                InstrumentationRegistry.getContext(), getLeakCheck());
+        if (isRobolectricTest()) {
+            // Manually associate a Display to context for Robolectric test. Similar to b/214297409
+            return context.createDefaultDisplayContext();
+        } else {
+            return context;
+        }
+    }
+
     @Rule
     public final DexmakerShareClassLoaderRule mDexmakerShareClassLoaderRule =
             new DexmakerShareClassLoaderRule();
@@ -84,10 +101,6 @@ public abstract class SysuiTestCase {
 
     @Before
     public void SysuiSetup() throws Exception {
-        // Manually associate a Display to context for Robolectric test. Similar to b/214297409
-        if (isRobolectricTest()) {
-            mContext = mContext.createDefaultDisplayContext();
-        }
         mSysuiDependency = new SysuiTestDependency(mContext, shouldFailOnLeakedReceiver());
         mDependency = mSysuiDependency.install();
         mRealInstrumentation = InstrumentationRegistry.getInstrumentation();

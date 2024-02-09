@@ -64,3 +64,17 @@ flag {
     bug: "296829976"
     is_fixed_read_only: true
 }
+
+flag {
+    name: "allow_resolver_sheet_for_private_space"
+    namespace: "profile_experiences"
+    description: "Add support for Private Space in resolver sheet"
+    bug: "307515485"
+}
+
+flag {
+    name: "move_quiet_mode_operations_to_separate_thread"
+    namespace: "profile_experiences"
+    description: "Move the quiet mode operations, happening on a background thread today, to a separate thread."
+    bug: "320483504"
+}

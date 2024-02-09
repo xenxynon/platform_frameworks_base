@@ -60,6 +60,7 @@ import static android.window.TaskFragmentOperation.OP_TYPE_START_ACTIVITY_IN_TAS
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_CONFIGURATION;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_TASKS;
+import static com.android.server.pm.PackageArchiver.isArchivingEnabled;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_PERMISSIONS_REVIEW;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RESULTS;
@@ -73,7 +74,6 @@ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLAS
 import static com.android.server.wm.ActivityTaskManagerService.ANIMATE;
 import static com.android.server.wm.ActivityTaskSupervisor.DEFER_RESUME;
 import static com.android.server.wm.ActivityTaskSupervisor.ON_TOP;
-import static com.android.server.wm.ActivityTaskSupervisor.PRESERVE_WINDOWS;
 import static com.android.server.wm.BackgroundActivityStartController.BAL_ALLOW_DEFAULT;
 import static com.android.server.wm.BackgroundActivityStartController.BAL_BLOCK;
 import static com.android.server.wm.LaunchParamsController.LaunchParamsModifier.PHASE_BOUNDS;
@@ -106,7 +106,6 @@ import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.AuxiliaryResolveInfo;
-import android.content.pm.Flags;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.ResolveInfo;
@@ -1002,17 +1001,6 @@ class ActivityStarter {
             }
         }
 
-        if (Flags.archiving()) {
-            PackageArchiver packageArchiver = mService
-                    .getPackageManagerInternalLocked()
-                    .getPackageArchiver();
-            if (packageArchiver.isIntentResolvedToArchivedApp(intent, mRequest.userId)) {
-                return packageArchiver
-                        .requestUnarchiveOnActivityStart(
-                                intent, callingPackage, mRequest.userId, realCallingUid);
-            }
-        }
-
         final int launchFlags = intent.getFlags();
         if ((launchFlags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && sourceRecord != null) {
             // Transfer the result target from the source activity to the new one being started,
@@ -1054,6 +1042,17 @@ class ActivityStarter {
         }
 
         if (err == ActivityManager.START_SUCCESS && aInfo == null) {
+            if (isArchivingEnabled()) {
+                PackageArchiver packageArchiver = mService
+                        .getPackageManagerInternalLocked()
+                        .getPackageArchiver();
+                if (packageArchiver.isIntentResolvedToArchivedApp(intent, mRequest.userId)) {
+                    return packageArchiver
+                            .requestUnarchiveOnActivityStart(
+                                    intent, callingPackage, mRequest.userId, realCallingUid);
+                }
+            }
+
             // We couldn't find the specific class specified in the Intent.
             // Also the end of the line.
             err = ActivityManager.START_CLASS_NOT_FOUND;
@@ -1757,6 +1756,7 @@ class ActivityStarter {
             // So disallow the transient hide activity to move itself to front, e.g. trampoline.
             if (!avoidMoveToFront() && (mService.mHomeProcess == null
                     || mService.mHomeProcess.mUid != realCallingUid)
+                    && (prevTopTask != null && prevTopTask.isActivityTypeHomeOrRecents())
                     && r.mTransitionController.isTransientHide(targetTask)) {
                 mCanMoveToFrontCode = MOVE_TO_FRONT_AVOID_LEGACY;
             }
@@ -1889,8 +1889,7 @@ class ActivityStarter {
                 // over is removed.
                 // Passing {@code null} as the start parameter ensures all activities are made
                 // visible.
-                mTargetRootTask.ensureActivitiesVisible(null /* starting */,
-                        0 /* configChanges */, !PRESERVE_WINDOWS);
+                mTargetRootTask.ensureActivitiesVisible(null /* starting */);
                 // Go ahead and tell window manager to execute app transition for this activity
                 // since the app transition will not be triggered through the resume channel.
                 mTargetRootTask.mDisplayContent.executeAppTransition();
@@ -2918,7 +2917,7 @@ class ActivityStarter {
                 mRootWindowContainer.resumeFocusedTasksTopActivities(mTargetRootTask, null,
                         mOptions, mTransientLaunch);
             } else {
-                mRootWindowContainer.ensureActivitiesVisible(null, 0, !PRESERVE_WINDOWS);
+                mRootWindowContainer.ensureActivitiesVisible();
             }
         } else {
             ActivityOptions.abort(mOptions);

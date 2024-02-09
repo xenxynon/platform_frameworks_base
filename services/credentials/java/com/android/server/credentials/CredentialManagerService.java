@@ -65,7 +65,6 @@ import android.util.Slog;
 import android.util.SparseArray;
 
 import com.android.internal.annotations.GuardedBy;
-import com.android.internal.content.PackageMonitor;
 import com.android.server.credentials.metrics.ApiName;
 import com.android.server.credentials.metrics.ApiStatus;
 import com.android.server.infra.AbstractMasterSystemService;
@@ -484,6 +483,7 @@ public final class CredentialManagerService
         public ICancellationSignal getCandidateCredentials(
                 GetCredentialRequest request,
                 IGetCandidateCredentialsCallback callback,
+                IBinder clientBinder,
                 final String callingPackage) {
             Slog.i(TAG, "starting getCandidateCredentials with callingPackage: "
                     + callingPackage);
@@ -504,7 +504,8 @@ public final class CredentialManagerService
                             request,
                             constructCallingAppInfo(callingPackage, userId, request.getOrigin()),
                             getEnabledProvidersForUser(userId),
-                            CancellationSignal.fromTransport(cancelTransport)
+                            CancellationSignal.fromTransport(cancelTransport),
+                            clientBinder
                     );
             addSessionLocked(userId, session);
 
@@ -514,6 +515,8 @@ public final class CredentialManagerService
                             request.getCredentialOptions().stream()
                                     .map(CredentialOption::getType)
                                     .collect(Collectors.toList()));
+
+            finalizeAndEmitInitialPhaseMetric(session);
 
             if (providerSessions.isEmpty()) {
                 try {
@@ -772,6 +775,13 @@ public final class CredentialManagerService
             finalizeAndEmitInitialPhaseMetric(session);
             // Iterate over all provider sessions and invoke the request
             providerSessions.forEach(ProviderSession::invokeSession);
+        }
+
+        private void finalizeAndEmitInitialPhaseMetric(GetCandidateRequestSession session) {
+            var initMetric = session.mRequestSessionMetric.getInitialPhaseMetric();
+            initMetric.setAutofillSessionId(session.getAutofillSessionId());
+            initMetric.setAutofillRequestId(session.getAutofillRequestId());
+            finalizeAndEmitInitialPhaseMetric((RequestSession) session);
         }
 
         private void finalizeAndEmitInitialPhaseMetric(RequestSession session) {
@@ -1204,6 +1214,9 @@ public final class CredentialManagerService
         // If the app being removed matches any of the package names from
         // this list then don't add it in the output.
         Set<String> providers = new HashSet<>();
+        if (rawProviders == null || packageName == null) {
+            return providers;
+        }
         for (String rawComponentName : rawProviders.split(":")) {
             if (TextUtils.isEmpty(rawComponentName)
                     || rawComponentName.equals("null")) {

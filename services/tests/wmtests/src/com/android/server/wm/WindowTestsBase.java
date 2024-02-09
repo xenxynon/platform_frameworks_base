@@ -107,6 +107,7 @@ import android.view.WindowManager;
 import android.view.WindowManager.DisplayImePolicy;
 import android.view.inputmethod.ImeTracker;
 import android.window.ClientWindowFrames;
+import android.window.ITaskFragmentOrganizer;
 import android.window.ITransitionPlayer;
 import android.window.ScreenCapture;
 import android.window.StartingWindowInfo;
@@ -637,14 +638,12 @@ class WindowTestsBase extends SystemServiceTestsBase {
     WindowState createWindow(WindowState parent, int type, WindowToken token, String name,
             int ownerId, boolean ownerCanAddInternalSystemWindow, IWindow iwindow) {
         return createWindow(parent, type, token, name, ownerId, UserHandle.getUserId(ownerId),
-                ownerCanAddInternalSystemWindow, mWm, getTestSession(token), iwindow,
-                mSystemServicesTestRule.getPowerManagerWrapper());
+                ownerCanAddInternalSystemWindow, mWm, getTestSession(token), iwindow);
     }
 
     static WindowState createWindow(WindowState parent, int type, WindowToken token,
             String name, int ownerId, int userId, boolean ownerCanAddInternalSystemWindow,
-            WindowManagerService service, Session session, IWindow iWindow,
-            WindowState.PowerManagerWrapper powerManagerWrapper) {
+            WindowManagerService service, Session session, IWindow iWindow) {
         SystemServicesTestRule.checkHoldsLock(service.mGlobalLock);
 
         final WindowManager.LayoutParams attrs = new WindowManager.LayoutParams(type);
@@ -652,9 +651,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
         attrs.packageName = "test";
 
         final WindowState w = new WindowState(service, session, iWindow, token, parent,
-                OP_NONE, attrs, VISIBLE, ownerId, userId,
-                ownerCanAddInternalSystemWindow,
-                powerManagerWrapper);
+                OP_NONE, attrs, VISIBLE, ownerId, userId, ownerCanAddInternalSystemWindow);
         // TODO: Probably better to make this call in the WindowState ctor to avoid errors with
         // adding it to the token...
         token.addWindow(w);
@@ -895,6 +892,22 @@ class WindowTestsBase extends SystemServiceTestsBase {
         return taskFragment;
     }
 
+    /** @see TaskFragmentOrganizerController#registerOrganizer */
+    void registerTaskFragmentOrganizer(@NonNull ITaskFragmentOrganizer organizer) {
+        registerTaskFragmentOrganizer(organizer, false /* isSystemOrganizer */);
+    }
+
+    /** @see TaskFragmentOrganizerController#registerOrganizer */
+    void registerTaskFragmentOrganizer(@NonNull ITaskFragmentOrganizer organizer,
+            boolean isSystemOrganizer) {
+        // Ensure there is an IApplicationThread to dispatch TaskFragmentTransaction.
+        if (mAtm.mProcessMap.getProcess(WindowManagerService.MY_PID) == null) {
+            mSystemServicesTestRule.addProcess("pkgName", "procName",
+                    WindowManagerService.MY_PID, WindowManagerService.MY_UID);
+        }
+        mAtm.mTaskFragmentOrganizerController.registerOrganizer(organizer, isSystemOrganizer);
+    }
+
     /** Creates a {@link DisplayContent} that supports IME and adds it to the system. */
     DisplayContent createNewDisplay() {
         return createNewDisplayWithImeSupport(DISPLAY_IME_POLICY_LOCAL);
@@ -1038,6 +1051,21 @@ class WindowTestsBase extends SystemServiceTestsBase {
             return null;
         }).when(displayRotation).configure(anyInt(), anyInt());
         displayRotation.configure(dc.mBaseDisplayWidth, dc.mBaseDisplayHeight);
+    }
+
+    /**
+     * Performs surface placement and waits for WindowAnimator to complete the frame. It is used
+     * to execute the callbacks if the surface placement is expected to add some callbacks via
+     * {@link WindowAnimator#addAfterPrepareSurfacesRunnable}.
+     */
+    void performSurfacePlacementAndWaitForWindowAnimator() {
+        mWm.mAnimator.ready();
+        if (!mWm.mWindowPlacerLocked.isTraversalScheduled()) {
+            mRootWindowContainer.performSurfacePlacement();
+        } else {
+            waitHandlerIdle(mWm.mAnimationHandler);
+        }
+        waitUntilWindowAnimatorIdle();
     }
 
     /**
@@ -1738,17 +1766,14 @@ class WindowTestsBase extends SystemServiceTestsBase {
     static class TestStartingWindowOrganizer extends WindowOrganizerTests.StubOrganizer {
         private final ActivityTaskManagerService mAtm;
         private final WindowManagerService mWMService;
-        private final WindowState.PowerManagerWrapper mPowerManagerWrapper;
 
         private Runnable mRunnableWhenAddingSplashScreen;
         private final SparseArray<IBinder> mTaskAppMap = new SparseArray<>();
         private final HashMap<IBinder, WindowState> mAppWindowMap = new HashMap<>();
 
-        TestStartingWindowOrganizer(ActivityTaskManagerService service,
-                WindowState.PowerManagerWrapper powerManagerWrapper) {
+        TestStartingWindowOrganizer(ActivityTaskManagerService service) {
             mAtm = service;
             mWMService = mAtm.mWindowManager;
-            mPowerManagerWrapper = powerManagerWrapper;
             mAtm.mTaskOrganizerController.setDeferTaskOrgCallbacksConsumer(Runnable::run);
             mAtm.mTaskOrganizerController.registerTaskOrganizer(this);
         }
@@ -1767,8 +1792,7 @@ class WindowTestsBase extends SystemServiceTestsBase {
                 final WindowState window = WindowTestsBase.createWindow(null,
                         TYPE_APPLICATION_STARTING, activity,
                         "Starting window", 0 /* ownerId */, 0 /* userId*/,
-                        false /* internalWindows */, mWMService, createTestSession(mAtm), iWindow,
-                        mPowerManagerWrapper);
+                        false /* internalWindows */, mWMService, createTestSession(mAtm), iWindow);
                 activity.mStartingWindow = window;
                 mAppWindowMap.put(info.appToken, window);
                 mTaskAppMap.put(info.taskInfo.taskId, info.appToken);

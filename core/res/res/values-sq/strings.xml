@@ -434,6 +434,10 @@
     <string name="permdesc_foregroundServiceSystemExempted" msgid="947381760834649622">"Lejon që aplikacioni të përdorë shërbimet në plan të parë me llojin \"systemExempted\""</string>
     <string name="permlab_foregroundServiceFileManagement" msgid="2585000987966045030">"ekzekuto shërbimin në plan të parë me llojin \"fileManagement\""</string>
     <string name="permdesc_foregroundServiceFileManagement" msgid="417103601269698508">"Lejon aplikacionin të përdorë shërbimet në plan të parë me llojin \"fileManagement\""</string>
+    <!-- no translation found for permlab_foregroundServiceMediaProcessing (3045295152245381864) -->
+    <skip />
+    <!-- no translation found for permdesc_foregroundServiceMediaProcessing (8303086172106677312) -->
+    <skip />
     <string name="permlab_foregroundServiceSpecialUse" msgid="7973536745876645082">"të ekzekutojë shërbimin në plan të parë me llojin \"specialUse\""</string>
     <string name="permdesc_foregroundServiceSpecialUse" msgid="646713654541885919">"Lejon që aplikacioni të përdorë shërbimet në plan të parë me llojin \"specialUse\""</string>
     <string name="permlab_getPackageSize" msgid="375391550792886641">"mat hapësirën ruajtëse të aplikacionit"</string>
@@ -632,7 +636,8 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Përdor kyçjen e ekranit"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"Fut kyçjen e ekranit për të vazhduar"</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"Shtyp fort te sensori"</string>
-    <string name="fingerprint_acquired_insufficient" msgid="623888149088216458">"Nuk mund ta dallojë gjurmën e gishtit. Provo përsëri."</string>
+    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
+    <skip />
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"Pastro sensorin e gjurmës së gishtit dhe provo sërish"</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"Pastro sensorin dhe provo sërish"</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"Shtyp fort te sensori"</string>
@@ -696,7 +701,8 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"Fytyra s\'mund të shihet. Mbaje telefonin në nivelin e syve."</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"Ka shumë lëvizje. Mbaje telefonin të palëvizur."</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"Regjistroje përsëri fytyrën tënde."</string>
-    <string name="face_acquired_too_different" msgid="2520389515612972889">"Fytyra nuk mund të njihet. Provo sërish."</string>
+    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
+    <skip />
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"Ndrysho pak pozicionin e kokës"</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"Shiko më drejtpërdrejt telefonin"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"Shiko më drejtpërdrejt telefonin"</string>
@@ -1906,8 +1912,7 @@
     <string name="zen_mode_default_weekends_name" msgid="4707200272709377930">"Fundjava"</string>
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"Ngjarje"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"Në gjumë"</string>
-    <!-- no translation found for zen_mode_implicit_trigger_description (5714956693073007111) -->
-    <skip />
+    <string name="zen_mode_implicit_trigger_description" msgid="5714956693073007111">"Menaxhohet nga <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
     <string name="zen_mode_implicit_activated" msgid="2634285680776672994">"Aktivizuar"</string>
     <string name="zen_mode_implicit_deactivated" msgid="8688441768371501750">"Çaktivizuar"</string>
     <string name="muted_by" msgid="91464083490094950">"<xliff:g id="THIRD_PARTY">%1$s</xliff:g> po çaktivizon disa tinguj"</string>
@@ -2366,4 +2371,5 @@
     <string name="profile_label_work_3" msgid="4834572253956798917">"Puna 3"</string>
     <string name="profile_label_test" msgid="9168641926186071947">"Test"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"I përbashkët"</string>
+    <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
 </resources>

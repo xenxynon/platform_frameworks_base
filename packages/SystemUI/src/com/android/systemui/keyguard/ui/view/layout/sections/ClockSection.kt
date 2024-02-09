@@ -23,21 +23,25 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.constraintlayout.widget.ConstraintSet.BOTTOM
 import androidx.constraintlayout.widget.ConstraintSet.END
+import androidx.constraintlayout.widget.ConstraintSet.INVISIBLE
 import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
 import androidx.constraintlayout.widget.ConstraintSet.START
 import androidx.constraintlayout.widget.ConstraintSet.TOP
+import androidx.constraintlayout.widget.ConstraintSet.VISIBLE
 import androidx.constraintlayout.widget.ConstraintSet.WRAP_CONTENT
-import com.android.systemui.flags.FeatureFlagsClassic
+import com.android.systemui.Flags
+import com.android.systemui.keyguard.domain.interactor.KeyguardBlueprintInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.keyguard.ui.binder.KeyguardClockViewBinder
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
-import com.android.systemui.keyguard.ui.viewmodel.KeyguardSmartspaceViewModel
 import com.android.systemui.plugins.clocks.ClockController
 import com.android.systemui.plugins.clocks.ClockFaceLayout
 import com.android.systemui.res.R
+import com.android.systemui.shared.R as sharedR
 import com.android.systemui.statusbar.policy.SplitShadeStateController
 import com.android.systemui.util.Utils
+import dagger.Lazy
 import javax.inject.Inject
 
 internal fun ConstraintSet.setVisibility(
@@ -50,28 +54,34 @@ internal fun ConstraintSet.setAlpha(
     alpha: Float,
 ) = views.forEach { view -> this.setAlpha(view.id, alpha) }
 
-class ClockSection
+open class ClockSection
 @Inject
 constructor(
     private val clockInteractor: KeyguardClockInteractor,
-    private val keyguardClockViewModel: KeyguardClockViewModel,
-    val smartspaceViewModel: KeyguardSmartspaceViewModel,
+    protected val keyguardClockViewModel: KeyguardClockViewModel,
     private val context: Context,
     private val splitShadeStateController: SplitShadeStateController,
-    private val featureFlags: FeatureFlagsClassic,
+    val blueprintInteractor: Lazy<KeyguardBlueprintInteractor>,
 ) : KeyguardSection() {
     override fun addViews(constraintLayout: ConstraintLayout) {}
 
     override fun bindData(constraintLayout: ConstraintLayout) {
+        if (!Flags.migrateClocksToBlueprint()) {
+            return
+        }
         KeyguardClockViewBinder.bind(
             this,
             constraintLayout,
             keyguardClockViewModel,
             clockInteractor,
+            blueprintInteractor.get()
         )
     }
 
     override fun applyConstraints(constraintSet: ConstraintSet) {
+        if (!Flags.migrateClocksToBlueprint()) {
+            return
+        }
         clockInteractor.clock?.let { clock ->
             constraintSet.applyDeltaFrom(buildConstraints(clock, constraintSet))
         }
@@ -85,23 +95,17 @@ constructor(
     ): ConstraintSet {
         // Add constraint between rootView and clockContainer
         applyDefaultConstraints(constraintSet)
+        getNonTargetClockFace(clock).applyConstraints(constraintSet)
         getTargetClockFace(clock).applyConstraints(constraintSet)
 
         // Add constraint between elements in clock and clock container
         return constraintSet.apply {
-            setAlpha(getTargetClockFace(clock).views, 1F)
-            setAlpha(getNonTargetClockFace(clock).views, 0F)
+            setVisibility(getTargetClockFace(clock).views, VISIBLE)
+            setVisibility(getNonTargetClockFace(clock).views, INVISIBLE)
+            if (!keyguardClockViewModel.useLargeClock) {
+                connect(sharedR.id.bc_smartspace_view, TOP, sharedR.id.date_smartspace_view, BOTTOM)
+            }
         }
-    }
-
-    var largeClockEndGuideline = PARENT_ID
-
-    // Return if largeClockEndGuideline changes,
-    // and use it to decide whether to refresh blueprint
-    fun setClockShouldBeCentered(shouldBeCentered: Boolean): Boolean {
-        val previousValue = largeClockEndGuideline
-        largeClockEndGuideline = if (shouldBeCentered) PARENT_ID else R.id.split_shade_guideline
-        return previousValue != largeClockEndGuideline
     }
 
     private fun getTargetClockFace(clock: ClockController): ClockFaceLayout =
@@ -113,10 +117,13 @@ constructor(
 
     private fun getLargeClockFace(clock: ClockController): ClockFaceLayout = clock.largeClock.layout
     private fun getSmallClockFace(clock: ClockController): ClockFaceLayout = clock.smallClock.layout
-    fun applyDefaultConstraints(constraints: ConstraintSet) {
+    open fun applyDefaultConstraints(constraints: ConstraintSet) {
+        val guideline =
+            if (keyguardClockViewModel.clockShouldBeCentered.value) PARENT_ID
+            else R.id.split_shade_guideline
         constraints.apply {
             connect(R.id.lockscreen_clock_view_large, START, PARENT_ID, START)
-            connect(R.id.lockscreen_clock_view_large, END, largeClockEndGuideline, END)
+            connect(R.id.lockscreen_clock_view_large, END, guideline, END)
             connect(R.id.lockscreen_clock_view_large, BOTTOM, R.id.lock_icon_view, TOP)
             var largeClockTopMargin =
                 context.resources.getDimensionPixelSize(R.dimen.status_bar_height) +
@@ -124,8 +131,8 @@ constructor(
                         com.android.systemui.customization.R.dimen.small_clock_padding_top
                     ) +
                     context.resources.getDimensionPixelSize(R.dimen.keyguard_smartspace_top_offset)
-            largeClockTopMargin += smartspaceViewModel.getDimen(DATE_WEATHER_VIEW_HEIGHT)
-            largeClockTopMargin += smartspaceViewModel.getDimen(ENHANCED_SMARTSPACE_HEIGHT)
+            largeClockTopMargin += getDimen(DATE_WEATHER_VIEW_HEIGHT)
+            largeClockTopMargin += getDimen(ENHANCED_SMARTSPACE_HEIGHT)
             if (!keyguardClockViewModel.useLargeClock) {
                 largeClockTopMargin -=
                     context.resources.getDimensionPixelSize(
@@ -166,6 +173,12 @@ constructor(
             }
             connect(R.id.lockscreen_clock_view, TOP, PARENT_ID, TOP, smallClockTopMargin)
         }
+    }
+
+    private fun getDimen(name: String): Int {
+        val res = context.packageManager.getResourcesForApplication(context.packageName)
+        val id = res.getIdentifier(name, "dimen", context.packageName)
+        return res.getDimensionPixelSize(id)
     }
 
     companion object {

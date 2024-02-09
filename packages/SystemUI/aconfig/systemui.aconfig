@@ -15,6 +15,13 @@ flag {
 }
 
 flag {
+    name: "notification_async_group_header_inflation"
+    namespace: "systemui"
+    description: "Inflates the notification group summary header views from the background thread."
+    bug: "217799515"
+}
+
+flag {
     name: "notification_async_hybrid_view_inflation"
     namespace: "systemui"
     description: "Inflates hybrid (single-line) notification views from the background thread."
@@ -145,6 +152,16 @@ flag {
 }
 
 flag {
+    name: "enable_background_keyguard_ondrawn_callback"
+    namespace: "systemui"
+    description: "Calls the onDrawn keyguard in the background, without being blocked by main"
+        "thread work. This results in the screen to turn on earlier when the main thread is stuck. "
+        "Note that, even after this callback is called, we're waiting for all windows to finish "
+        " drawing."
+    bug: "295873557"
+}
+
+flag {
     name: "qs_new_pipeline"
     namespace: "systemui"
     description: "Use the new pipeline for Quick Settings. Should have no behavior changes."
@@ -155,7 +172,7 @@ flag {
    name: "qs_new_tiles"
    namespace: "systemui"
    description: "Use the new tiles in the Quick Settings. Should have no behavior changes."
-   bug: "241772429"
+   bug: "311147395"
 }
 
 flag {
@@ -198,10 +215,31 @@ flag {
 }
 
 flag {
+    name: "compose_bouncer"
+    namespace: "systemui"
+    description: "Use the new compose bouncer in SystemUI"
+    bug: "310005730"
+}
+
+flag {
    name: "media_in_scene_container"
    namespace: "systemui"
    description: "Enable media in the scene container framework"
    bug: "296122467"
+}
+
+flag {
+   name: "pss_task_switcher"
+   namespace: "systemui"
+   description: "Enable the task switcher feature for partial screen sharing"
+   bug: "317208379"
+}
+
+flag {
+   name: "revamped_bouncer_messages"
+   namespace: "systemui"
+   description: "Change the bouncer message to be a 2-line more descriptive message"
+   bug: "236891644"
 }
 
 flag {
@@ -234,6 +272,15 @@ flag {
 }
 
 flag {
+   name: "centralized_status_bar_dimens_refactor"
+   namespace: "systemui"
+   description: "Refactors shade header and keyguard status bar to read status bar dimens from a"
+        " central place, instead of reading resources directly. This is to take into account display"
+        " cutouts and other special cases. "
+   bug: "317199366"
+}
+
+flag {
   name: "enable_layout_tracing"
   namespace: "systemui"
   description: "Enables detailed traversal slices during measure and layout in perfetto traces"
@@ -260,4 +307,53 @@ flag {
     description: "(Upstream request) Always show the network activity inout indicators and "
         "prefer using alpha to distinguish network activity."
     bug: "310715220"
+}
+
+flag {
+    name: "haptic_volume_slider"
+    namespace: "systemui"
+    description: "Adds haptic feedback to the volume slider."
+    bug: "316953430"
+}
+
+flag {
+    name: "new_volume_panel"
+    namespace: "systemui"
+    description: "Switches to the new volume panel (without Slices)."
+    bug: "202262476"
+}
+
+flag {
+    name: "screenshare_notification_hiding"
+    namespace: "systemui"
+    description: "Enable hiding of notifications during screenshare"
+    bug: "312784809"
+}
+
+flag {
+   name: "run_fingerprint_detect_on_dismissible_keyguard"
+   namespace: "systemui"
+   description: "Run fingerprint detect instead of authenticate if the keyguard is dismissible."
+   bug: "311145851"
+}
+
+flag {
+   name: "bluetooth_qs_tile_dialog_auto_on_toggle"
+   namespace: "systemui"
+   description: "Displays the auto on toggle in the bluetooth QS tile dialog"
+   bug: "316985153"
+}
+
+flag {
+   name: "smartspace_relocate_to_bottom"
+   namespace: "systemui"
+   description: "Relocate Smartspace to bottom of the Lock Screen"
+   bug: "316212788"
+}
+
+flag {
+   name: "pin_input_field_styled_focus_state"
+   namespace: "systemui"
+   description: "Enables styled focus states on pin input field if keyboard is connected"
+   bug: "316106516"
 }

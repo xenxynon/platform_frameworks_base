@@ -63,7 +63,8 @@ public final class CreateRequestSession extends RequestSession<CreateCredentialR
             long startedTimestamp) {
         super(context, sessionCallback, lock, userId, callingUid, request, callback,
                 RequestInfo.TYPE_CREATE,
-                callingAppInfo, enabledProviders, cancellationSignal, startedTimestamp);
+                callingAppInfo, enabledProviders, cancellationSignal, startedTimestamp,
+                /*shouldBindClientToDeath=*/ true);
         mRequestSessionMetric.collectCreateFlowInitialMetricInfo(
                 /*origin=*/request.getOrigin() != null, request);
         mPrimaryProviders = primaryProviders;
@@ -109,7 +110,7 @@ public final class CreateRequestSession extends RequestSession<CreateCredentialR
                             PermissionUtils.hasPermission(mContext, mClientAppInfo.getPackageName(),
                                     Manifest.permission.CREDENTIAL_MANAGER_SET_ALLOWED_PROVIDERS),
                             /*defaultProviderId=*/flattenedPrimaryProviders),
-                    providerDataList);
+                    providerDataList, /*isRequestForAllOptions=*/ false);
             mClientCallback.onPendingIntent(mPendingIntent);
         } catch (RemoteException e) {
             mRequestSessionMetric.collectUiReturnedFinalPhase(/*uiReturned=*/ false);

@@ -319,11 +319,6 @@ package android.net.wifi {
 
 package android.nfc {
 
-  public class NfcFrameworkInitializer {
-    method public static void registerServiceWrappers();
-    method public static void setNfcServiceManager(@NonNull android.nfc.NfcServiceManager);
-  }
-
   public class NfcServiceManager {
     method @NonNull public android.nfc.NfcServiceManager.ServiceRegisterer getNfcManagerServiceRegisterer();
   }
@@ -395,8 +390,6 @@ package android.os {
   }
 
   public class Process {
-    method public static final int getAppUidForSdkSandboxUid(int);
-    method public static final boolean isSdkSandboxUid(int);
     method public static final int toSdkSandboxUid(int);
     field public static final int NFC_UID = 1027; // 0x403
     field public static final int VPN_UID = 1016; // 0x3f8

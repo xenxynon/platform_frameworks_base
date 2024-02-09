@@ -188,10 +188,12 @@
     <string name="face_reenroll_failure_dialog_content" msgid="7073947334397236935">"Shkyçja me fytyrë nuk mund të konfigurohej. Shko te \"Cilësimet\" për të provuar përsëri."</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"Prek sensorin e gjurmës së gishtit"</string>
     <string name="fingerprint_dialog_authenticated_confirmation" msgid="1603899612957562862">"Shtyp ikonën e shkyçjes për të vazhduar"</string>
-    <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"Nuk mund ta dallojë fytyrën. Përdor më mirë gjurmën e gishtit."</string>
+    <!-- no translation found for fingerprint_dialog_use_fingerprint_instead (5542430577183894219) -->
+    <skip />
     <!-- no translation found for keyguard_face_failed_use_fp (7140293906176164263) -->
     <skip />
-    <string name="keyguard_face_failed" msgid="9044619102286917151">"Fytyra nuk mund të njihet"</string>
+    <!-- no translation found for keyguard_face_failed (2346762871330729634) -->
+    <skip />
     <string name="keyguard_suggest_fingerprint" msgid="8742015961962702960">"Përdor më mirë gjurmën e gishtit"</string>
     <string name="keyguard_face_unlock_unavailable" msgid="1581949044193418736">"\"Shkyçja me fytyrë\" nuk ofrohet"</string>
     <string name="accessibility_bluetooth_connected" msgid="4745196874551115205">"Pajisja është lidhur me \"bluetooth\"."</string>
@@ -330,12 +332,17 @@
     <string name="quick_settings_screen_record_label" msgid="8650355346742003694">"Regjistrimi i ekranit"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"Nis"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"Ndalo"</string>
-    <!-- no translation found for qs_record_issue_label (8166290137285529059) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_start (2979831312582567056) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_stop (3531747965741982657) -->
-    <skip />
+    <string name="qs_record_issue_label" msgid="8166290137285529059">"Regjistro problemin"</string>
+    <string name="qs_record_issue_start" msgid="2979831312582567056">"Nis"</string>
+    <string name="qs_record_issue_stop" msgid="3531747965741982657">"Ndalo"</string>
+    <string name="qs_record_issue_dropdown_header" msgid="5995983175678658329">"Cila pjesë e përvojës me pajisjen është prekur?"</string>
+    <string name="qs_record_issue_dropdown_prompt" msgid="2526949919167046219">"Zgjidh llojin e problemit"</string>
+    <string name="qs_record_issue_dropdown_screenrecord" msgid="6396141928484257626">"Regjistrim i ekranit"</string>
+  <string-array name="qs_record_issue_types">
+    <item msgid="2947988124014085798">"Performanca"</item>
+    <item msgid="1627504621139124393">"Ndërfaqja e përdoruesit"</item>
+    <item msgid="8309220355268900335">"Bateria"</item>
+  </string-array>
     <string name="quick_settings_onehanded_label" msgid="2416537930246274991">"Modaliteti i përdorimit me një dorë"</string>
     <string name="quick_settings_contrast_label" msgid="988087460210159123">"Kontrasti"</string>
     <string name="quick_settings_contrast_standard" msgid="2538227821968061832">"Standard"</string>
@@ -408,12 +415,19 @@
     <string name="keyguard_indication_charging_time_dock" msgid="3149328898931741271">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • Po karikohet • Plot për <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
     <string name="communal_tutorial_indicator_text" msgid="4503010353591430123">"Rrëshqit shpejt majtas për të filluar udhëzuesin e përbashkët"</string>
     <string name="button_to_open_widget_editor" msgid="5599945944349057600">"Hap modifikuesin e miniaplikacionit"</string>
-    <!-- no translation found for button_to_remove_widget (3948204829181214098) -->
+    <!-- no translation found for cta_tile_button_to_open_widget_editor (3871562362382963878) -->
     <skip />
-    <!-- no translation found for hub_mode_add_widget_button_text (4831464661209971729) -->
+    <!-- no translation found for cta_tile_button_to_dismiss (3377597875997861754) -->
     <skip />
-    <!-- no translation found for hub_mode_editing_exit_button_text (3704686734192264771) -->
+    <!-- no translation found for cta_label_to_edit_widget (6496885074209203756) -->
     <skip />
+    <!-- no translation found for cta_label_to_open_widget_picker (3874946756976360699) -->
+    <skip />
+    <!-- no translation found for popup_on_dismiss_cta_tile_text (8292501780996070019) -->
+    <skip />
+    <string name="button_to_remove_widget" msgid="3948204829181214098">"Hiq"</string>
+    <string name="hub_mode_add_widget_button_text" msgid="4831464661209971729">"Shto miniaplikacionin"</string>
+    <string name="hub_mode_editing_exit_button_text" msgid="3704686734192264771">"U krye"</string>
     <string name="accessibility_multi_user_switch_switcher" msgid="5330448341251092660">"Ndërro përdorues"</string>
     <string name="accessibility_multi_user_list_switcher" msgid="8574105376229857407">"menyja me tërheqje poshtë"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"Të gjitha aplikacionet dhe të dhënat në këtë sesion do të fshihen."</string>
@@ -832,6 +846,8 @@
     <string name="notification_channel_setup" msgid="7660580986090760350">"Konfigurimi"</string>
     <string name="notification_channel_storage" msgid="2720725707628094977">"Hapësira ruajtëse"</string>
     <string name="notification_channel_hints" msgid="7703783206000346876">"Sugjerimet"</string>
+    <!-- no translation found for notification_channel_accessibility (8956203986976245820) -->
+    <skip />
     <string name="instant_apps" msgid="8337185853050247304">"Aplikacionet e çastit"</string>
     <string name="instant_apps_title" msgid="8942706782103036910">"Po ekzekutohet <xliff:g id="APP">%1$s</xliff:g>"</string>
     <string name="instant_apps_message" msgid="6112428971833011754">"Aplikacioni u hap pa u instaluar."</string>
@@ -867,7 +883,6 @@
     <string name="auto_saver_title" msgid="6873691178754086596">"Trokit për të planifikuar \"Kursyesin e baterisë\""</string>
     <string name="auto_saver_text" msgid="3214960308353838764">"Aktivizoje kur bateria mund të mbarojë"</string>
     <string name="no_auto_saver_action" msgid="7467924389609773835">"Jo"</string>
-    <string name="heap_dump_tile_name" msgid="2464189856478823046">"Hidh grumbullin SysUI"</string>
     <string name="ongoing_privacy_dialog_a11y_title" msgid="2205794093673327974">"Në përdorim"</string>
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"Aplikacionet po përdorin <xliff:g id="TYPES_LIST">%s</xliff:g>."</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
@@ -928,6 +943,10 @@
     <string name="accessibility_floating_button_migration_tooltip" msgid="5217151214439341902">"Trokit dhe hap veçoritë e qasshmërisë. Modifiko ose ndërro butonin te \"Cilësimet\".\n\n"<annotation id="link">"Shih cilësimet"</annotation></string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"Zhvendose butonin në skaj për ta fshehur përkohësisht"</string>
     <string name="accessibility_floating_button_undo" msgid="511112888715708241">"Zhbëj"</string>
+    <!-- no translation found for accessibility_floating_button_hidden_notification_title (4115036997406994799) -->
+    <skip />
+    <!-- no translation found for accessibility_floating_button_hidden_notification_text (1457021647040915658) -->
+    <skip />
     <string name="accessibility_floating_button_undo_message_label_text" msgid="9017658016426242640">"Shkurtorja për \"<xliff:g id="FEATURE_NAME">%s</xliff:g>\" u hoq"</string>
     <string name="accessibility_floating_button_undo_message_number_text" msgid="4909270290725226075">"{count,plural, =1{# shkurtore u hoq}other{# shkurtore u hoqën}}"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"Zhvendos lart majtas"</string>
@@ -1206,9 +1225,9 @@
     <string name="assistant_attention_content_description" msgid="4166330881435263596">"Është zbuluar prania e përdoruesit"</string>
     <string name="set_default_notes_app_toast_content" msgid="2812374329662610753">"Cakto aplikacionin e parazgjedhur të shënimeve te \"Cilësimet\""</string>
     <string name="install_app" msgid="5066668100199613936">"Instalo aplikacionin"</string>
+    <string name="dismissible_keyguard_swipe" msgid="2213369651289613196">"Rrëshqit shpejt për të vazhduar"</string>
     <string name="connected_display_dialog_start_mirroring" msgid="6237895789920854982">"Të pasqyrohet në ekranin e jashtëm?"</string>
-    <!-- no translation found for connected_display_dialog_dual_display_stop_warning (2917631104216376315) -->
-    <skip />
+    <string name="connected_display_dialog_dual_display_stop_warning" msgid="4174707498892447947">"Ekrani i brendshëm do të pasqyrohet. Ekrani i parmë do të çaktivizohet."</string>
     <string name="mirror_display" msgid="2515262008898122928">"Pasqyro ekranin"</string>
     <string name="dismiss_dialog" msgid="2195508495854675882">"Hiq"</string>
     <string name="connected_display_icon_desc" msgid="6373560639989971997">"Ekrani është lidhur"</string>

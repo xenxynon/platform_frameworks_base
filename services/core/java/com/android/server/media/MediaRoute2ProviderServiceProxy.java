@@ -98,8 +98,14 @@ final class MediaRoute2ProviderServiceProxy extends MediaRoute2Provider
     }
 
     @Override
-    public void requestCreateSession(long requestId, String packageName, String routeId,
-            Bundle sessionHints) {
+    public void requestCreateSession(
+            long requestId,
+            String packageName,
+            String routeId,
+            Bundle sessionHints,
+            @RoutingSessionInfo.TransferReason int transferReason,
+            @NonNull UserHandle transferInitiatorUserHandle,
+            @NonNull String transferInitiatorPackageName) {
         if (mConnectionReady) {
             mActiveConnection.requestCreateSession(requestId, packageName, routeId, sessionHints);
             updateBinding();
@@ -141,7 +147,13 @@ final class MediaRoute2ProviderServiceProxy extends MediaRoute2Provider
     }
 
     @Override
-    public void transferToRoute(long requestId, String sessionId, String routeId) {
+    public void transferToRoute(
+            long requestId,
+            @NonNull UserHandle transferInitiatorUserHandle,
+            @NonNull String transferInitiatorPackageName,
+            String sessionId,
+            String routeId,
+            @RoutingSessionInfo.TransferReason int transferReason) {
         if (mConnectionReady) {
             mActiveConnection.transferToRoute(requestId, sessionId, routeId);
         }
@@ -219,18 +231,21 @@ final class MediaRoute2ProviderServiceProxy extends MediaRoute2Provider
     }
 
     private boolean shouldBind() {
-        if (mRunning) {
-            boolean shouldBind =
-                    mLastDiscoveryPreference != null
-                            && !mLastDiscoveryPreference.getPreferredFeatures().isEmpty();
-            if (mIsSelfScanOnlyProvider) {
-                shouldBind &= mLastDiscoveryPreferenceIncludesThisPackage;
-            }
-            shouldBind |= mIsManagerScanning;
-            shouldBind |= !getSessionInfos().isEmpty();
-            return shouldBind;
+        if (!mRunning) {
+            return false;
         }
-        return false;
+        if (!getSessionInfos().isEmpty() || mIsManagerScanning) {
+            // We bind if any manager is scanning (regardless of whether an app is scanning) to give
+            // the opportunity for providers to publish routing sessions that were established
+            // directly between the app and the provider (typically via AndroidX MediaRouter). See
+            // b/176774510#comment20 for more information.
+            return true;
+        }
+        boolean anAppIsScanning =
+                mLastDiscoveryPreference != null
+                        && !mLastDiscoveryPreference.getPreferredFeatures().isEmpty();
+        return anAppIsScanning
+                && (mLastDiscoveryPreferenceIncludesThisPackage || !mIsSelfScanOnlyProvider);
     }
 
     private void bind() {
@@ -646,6 +661,14 @@ final class MediaRoute2ProviderServiceProxy extends MediaRoute2Provider
                 if (route.isSystemRoute()) {
                     throw new SecurityException(
                             "Only the system is allowed to publish system routes. "
+                                    + "Disallowed route: "
+                                    + route);
+                }
+
+                if (route.getSuitabilityStatus()
+                        == MediaRoute2Info.SUITABILITY_STATUS_NOT_SUITABLE_FOR_TRANSFER) {
+                    throw new SecurityException(
+                            "Only the system is allowed to set not suitable for transfer status. "
                                     + "Disallowed route: "
                                     + route);
                 }

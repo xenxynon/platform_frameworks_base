@@ -1177,14 +1177,17 @@ public class BubbleStackView extends FrameLayout
             if (mStackAnimationController.isStackOnLeftSide()) {
                 int availableRectOffsetX =
                         mPositioner.getAvailableRect().left - mPositioner.getScreenRect().left;
-                animate().translationX(-(mBubbleSize + availableRectOffsetX)).start();
+                mBubbleContainer
+                        .animate()
+                        .translationX(-(mBubbleSize + availableRectOffsetX))
+                        .start();
             } else {
                 int availableRectOffsetX =
                         mPositioner.getAvailableRect().right - mPositioner.getScreenRect().right;
-                animate().translationX(mBubbleSize - availableRectOffsetX).start();
+                mBubbleContainer.animate().translationX(mBubbleSize - availableRectOffsetX).start();
             }
         } else {
-            animate().translationX(0).start();
+            mBubbleContainer.animate().translationX(0).start();
         }
     };
 
@@ -2323,7 +2326,8 @@ public class BubbleStackView extends FrameLayout
         updateOverflowVisibility();
         updatePointerPosition(false /* forIme */);
         mExpandedAnimationController.expandFromStack(() -> {
-            if (mIsExpanded && mExpandedBubble.getExpandedView() != null) {
+            if (mIsExpanded && mExpandedBubble != null
+                    && mExpandedBubble.getExpandedView() != null) {
                 maybeShowManageEdu();
             }
             updateOverflowDotVisibility(true /* expanding */);
@@ -2384,7 +2388,7 @@ public class BubbleStackView extends FrameLayout
         }
         mExpandedViewContainer.setAnimationMatrix(mExpandedViewContainerMatrix);
 
-        if (mExpandedBubble.getExpandedView() != null) {
+        if (mExpandedBubble != null && mExpandedBubble.getExpandedView() != null) {
             mExpandedBubble.getExpandedView().setContentAlpha(0f);
             mExpandedBubble.getExpandedView().setBackgroundAlpha(0f);
 

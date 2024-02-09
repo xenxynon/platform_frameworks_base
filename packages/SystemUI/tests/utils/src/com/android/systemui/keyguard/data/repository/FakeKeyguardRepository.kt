@@ -80,7 +80,7 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
     override val lastDozeTapToWakePosition = _lastDozeTapToWakePosition.asStateFlow()
 
     private val _isAodAvailable = MutableStateFlow(false)
-    override val isAodAvailable: Flow<Boolean> = _isAodAvailable
+    override val isAodAvailable: StateFlow<Boolean> = _isAodAvailable
 
     private val _isDreaming = MutableStateFlow(false)
     override val isDreaming: Flow<Boolean> = _isDreaming
@@ -126,6 +126,9 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
     override val lastRootViewTapPosition: MutableStateFlow<Point?> = MutableStateFlow(null)
 
     override val ambientIndicationVisible: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    private val _isEncryptedOrLockdown = MutableStateFlow(true)
+    override val isEncryptedOrLockdown: Flow<Boolean> = _isEncryptedOrLockdown
 
     override fun setQuickSettingsVisible(isVisible: Boolean) {
         _isQuickSettingsVisible.value = isVisible
@@ -246,6 +249,10 @@ class FakeKeyguardRepository @Inject constructor() : KeyguardRepository {
 
     override fun setKeyguardAlpha(alpha: Float) {
         _keyguardAlpha.value = alpha
+    }
+
+    fun setIsEncryptedOrLockdown(value: Boolean) {
+        _isEncryptedOrLockdown.value = value
     }
 }
 

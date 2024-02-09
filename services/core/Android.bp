@@ -30,6 +30,14 @@ filegroup {
     ],
 }
 
+java_library_static {
+    name: "services-config-update",
+    srcs: [
+        "java/**/ConfigUpdateInstallReceiver.java",
+        "java/**/*.logtags",
+    ],
+}
+
 genrule {
     name: "services.core.protologsrc",
     srcs: [
@@ -207,6 +215,7 @@ java_library_static {
         "com_android_wm_shell_flags_lib",
         "com.android.server.utils_aconfig-java",
         "service-jobscheduler-deviceidle.flags-aconfig-java",
+        "policy_flags_lib",
     ],
     javac_shard_size: 50,
     javacflags: [
@@ -230,6 +239,9 @@ java_library_static {
       "//packages/modules/AdServices/adservices/tests/unittest/service-core/adid",
       "//packages/modules/AdServices/shared/device-side/tests",
     ],
+    lint: {
+        baseline_filename: "lint-baseline.xml",
+    },
 }
 
 java_genrule {

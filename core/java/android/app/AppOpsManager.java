@@ -71,6 +71,7 @@ import android.os.UserManager;
 import android.provider.DeviceConfig;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.Log;
 import android.util.LongSparseArray;
 import android.util.LongSparseLongArray;
 import android.util.Pools;
@@ -1539,9 +1540,16 @@ public class AppOpsManager {
     public static final int OP_RAPID_CLEAR_NOTIFICATIONS_BY_LISTENER =
             AppProtoEnums.APP_OP_RAPID_CLEAR_NOTIFICATIONS_BY_LISTENER;
 
+    /**
+     * See {@link #OPSTR_READ_SYSTEM_GRAMMATICAL_GENDER}.
+     * @hide
+     */
+    public static final int OP_READ_SYSTEM_GRAMMATICAL_GENDER =
+            AppProtoEnums.APP_OP_READ_SYSTEM_GRAMMATICAL_GENDER;
+
     /** @hide */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    public static final int _NUM_OP = 143;
+    public static final int _NUM_OP = 144;
 
     /**
      * All app ops represented as strings.
@@ -2179,6 +2187,8 @@ public class AppOpsManager {
      *
      * @hide
      */
+    @FlaggedApi(android.permission.flags.Flags.FLAG_ENHANCED_CONFIRMATION_MODE_APIS_ENABLED)
+    @SystemApi
     public static final String OPSTR_ACCESS_RESTRICTED_SETTINGS =
             "android:access_restricted_settings";
 
@@ -2372,6 +2382,14 @@ public class AppOpsManager {
     public static final String OPSTR_RAPID_CLEAR_NOTIFICATIONS_BY_LISTENER =
             "android:rapid_clear_notifications_by_listener";
 
+    /**
+     * Allows an application to read the system grammatical gender.
+     *
+     * @hide
+     */
+    public static final String OPSTR_READ_SYSTEM_GRAMMATICAL_GENDER =
+            "android:read_system_grammatical_gender";
+
     /** {@link #sAppOpsToNote} not initialized yet for this op */
     private static final byte SHOULD_COLLECT_NOTE_OP_NOT_INITIALIZED = 0;
     /** Should not collect noting of this app-op in {@link #sAppOpsToNote} */
@@ -2483,6 +2501,7 @@ public class AppOpsManager {
             OP_RECEIVE_SANDBOX_TRIGGER_AUDIO,
             OP_RECEIVE_SANDBOXED_DETECTION_TRAINING_DATA,
             OP_MEDIA_ROUTING_CONTROL,
+            OP_READ_SYSTEM_GRAMMATICAL_GENDER,
     };
 
     static final AppOpInfo[] sAppOpInfos = new AppOpInfo[]{
@@ -2935,6 +2954,10 @@ public class AppOpsManager {
                 OPSTR_RAPID_CLEAR_NOTIFICATIONS_BY_LISTENER,
                 "RAPID_CLEAR_NOTIFICATIONS_BY_LISTENER")
                 .setDefaultMode(AppOpsManager.MODE_ALLOWED).build(),
+        new AppOpInfo.Builder(OP_READ_SYSTEM_GRAMMATICAL_GENDER,
+                OPSTR_READ_SYSTEM_GRAMMATICAL_GENDER, "READ_SYSTEM_GRAMMATICAL_GENDER")
+                .setPermission(Manifest.permission.READ_SYSTEM_GRAMMATICAL_GENDER)
+                .build(),
     };
 
     // The number of longs needed to form a full bitmask of app ops
@@ -7705,6 +7728,14 @@ public class AppOpsManager {
     @RequiresPermission(android.Manifest.permission.MANAGE_APP_OPS_MODES)
     public void setUidMode(int code, int uid, @Mode int mode) {
         try {
+            // TODO(b/302609140): Remove extra logging after this issue is diagnosed.
+            if (code == OP_BLUETOOTH_CONNECT) {
+                Log.i(DEBUG_LOGGING_TAG,
+                        "setUidMode called for OP_BLUETOOTH_CONNECT with mode: " + mode
+                                + " for uid: " + uid + " calling uid: " + Binder.getCallingUid()
+                                + " trace: "
+                                + Arrays.toString(Thread.currentThread().getStackTrace()));
+            }
             mService.setUidMode(code, uid, mode);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -7725,6 +7756,15 @@ public class AppOpsManager {
     @RequiresPermission(android.Manifest.permission.MANAGE_APP_OPS_MODES)
     public void setUidMode(@NonNull String appOp, int uid, @Mode int mode) {
         try {
+            // TODO(b/302609140): Remove extra logging after this issue is diagnosed.
+            if (appOp.equals(OPSTR_BLUETOOTH_CONNECT)) {
+                Log.i(DEBUG_LOGGING_TAG,
+                        "setUidMode called for OPSTR_BLUETOOTH_CONNECT with mode: " + mode
+                                + " for uid: " + uid + " calling uid: " + Binder.getCallingUid()
+                                + " trace: "
+                                + Arrays.toString(Thread.currentThread().getStackTrace()));
+            }
+
             mService.setUidMode(AppOpsManager.strOpToOp(appOp), uid, mode);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -7765,6 +7805,14 @@ public class AppOpsManager {
     @RequiresPermission(android.Manifest.permission.MANAGE_APP_OPS_MODES)
     public void setMode(int code, int uid, String packageName, @Mode int mode) {
         try {
+            // TODO(b/302609140): Remove extra logging after this issue is diagnosed.
+            if (code == OP_BLUETOOTH_CONNECT) {
+                Log.i(DEBUG_LOGGING_TAG,
+                        "setMode called for OPSTR_BLUETOOTH_CONNECT with mode: " + mode
+                                + " for uid: " + uid + " calling uid: " + Binder.getCallingUid()
+                                + " trace: "
+                                + Arrays.toString(Thread.currentThread().getStackTrace()));
+            }
             mService.setMode(code, uid, packageName, mode);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -7787,6 +7835,14 @@ public class AppOpsManager {
     public void setMode(@NonNull String op, int uid, @Nullable String packageName,
             @Mode int mode) {
         try {
+            // TODO(b/302609140): Remove extra logging after this issue is diagnosed.
+            if (op.equals(OPSTR_BLUETOOTH_CONNECT)) {
+                Log.i(DEBUG_LOGGING_TAG,
+                        "setMode called for OPSTR_BLUETOOTH_CONNECT with mode: " + mode
+                                + " for uid: " + uid + " calling uid: " + Binder.getCallingUid()
+                                + " trace: "
+                                + Arrays.toString(Thread.currentThread().getStackTrace()));
+            }
             mService.setMode(strOpToOp(op), uid, packageName, mode);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();

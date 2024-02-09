@@ -191,6 +191,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     // Set to true when process was launched with a wrapper attached
     private volatile boolean mUsingWrapper;
 
+    /** Non-null if this process may have a window. */
+    @Nullable
+    Session mWindowSession;
+
     // Thread currently set for VR scheduling
     int mVrThreadTid;
 
@@ -410,7 +414,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             // the latest configuration in their lifecycle callbacks (e.g. onReceive, onCreate).
             try {
                 // No WM lock here.
-                mAtm.getLifecycleManager().scheduleTransactionItemUnlocked(
+                mAtm.getLifecycleManager().scheduleTransactionItemNow(
                         thread, configurationChangeItem);
             } catch (Exception e) {
                 Slog.e(TAG_CONFIGURATION, "Failed to schedule ConfigurationChangeItem="
@@ -1005,7 +1009,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             if (packageName.equals(r.packageName)
                     && r.applyAppSpecificConfig(nightMode, localesOverride, gender)
                     && r.isVisibleRequested()) {
-                r.ensureActivityConfiguration(0 /* globalChanges */, true /* preserveWindow */);
+                r.ensureActivityConfiguration();
             }
         }
     }
@@ -1283,8 +1287,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                 & (ACTIVITY_STATE_FLAG_IS_VISIBLE | ACTIVITY_STATE_FLAG_IS_WINDOW_VISIBLE)) != 0;
         if (!wasAnyVisible && anyVisible) {
             mAtm.mVisibleActivityProcessTracker.onAnyActivityVisible(this);
+            mAtm.mWindowManager.onProcessActivityVisibilityChanged(mUid, true /*visible*/);
         } else if (wasAnyVisible && !anyVisible) {
             mAtm.mVisibleActivityProcessTracker.onAllActivitiesInvisible(this);
+            mAtm.mWindowManager.onProcessActivityVisibilityChanged(mUid, false /*visible*/);
         } else if (wasAnyVisible && !wasResumed && hasResumedActivity()) {
             mAtm.mVisibleActivityProcessTracker.onActivityResumedWhileVisible(this);
         }
@@ -1691,7 +1697,12 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     private void scheduleClientTransactionItem(@NonNull IApplicationThread thread,
             @NonNull ClientTransactionItem transactionItem) {
         try {
-            mAtm.getLifecycleManager().scheduleTransactionItem(thread, transactionItem);
+            if (mWindowSession != null && mWindowSession.hasWindow()) {
+                mAtm.getLifecycleManager().scheduleTransactionItem(thread, transactionItem);
+            } else {
+                // Non-UI process can handle the change directly.
+                mAtm.getLifecycleManager().scheduleTransactionItemNow(thread, transactionItem);
+            }
         } catch (DeadObjectException e) {
             // Expected if the process has been killed.
             Slog.w(TAG_CONFIGURATION, "Failed for dead process. ClientTransactionItem="
@@ -1739,7 +1750,7 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             overrideConfig.assetsSeq = assetSeq;
             r.onRequestedOverrideConfigurationChanged(overrideConfig);
             if (r.isVisibleRequested()) {
-                r.ensureActivityConfiguration(0, true);
+                r.ensureActivityConfiguration();
             }
         }
     }

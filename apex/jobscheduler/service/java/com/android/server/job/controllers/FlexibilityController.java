@@ -20,7 +20,6 @@ import static android.text.format.DateUtils.DAY_IN_MILLIS;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
 
-import static com.android.server.job.JobSchedulerService.EXEMPTED_INDEX;
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 import static com.android.server.job.controllers.JobStatus.CONSTRAINT_BATTERY_NOT_LOW;
 import static com.android.server.job.controllers.JobStatus.CONSTRAINT_CHARGING;
@@ -31,11 +30,15 @@ import android.annotation.ElapsedRealtimeLong;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.job.JobInfo;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PowerManager;
 import android.os.UserHandle;
 import android.provider.DeviceConfig;
 import android.util.ArraySet;
@@ -49,6 +52,8 @@ import android.util.TimeUtils;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.AppSchedulingModuleThread;
+import com.android.server.DeviceIdleInternal;
+import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.utils.AlarmQueue;
 
@@ -128,6 +133,19 @@ public final class FlexibilityController extends StateController {
     @GuardedBy("mLock")
     private final SparseLongArray mLastSeenConstraintTimesElapsed = new SparseLongArray();
 
+    private DeviceIdleInternal mDeviceIdleInternal;
+    private final ArraySet<String> mPowerAllowlistedApps = new ArraySet<>();
+
+    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            switch (intent.getAction()) {
+                case PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED:
+                    mHandler.post(FlexibilityController.this::updatePowerAllowlistCache);
+                    break;
+            }
+        }
+    };
     @VisibleForTesting
     @GuardedBy("mLock")
     final FlexibilityTracker mFlexibilityTracker;
@@ -184,9 +202,13 @@ public final class FlexibilityController extends StateController {
     private static final int MSG_CHECK_ALL_JOBS = 0;
     /** Check the jobs in {@link #mJobsToCheck} */
     private static final int MSG_CHECK_JOBS = 1;
+    /** Check the jobs of packages in {@link #mPackagesToCheck} */
+    private static final int MSG_CHECK_PACKAGES = 2;
 
     @GuardedBy("mLock")
     private final ArraySet<JobStatus> mJobsToCheck = new ArraySet<>();
+    @GuardedBy("mLock")
+    private final ArraySet<String> mPackagesToCheck = new ArraySet<>();
 
     public FlexibilityController(
             JobSchedulerService service, PrefetchController prefetchController) {
@@ -209,6 +231,16 @@ public final class FlexibilityController extends StateController {
         mPercentToDropConstraints =
                 mFcConfig.DEFAULT_PERCENT_TO_DROP_FLEXIBLE_CONSTRAINTS;
         mPrefetchController = prefetchController;
+
+        if (mFlexibilityEnabled) {
+            registerBroadcastReceiver();
+        }
+    }
+
+    @Override
+    public void onSystemServicesReady() {
+        mDeviceIdleInternal = LocalServices.getService(DeviceIdleInternal.class);
+        mHandler.post(FlexibilityController.this::updatePowerAllowlistCache);
     }
 
     @Override
@@ -246,6 +278,7 @@ public final class FlexibilityController extends StateController {
             mFlexibilityAlarmQueue.removeAlarmForKey(js);
             mFlexibilityTracker.remove(js);
         }
+        mJobsToCheck.remove(js);
     }
 
     @Override
@@ -276,9 +309,9 @@ public final class FlexibilityController extends StateController {
                 // Only exclude DEFAULT+ priority jobs for BFGS+ apps
                 || (mService.getUidBias(js.getSourceUid()) >= JobInfo.BIAS_BOUND_FOREGROUND_SERVICE
                         && js.getEffectivePriority() >= JobInfo.PRIORITY_DEFAULT)
-                // Only exclude DEFAULT+ priority jobs for EXEMPTED apps
-                || (js.getStandbyBucket() == EXEMPTED_INDEX
-                        && js.getEffectivePriority() >= JobInfo.PRIORITY_DEFAULT)
+                // For apps in the power allowlist, automatically exclude DEFAULT+ priority jobs.
+                || (js.getEffectivePriority() >= JobInfo.PRIORITY_DEFAULT
+                        && mPowerAllowlistedApps.contains(js.getSourcePackageName()))
                 || hasEnoughSatisfiedConstraintsLocked(js)
                 || mService.isCurrentlyRunningLocked(js);
     }
@@ -385,14 +418,6 @@ public final class FlexibilityController extends StateController {
                 // potentially batch back-to-back controller state updates together.
                 mHandler.obtainMessage(MSG_CHECK_ALL_JOBS).sendToTarget();
             }
-        }
-    }
-
-    /** Called with a set of apps who have been added to or removed from the exempted bucket. */
-    public void onExemptedBucketChanged(@NonNull ArraySet<JobStatus> changedJobs) {
-        synchronized (mLock) {
-            mJobsToCheck.addAll(changedJobs);
-            mHandler.sendEmptyMessage(MSG_CHECK_JOBS);
         }
     }
 
@@ -577,6 +602,39 @@ public final class FlexibilityController extends StateController {
     @GuardedBy("mLock")
     public void processConstantLocked(DeviceConfig.Properties properties, String key) {
         mFcConfig.processConstantLocked(properties, key);
+    }
+
+    private void registerBroadcastReceiver() {
+        IntentFilter filter = new IntentFilter(PowerManager.ACTION_POWER_SAVE_WHITELIST_CHANGED);
+        mContext.registerReceiver(mBroadcastReceiver, filter);
+    }
+
+    private void unregisterBroadcastReceiver() {
+        mContext.unregisterReceiver(mBroadcastReceiver);
+    }
+
+    private void updatePowerAllowlistCache() {
+        if (mDeviceIdleInternal == null) {
+            return;
+        }
+
+        // Don't call out to DeviceIdleController with the lock held.
+        final String[] allowlistedPkgs = mDeviceIdleInternal.getFullPowerWhitelistExceptIdle();
+        final ArraySet<String> changedPkgs = new ArraySet<>();
+        synchronized (mLock) {
+            changedPkgs.addAll(mPowerAllowlistedApps);
+            mPowerAllowlistedApps.clear();
+            for (final String pkgName : allowlistedPkgs) {
+                mPowerAllowlistedApps.add(pkgName);
+                if (changedPkgs.contains(pkgName)) {
+                    changedPkgs.remove(pkgName);
+                } else {
+                    changedPkgs.add(pkgName);
+                }
+            }
+            mPackagesToCheck.addAll(changedPkgs);
+            mHandler.sendEmptyMessage(MSG_CHECK_PACKAGES);
+        }
     }
 
     @VisibleForTesting
@@ -789,6 +847,7 @@ public final class FlexibilityController extends StateController {
 
                     synchronized (mLock) {
                         mJobsToCheck.clear();
+                        mPackagesToCheck.clear();
                         final long nowElapsed = sElapsedRealtimeClock.millis();
                         final ArraySet<JobStatus> changedJobs = new ArraySet<>();
 
@@ -836,6 +895,31 @@ public final class FlexibilityController extends StateController {
                         }
                     }
                     break;
+
+                case MSG_CHECK_PACKAGES:
+                    synchronized (mLock) {
+                        final long nowElapsed = sElapsedRealtimeClock.millis();
+                        final ArraySet<JobStatus> changedJobs = new ArraySet<>();
+
+                        mService.getJobStore().forEachJob(
+                                (js) -> mPackagesToCheck.contains(js.getSourcePackageName())
+                                        || mPackagesToCheck.contains(js.getCallingPackageName()),
+                                (js) -> {
+                                    if (DEBUG) {
+                                        Slog.d(TAG, "Checking on " + js.toShortString());
+                                    }
+                                    if (js.setFlexibilityConstraintSatisfied(
+                                            nowElapsed, isFlexibilitySatisfiedLocked(js))) {
+                                        changedJobs.add(js);
+                                    }
+                                });
+
+                        mPackagesToCheck.clear();
+                        if (changedJobs.size() > 0) {
+                            mStateChangedListener.onControllerStateChanged(changedJobs);
+                        }
+                    }
+                    break;
             }
         }
     }
@@ -867,7 +951,7 @@ public final class FlexibilityController extends StateController {
         @VisibleForTesting
         static final long DEFAULT_DEADLINE_PROXIMITY_LIMIT_MS = 15 * MINUTE_IN_MILLIS;
         @VisibleForTesting
-        static final long DEFAULT_FALLBACK_FLEXIBILITY_DEADLINE_MS = 72 * HOUR_IN_MILLIS;
+        static final long DEFAULT_FALLBACK_FLEXIBILITY_DEADLINE_MS = 24 * HOUR_IN_MILLIS;
         private static final long DEFAULT_MIN_TIME_BETWEEN_FLEXIBILITY_ALARMS_MS = MINUTE_IN_MILLIS;
         @VisibleForTesting
         final int[] DEFAULT_PERCENT_TO_DROP_FLEXIBLE_CONSTRAINTS = {50, 60, 70, 80};
@@ -912,10 +996,12 @@ public final class FlexibilityController extends StateController {
                             mFlexibilityEnabled = true;
                             mPrefetchController
                                     .registerPrefetchChangedListener(mPrefetchChangedListener);
+                            registerBroadcastReceiver();
                         } else {
                             mFlexibilityEnabled = false;
                             mPrefetchController
                                     .unRegisterPrefetchChangedListener(mPrefetchChangedListener);
+                            unregisterBroadcastReceiver();
                         }
                     }
                     break;
@@ -1017,7 +1103,11 @@ public final class FlexibilityController extends StateController {
 
             pw.print(KEY_APPLIED_CONSTRAINTS, APPLIED_CONSTRAINTS);
             pw.print("(");
-            JobStatus.dumpConstraints(pw, APPLIED_CONSTRAINTS);
+            if (APPLIED_CONSTRAINTS != 0) {
+                JobStatus.dumpConstraints(pw, APPLIED_CONSTRAINTS);
+            } else {
+                pw.print("nothing");
+            }
             pw.println(")");
             pw.print(KEY_DEADLINE_PROXIMITY_LIMIT, DEADLINE_PROXIMITY_LIMIT_MS).println();
             pw.print(KEY_FALLBACK_FLEXIBILITY_DEADLINE, FALLBACK_FLEXIBILITY_DEADLINE_MS).println();
@@ -1075,6 +1165,10 @@ public final class FlexibilityController extends StateController {
             pw.println();
         }
         pw.decreaseIndent();
+
+        pw.println();
+        pw.print("Power allowlisted packages: ");
+        pw.println(mPowerAllowlistedApps);
 
         pw.println();
         mFlexibilityTracker.dump(pw, predicate);

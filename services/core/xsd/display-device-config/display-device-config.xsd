@@ -625,14 +625,17 @@
 
     If no mode is specified, the mapping will be used for the default mode.
     If no setting is specified, the mapping will be used for the normal brightness setting.
+
+    If no mapping is defined for one of the settings, the mapping for the normal setting will be
+    used as a fallback.
     -->
     <xs:complexType name="luxToBrightnessMapping">
         <xs:element name="map" type="nonNegativeFloatToFloatMap">
             <xs:annotation name="nonnull"/>
             <xs:annotation name="final"/>
         </xs:element>
-        <xs:element name="mode" type="xs:string" minOccurs="0"/>
-        <xs:element name="setting" type="xs:string" minOccurs="0"/>
+        <xs:element name="mode" type="AutoBrightnessModeName" minOccurs="0"/>
+        <xs:element name="setting" type="AutoBrightnessSettingName" minOccurs="0"/>
     </xs:complexType>
 
     <!-- Represents a point in the display brightness mapping, representing the lux level from the
@@ -765,4 +768,23 @@
             </xs:element>
         </xs:sequence>
     </xs:complexType>
+
+    <!-- Predefined type names as defined by
+    AutomaticBrightnessController.AutomaticBrightnessMode -->
+    <xs:simpleType  name="AutoBrightnessModeName">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="default"/>
+            <xs:enumeration value="idle"/>
+            <xs:enumeration value="doze"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- Predefined auto-brighntess settings -->
+    <xs:simpleType  name="AutoBrightnessSettingName">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="dim"/>
+            <xs:enumeration value="normal"/>
+            <xs:enumeration value="bright"/>
+        </xs:restriction>
+    </xs:simpleType>
 </xs:schema>

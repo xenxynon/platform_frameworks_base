@@ -16,14 +16,18 @@
 
 package com.android.systemui.communal.ui.compose
 
+import android.appwidget.AppWidgetHostView
 import android.os.Bundle
 import android.util.SizeF
 import android.widget.FrameLayout
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,15 +35,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
@@ -47,10 +56,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,26 +71,34 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.core.view.setPadding
 import com.android.compose.theme.LocalAndroidColorScheme
 import com.android.systemui.communal.domain.model.CommunalContentModel
 import com.android.systemui.communal.shared.model.CommunalContentSize
+import com.android.systemui.communal.ui.compose.Dimensions.CardOutlineWidth
+import com.android.systemui.communal.ui.compose.extensions.allowGestures
+import com.android.systemui.communal.ui.compose.extensions.firstItemAtOffset
+import com.android.systemui.communal.ui.compose.extensions.observeTapsWithoutConsuming
 import com.android.systemui.communal.ui.viewmodel.BaseCommunalViewModel
 import com.android.systemui.communal.ui.viewmodel.CommunalEditModeViewModel
-import com.android.systemui.media.controls.ui.MediaHierarchyManager
-import com.android.systemui.media.controls.ui.MediaHostState
 import com.android.systemui.res.R
 
 @Composable
@@ -89,25 +109,65 @@ fun CommunalHub(
     onEditDone: (() -> Unit)? = null,
 ) {
     val communalContent by viewModel.communalContent.collectAsState(initial = emptyList())
+    val isPopupOnDismissCtaShowing by
+        viewModel.isPopupOnDismissCtaShowing.collectAsState(initial = false)
     var removeButtonCoordinates: LayoutCoordinates? by remember { mutableStateOf(null) }
     var toolbarSize: IntSize? by remember { mutableStateOf(null) }
     var gridCoordinates: LayoutCoordinates? by remember { mutableStateOf(null) }
     var isDraggingToRemove by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+    val contentListState = rememberContentListState(communalContent, viewModel)
+    val reorderingWidgets by viewModel.reorderingWidgets.collectAsState()
+    val selectedIndex = viewModel.selectedIndex.collectAsState()
+    val removeButtonEnabled by remember {
+        derivedStateOf { selectedIndex.value != null || reorderingWidgets }
+    }
+
+    val contentPadding = gridContentPadding(viewModel.isEditMode, toolbarSize)
+    val contentOffset = beforeContentPadding(contentPadding).toOffset()
 
     Box(
-        modifier = modifier.fillMaxSize().background(Color.White),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .background(LocalAndroidColorScheme.current.outlineVariant)
+                .pointerInput(gridState, contentOffset, contentListState) {
+                    // If not in edit mode, don't allow selecting items.
+                    if (!viewModel.isEditMode) return@pointerInput
+                    observeTapsWithoutConsuming { offset ->
+                        val adjustedOffset = offset - contentOffset
+                        val index =
+                            gridState.layoutInfo.visibleItemsInfo
+                                .firstItemAtOffset(adjustedOffset)
+                                ?.index
+                        val newIndex =
+                            if (index?.let(contentListState::isItemEditable) == true) {
+                                index
+                            } else {
+                                null
+                            }
+                        viewModel.setSelectedIndex(newIndex)
+                    }
+                },
     ) {
         CommunalHubLazyGrid(
-            modifier = Modifier.align(Alignment.CenterStart),
             communalContent = communalContent,
             viewModel = viewModel,
-            contentPadding = gridContentPadding(viewModel.isEditMode, toolbarSize),
+            contentPadding = contentPadding,
+            contentOffset = contentOffset,
             setGridCoordinates = { gridCoordinates = it },
-            updateDragPositionForRemove = {
+            updateDragPositionForRemove = { offset ->
                 isDraggingToRemove =
-                    checkForDraggingToRemove(it, removeButtonCoordinates, gridCoordinates)
+                    isPointerWithinCoordinates(
+                        offset = gridCoordinates?.let { it.positionInWindow() + offset },
+                        containerToCheck = removeButtonCoordinates
+                    )
                 isDraggingToRemove
-            }
+            },
+            onOpenWidgetPicker = onOpenWidgetPicker,
+            gridState = gridState,
+            contentListState = contentListState,
+            selectedIndex = selectedIndex
         )
 
         if (viewModel.isEditMode && onOpenWidgetPicker != null && onEditDone != null) {
@@ -117,11 +177,23 @@ fun CommunalHub(
                 setRemoveButtonCoordinates = { removeButtonCoordinates = it },
                 onEditDone = onEditDone,
                 onOpenWidgetPicker = onOpenWidgetPicker,
+                onRemoveClicked = {
+                    selectedIndex.value?.let { index ->
+                        contentListState.onRemove(index)
+                        contentListState.onSaveList()
+                        viewModel.setSelectedIndex(null)
+                    }
+                },
+                removeEnabled = removeButtonEnabled
             )
         } else {
             IconButton(onClick = viewModel::onOpenWidgetEditor) {
                 Icon(Icons.Default.Edit, stringResource(R.string.button_to_open_widget_editor))
             }
+        }
+
+        if (isPopupOnDismissCtaShowing) {
+            PopupOnDismissCtaTile(viewModel::onHidePopupAfterDismissCta)
         }
 
         // This spacer covers the edge of the LazyHorizontalGrid and prevents it from receiving
@@ -138,21 +210,24 @@ fun CommunalHub(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CommunalHubLazyGrid(
+private fun BoxScope.CommunalHubLazyGrid(
     communalContent: List<CommunalContentModel>,
     viewModel: BaseCommunalViewModel,
-    modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
+    selectedIndex: State<Int?>,
+    contentOffset: Offset,
+    gridState: LazyGridState,
+    contentListState: ContentListState,
     setGridCoordinates: (coordinates: LayoutCoordinates) -> Unit,
     updateDragPositionForRemove: (offset: Offset) -> Boolean,
+    onOpenWidgetPicker: (() -> Unit)? = null,
 ) {
-    var gridModifier = modifier
-    val gridState = rememberLazyGridState()
+    var gridModifier = Modifier.align(Alignment.CenterStart)
     var list = communalContent
     var dragDropState: GridDragDropState? = null
     if (viewModel.isEditMode && viewModel is CommunalEditModeViewModel) {
-        val contentListState = rememberContentListState(communalContent, viewModel)
         list = contentListState.list
+        // for drag & drop operations within the communal hub grid
         dragDropState =
             rememberGridDragDropState(
                 gridState = gridState,
@@ -162,11 +237,24 @@ private fun CommunalHubLazyGrid(
         gridModifier =
             gridModifier
                 .fillMaxSize()
-                .dragContainer(dragDropState, beforeContentPadding(contentPadding))
+                .dragContainer(dragDropState, contentOffset, viewModel)
                 .onGloballyPositioned { setGridCoordinates(it) }
+        // for widgets dropped from other activities
+        val dragAndDropTargetState =
+            rememberDragAndDropTargetState(
+                gridState = gridState,
+                contentListState = contentListState,
+                updateDragPositionForRemove = updateDragPositionForRemove
+            )
+
+        // A full size box in background that listens to widget drops from the picker.
+        // Since the grid has its own listener for in-grid drag events, we use a separate element
+        // for android drag events.
+        Box(Modifier.fillMaxSize().dragAndDropTarget(dragAndDropTargetState)) {}
     } else {
         gridModifier = gridModifier.height(Dimensions.GridHeight)
     }
+
     LazyHorizontalGrid(
         modifier = gridModifier,
         state = gridState,
@@ -178,6 +266,7 @@ private fun CommunalHubLazyGrid(
         items(
             count = list.size,
             key = { index -> list[index].key },
+            contentType = { index -> list[index].key },
             span = { index -> GridItemSpan(list[index].size.span) },
         ) { index ->
             val cardModifier = Modifier.width(Dimensions.CardWidth)
@@ -187,15 +276,20 @@ private fun CommunalHubLazyGrid(
                     list[index].size.dp().value,
                 )
             if (viewModel.isEditMode && dragDropState != null) {
-                DraggableItem(dragDropState = dragDropState, enabled = true, index = index) {
-                    isDragging ->
-                    val elevation by animateDpAsState(if (isDragging) 4.dp else 1.dp)
+                val selected by remember(index) { derivedStateOf { index == selectedIndex.value } }
+                DraggableItem(
+                    dragDropState = dragDropState,
+                    selected = selected,
+                    enabled = list[index] is CommunalContentModel.Widget,
+                    index = index,
+                    size = size
+                ) { _ ->
                     CommunalContent(
                         modifier = cardModifier,
-                        elevation = elevation,
                         model = list[index],
                         viewModel = viewModel,
                         size = size,
+                        onOpenWidgetPicker = onOpenWidgetPicker,
                     )
                 }
             } else {
@@ -219,11 +313,19 @@ private fun CommunalHubLazyGrid(
 @Composable
 private fun Toolbar(
     isDraggingToRemove: Boolean,
+    removeEnabled: Boolean,
+    onRemoveClicked: () -> Unit,
     setToolbarSize: (toolbarSize: IntSize) -> Unit,
     setRemoveButtonCoordinates: (coordinates: LayoutCoordinates) -> Unit,
     onOpenWidgetPicker: () -> Unit,
-    onEditDone: () -> Unit,
+    onEditDone: () -> Unit
 ) {
+    val removeButtonAlpha: Float by
+        animateFloatAsState(
+            targetValue = if (removeEnabled) 1f else 0.5f,
+            label = "RemoveButtonAlphaAnimation"
+        )
+
     Row(
         modifier =
             Modifier.fillMaxWidth()
@@ -236,16 +338,11 @@ private fun Toolbar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val buttonContentPadding =
-            PaddingValues(
-                vertical = Dimensions.ToolbarButtonPaddingVertical,
-                horizontal = Dimensions.ToolbarButtonPaddingHorizontal,
-            )
         val spacerModifier = Modifier.width(Dimensions.ToolbarButtonSpaceBetween)
         Button(
             onClick = onOpenWidgetPicker,
-            colors = filledSecondaryButtonColors(),
-            contentPadding = buttonContentPadding
+            colors = filledButtonColors(),
+            contentPadding = Dimensions.ButtonPadding
         ) {
             Icon(Icons.Default.Add, stringResource(R.string.button_to_open_widget_editor))
             Spacer(spacerModifier)
@@ -254,31 +351,92 @@ private fun Toolbar(
             )
         }
 
-        val buttonColors =
-            if (isDraggingToRemove) filledButtonColors() else ButtonDefaults.outlinedButtonColors()
-        OutlinedButton(
-            onClick = {},
-            colors = buttonColors,
-            contentPadding = buttonContentPadding,
-            modifier = Modifier.onGloballyPositioned { setRemoveButtonCoordinates(it) },
-        ) {
-            Icon(Icons.Outlined.Delete, stringResource(R.string.button_to_open_widget_editor))
-            Spacer(spacerModifier)
-            Text(
-                text = stringResource(R.string.button_to_remove_widget),
-            )
+        val colors = LocalAndroidColorScheme.current
+        if (isDraggingToRemove) {
+            Button(
+                // Button is disabled to make it non-clickable
+                enabled = false,
+                onClick = {},
+                colors =
+                    ButtonDefaults.buttonColors(
+                        disabledContainerColor = colors.primary,
+                        disabledContentColor = colors.onPrimary,
+                    ),
+                contentPadding = Dimensions.ButtonPadding,
+                modifier = Modifier.onGloballyPositioned { setRemoveButtonCoordinates(it) }
+            ) {
+                RemoveButtonContent(spacerModifier)
+            }
+        } else {
+            OutlinedButton(
+                enabled = removeEnabled,
+                onClick = onRemoveClicked,
+                colors =
+                    ButtonDefaults.outlinedButtonColors(
+                        contentColor = colors.primary,
+                        disabledContentColor = colors.primary
+                    ),
+                border = BorderStroke(width = 1.0.dp, color = colors.primary),
+                contentPadding = Dimensions.ButtonPadding,
+                modifier =
+                    Modifier.graphicsLayer { alpha = removeButtonAlpha }
+                        .onGloballyPositioned { setRemoveButtonCoordinates(it) }
+            ) {
+                RemoveButtonContent(spacerModifier)
+            }
         }
 
         Button(
             onClick = onEditDone,
             colors = filledButtonColors(),
-            contentPadding = buttonContentPadding
+            contentPadding = Dimensions.ButtonPadding
         ) {
             Text(
                 text = stringResource(R.string.hub_mode_editing_exit_button_text),
             )
         }
     }
+}
+
+@Composable
+private fun PopupOnDismissCtaTile(onHidePopupAfterDismissCta: () -> Unit) {
+    Popup(
+        alignment = Alignment.TopCenter,
+        offset = IntOffset(0, 40),
+        onDismissRequest = onHidePopupAfterDismissCta
+    ) {
+        val colors = LocalAndroidColorScheme.current
+        Row(
+            modifier =
+                Modifier.height(56.dp)
+                    .background(colors.secondary, RoundedCornerShape(50.dp))
+                    .padding(16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.TouchApp,
+                contentDescription = stringResource(R.string.popup_on_dismiss_cta_tile_text),
+                tint = colors.onSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(
+                text = stringResource(R.string.popup_on_dismiss_cta_tile_text),
+                style = MaterialTheme.typography.titleSmall,
+                color = colors.onSecondary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RemoveButtonContent(spacerModifier: Modifier) {
+    Icon(Icons.Outlined.Delete, stringResource(R.string.button_to_remove_widget))
+    Spacer(spacerModifier)
+    Text(
+        text = stringResource(R.string.button_to_remove_widget),
+    )
 }
 
 @Composable
@@ -291,48 +449,180 @@ private fun filledButtonColors(): ButtonColors {
 }
 
 @Composable
-private fun filledSecondaryButtonColors(): ButtonColors {
-    val colors = LocalAndroidColorScheme.current
-    return ButtonDefaults.buttonColors(
-        containerColor = colors.secondary,
-        contentColor = colors.onSecondary,
-    )
-}
-
-@Composable
 private fun CommunalContent(
     model: CommunalContentModel,
     viewModel: BaseCommunalViewModel,
     size: SizeF,
     modifier: Modifier = Modifier,
-    elevation: Dp = 0.dp,
+    onOpenWidgetPicker: (() -> Unit)? = null,
 ) {
     when (model) {
-        is CommunalContentModel.Widget -> WidgetContent(model, size, elevation, modifier)
+        is CommunalContentModel.Widget -> WidgetContent(viewModel, model, size, modifier)
+        is CommunalContentModel.WidgetPlaceholder -> HighlightedItem(size)
+        is CommunalContentModel.CtaTileInViewMode ->
+            CtaTileInViewModeContent(viewModel, size, modifier)
+        is CommunalContentModel.CtaTileInEditMode ->
+            CtaTileInEditModeContent(size, modifier, onOpenWidgetPicker)
         is CommunalContentModel.Smartspace -> SmartspaceContent(model, modifier)
         is CommunalContentModel.Tutorial -> TutorialContent(modifier)
         is CommunalContentModel.Umo -> Umo(viewModel, modifier)
     }
 }
 
+/** Creates an empty card used to highlight a particular spot on the grid. */
 @Composable
-private fun WidgetContent(
-    model: CommunalContentModel.Widget,
+fun HighlightedItem(size: SizeF, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.size(Dp(size.width), Dp(size.height)),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(CardOutlineWidth, LocalAndroidColorScheme.current.tertiaryFixed),
+        shape = RoundedCornerShape(16.dp)
+    ) {}
+}
+
+/** Presents a CTA tile at the end of the grid, to customize the hub. */
+@Composable
+private fun CtaTileInViewModeContent(
+    viewModel: BaseCommunalViewModel,
     size: SizeF,
-    elevation: Dp,
     modifier: Modifier = Modifier,
 ) {
+    val colors = LocalAndroidColorScheme.current
     Card(
-        modifier = modifier.height(size.height.dp),
-        elevation = CardDefaults.cardElevation(draggedElevation = elevation),
+        modifier = modifier.height(size.height.dp).padding(CardOutlineWidth),
+        colors =
+            CardDefaults.cardColors(
+                containerColor = colors.primary,
+                contentColor = colors.onPrimary,
+            ),
+        shape = RoundedCornerShape(80.dp, 40.dp, 80.dp, 40.dp)
     ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 82.dp),
+            verticalArrangement =
+                Arrangement.spacedBy(Dimensions.Spacing, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Widgets,
+                contentDescription = stringResource(R.string.cta_label_to_open_widget_picker),
+                modifier = Modifier.size(Dimensions.IconSize),
+            )
+            Text(
+                text = stringResource(R.string.cta_label_to_edit_widget),
+                style = MaterialTheme.typography.titleLarge,
+                textAlign = TextAlign.Center,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                OutlinedButton(
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            contentColor = colors.onPrimary,
+                        ),
+                    border = BorderStroke(width = 1.0.dp, color = colors.primaryContainer),
+                    contentPadding = Dimensions.ButtonPadding,
+                    onClick = viewModel::onDismissCtaTile,
+                ) {
+                    Text(
+                        text = stringResource(R.string.cta_tile_button_to_dismiss),
+                    )
+                }
+                Spacer(modifier = Modifier.size(Dimensions.Spacing))
+                Button(
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = colors.primaryContainer,
+                            contentColor = colors.onPrimaryContainer,
+                        ),
+                    contentPadding = Dimensions.ButtonPadding,
+                    onClick = viewModel::onOpenWidgetEditor
+                ) {
+                    Text(
+                        text = stringResource(R.string.cta_tile_button_to_open_widget_editor),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Presents a CTA tile at the end of the hub in edit mode, to add more widgets. */
+@Composable
+private fun CtaTileInEditModeContent(
+    size: SizeF,
+    modifier: Modifier = Modifier,
+    onOpenWidgetPicker: (() -> Unit)? = null,
+) {
+    if (onOpenWidgetPicker == null) {
+        throw IllegalArgumentException("onOpenWidgetPicker should not be null.")
+    }
+    val colors = LocalAndroidColorScheme.current
+    Card(
+        modifier = modifier.height(size.height.dp).padding(CardOutlineWidth),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, colors.primary),
+        shape = RoundedCornerShape(200.dp),
+        onClick = onOpenWidgetPicker,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement =
+                Arrangement.spacedBy(Dimensions.Spacing, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Widgets,
+                contentDescription = stringResource(R.string.cta_label_to_open_widget_picker),
+                tint = colors.primary,
+                modifier = Modifier.size(Dimensions.IconSize),
+            )
+            Text(
+                text = stringResource(R.string.cta_label_to_open_widget_picker),
+                style = MaterialTheme.typography.titleLarge,
+                color = colors.primary,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WidgetContent(
+    viewModel: BaseCommunalViewModel,
+    model: CommunalContentModel.Widget,
+    size: SizeF,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.height(size.height.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        val paddingInPx = with(LocalDensity.current) { CardOutlineWidth.toPx().toInt() }
         AndroidView(
-            modifier = modifier,
+            modifier = modifier.allowGestures(allowed = !viewModel.isEditMode),
             factory = { context ->
-                model.appWidgetHost
-                    .createView(context, model.appWidgetId, model.providerInfo)
-                    .apply { updateAppWidgetSize(Bundle.EMPTY, listOf(size)) }
+                // The AppWidgetHostView will inherit the interaction handler from the
+                // AppWidgetHost. So set the interaction handler here before creating the view, and
+                // then clear it after the view is created. This is a workaround due to the fact
+                // that the interaction handler cannot be specified when creating the view,
+                // and there are race conditions if it is set after the view is created.
+                model.appWidgetHost.setInteractionHandler(viewModel.getInteractionHandler())
+                val view =
+                    model.appWidgetHost
+                        .createViewForCommunal(context, model.appWidgetId, model.providerInfo)
+                        .apply { updateAppWidgetSize(Bundle.EMPTY, listOf(size)) }
+                model.appWidgetHost.setInteractionHandler(null)
+                // Remove the extra padding applied to AppWidgetHostView to allow widgets to
+                // occupy the entire box. The added padding is now adjusted to leave only sufficient
+                // space for displaying the outline around the box when the widget is selected.
+                view.setPadding(paddingInPx)
+                view
             },
+            // For reusing composition in lazy lists.
+            onReset = {},
         )
     }
 }
@@ -345,10 +635,10 @@ private fun SmartspaceContent(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            FrameLayout(context).apply { addView(model.remoteViews.apply(context, this)) }
+            AppWidgetHostView(context).apply { updateAppWidget(model.remoteViews) }
         },
         // For reusing composition in lazy lists.
-        onReset = {}
+        onReset = {},
     )
 }
 
@@ -362,10 +652,6 @@ private fun Umo(viewModel: BaseCommunalViewModel, modifier: Modifier = Modifier)
     AndroidView(
         modifier = modifier,
         factory = {
-            viewModel.mediaHost.expansion = MediaHostState.EXPANDED
-            viewModel.mediaHost.showsOnlyActiveMedia = false
-            viewModel.mediaHost.falsingProtectionNeeded = false
-            viewModel.mediaHost.init(MediaHierarchyManager.LOCATION_COMMUNAL_HUB)
             viewModel.mediaHost.hostView.layoutParams =
                 FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
@@ -408,8 +694,8 @@ private fun gridContentPadding(isEditMode: Boolean, toolbarSize: IntSize?): Padd
 private fun beforeContentPadding(paddingValues: PaddingValues): ContentPaddingInPx {
     return with(LocalDensity.current) {
         ContentPaddingInPx(
-            startPadding = paddingValues.calculateLeftPadding(LayoutDirection.Ltr).toPx(),
-            topPadding = paddingValues.calculateTopPadding().toPx()
+            start = paddingValues.calculateLeftPadding(LayoutDirection.Ltr).toPx(),
+            top = paddingValues.calculateTopPadding().toPx()
         )
     }
 }
@@ -418,18 +704,15 @@ private fun beforeContentPadding(paddingValues: PaddingValues): ContentPaddingIn
  * Check whether the pointer position that the item is being dragged at is within the coordinates of
  * the remove button in the toolbar. Returns true if the item is removable.
  */
-private fun checkForDraggingToRemove(
-    offset: Offset,
-    removeButtonCoordinates: LayoutCoordinates?,
-    gridCoordinates: LayoutCoordinates?,
+private fun isPointerWithinCoordinates(
+    offset: Offset?,
+    containerToCheck: LayoutCoordinates?
 ): Boolean {
-    if (removeButtonCoordinates == null || gridCoordinates == null) {
+    if (offset == null || containerToCheck == null) {
         return false
     }
-    val pointer = gridCoordinates.positionInWindow() + offset
-    val removeButton = removeButtonCoordinates.positionInWindow()
-    return pointer.x in removeButton.x..removeButton.x + removeButtonCoordinates.size.width &&
-        pointer.y in removeButton.y..removeButton.y + removeButtonCoordinates.size.height
+    val container = containerToCheck.boundsInWindow()
+    return container.contains(offset)
 }
 
 private fun CommunalContentSize.dp(): Dp {
@@ -440,13 +723,16 @@ private fun CommunalContentSize.dp(): Dp {
     }
 }
 
-data class ContentPaddingInPx(val startPadding: Float, val topPadding: Float)
+data class ContentPaddingInPx(val start: Float, val top: Float) {
+    fun toOffset(): Offset = Offset(start, top)
+}
 
 object Dimensions {
     val CardWidth = 464.dp
     val CardHeightFull = 630.dp
     val CardHeightHalf = 307.dp
     val CardHeightThird = 199.dp
+    val CardOutlineWidth = 3.dp
     val GridHeight = CardHeightFull
     val Spacing = 16.dp
 
@@ -456,4 +742,10 @@ object Dimensions {
     val ToolbarButtonPaddingHorizontal = 24.dp
     val ToolbarButtonPaddingVertical = 16.dp
     val ToolbarButtonSpaceBetween = 8.dp
+    val ButtonPadding =
+        PaddingValues(
+            vertical = ToolbarButtonPaddingVertical,
+            horizontal = ToolbarButtonPaddingHorizontal,
+        )
+    val IconSize = 48.dp
 }

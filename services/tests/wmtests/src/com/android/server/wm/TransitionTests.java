@@ -195,6 +195,36 @@ public class TransitionTests extends WindowTestsBase {
     }
 
     @Test
+    public void testCreateInfo_Activity() {
+        final Transition transition = createTestTransition(TRANSIT_OPEN);
+        ArrayMap<WindowContainer, Transition.ChangeInfo> changes = transition.mChanges;
+        ArraySet<WindowContainer> participants = transition.mParticipants;
+
+        final Task theTask = createTask(mDisplayContent);
+        final ActivityRecord closing = createActivityRecord(theTask);
+        final ActivityRecord opening = createActivityRecord(theTask);
+        // Start states.
+        changes.put(theTask, new Transition.ChangeInfo(theTask, true /* vis */, false /* exChg */));
+        changes.put(opening, new Transition.ChangeInfo(opening, false /* vis */, true /* exChg */));
+        changes.put(closing, new Transition.ChangeInfo(closing, true /* vis */, false /* exChg */));
+        fillChangeMap(changes, theTask);
+        // End states.
+        closing.setVisibleRequested(false);
+        opening.setVisibleRequested(true);
+
+        final int transit = transition.mType;
+        int flags = 0;
+
+        participants.add(opening);
+        participants.add(closing);
+        ArrayList<Transition.ChangeInfo> targets =
+                Transition.calculateTargets(participants, changes);
+        TransitionInfo info = Transition.calculateTransitionInfo(transit, flags, targets, mMockT);
+        assertEquals(2, info.getChanges().size());
+        assertEquals(info.getChanges().get(1).getActivityComponent(), closing.mActivityComponent);
+    }
+
+    @Test
     public void testCreateInfo_NestedTasks() {
         final Transition transition = createTestTransition(TRANSIT_OPEN);
         ArrayMap<WindowContainer, Transition.ChangeInfo> changes = transition.mChanges;
@@ -1495,8 +1525,7 @@ public class TransitionTests extends WindowTestsBase {
         verify(taskSnapshotController, times(0)).recordSnapshot(eq(task1));
 
         enteringAnimReports.clear();
-        doCallRealMethod().when(mWm.mRoot).ensureActivitiesVisible(any(),
-                anyInt(), anyBoolean(), anyBoolean());
+        doCallRealMethod().when(mWm.mRoot).ensureActivitiesVisible(any(), anyBoolean());
         final boolean[] wasInFinishingTransition = { false };
         controller.registerLegacyListener(new WindowManagerInternal.AppTransitionListener() {
             @Override
@@ -1640,7 +1669,7 @@ public class TransitionTests extends WindowTestsBase {
         final ActivityRecord nonEmbeddedActivity = createActivityRecord(task);
         assertFalse(nonEmbeddedActivity.isEmbedded());
         final TaskFragmentOrganizer organizer = new TaskFragmentOrganizer(Runnable::run);
-        mAtm.mTaskFragmentOrganizerController.registerOrganizer(
+        registerTaskFragmentOrganizer(
                 ITaskFragmentOrganizer.Stub.asInterface(organizer.getOrganizerToken().asBinder()));
         final TaskFragment embeddedTf = new TaskFragmentBuilder(mAtm)
                 .setParentTask(task)
@@ -1690,7 +1719,7 @@ public class TransitionTests extends WindowTestsBase {
         task.getConfiguration().windowConfiguration.setBounds(taskBounds);
         final ActivityRecord nonEmbeddedActivity = createActivityRecord(task);
         final TaskFragmentOrganizer organizer = new TaskFragmentOrganizer(Runnable::run);
-        mAtm.mTaskFragmentOrganizerController.registerOrganizer(
+        registerTaskFragmentOrganizer(
                 ITaskFragmentOrganizer.Stub.asInterface(organizer.getOrganizerToken().asBinder()));
         final TaskFragment embeddedTf = new TaskFragmentBuilder(mAtm)
                 .setParentTask(task)
@@ -1819,7 +1848,7 @@ public class TransitionTests extends WindowTestsBase {
         // Skip manipulate the SurfaceControl.
         doNothing().when(activity).setDropInputMode(anyInt());
         final TaskFragmentOrganizer organizer = new TaskFragmentOrganizer(Runnable::run);
-        mAtm.mTaskFragmentOrganizerController.registerOrganizer(
+        registerTaskFragmentOrganizer(
                 ITaskFragmentOrganizer.Stub.asInterface(organizer.getOrganizerToken().asBinder()));
         final TaskFragment embeddedTf = new TaskFragmentBuilder(mAtm)
                 .setParentTask(task)
@@ -1850,7 +1879,7 @@ public class TransitionTests extends WindowTestsBase {
 
         // Test background color for Activity and embedded TaskFragment.
         final TaskFragmentOrganizer organizer = new TaskFragmentOrganizer(Runnable::run);
-        mAtm.mTaskFragmentOrganizerController.registerOrganizer(
+        registerTaskFragmentOrganizer(
                 ITaskFragmentOrganizer.Stub.asInterface(organizer.getOrganizerToken().asBinder()));
         final Task task = createTask(mDisplayContent);
         final TaskFragment embeddedTf = createTaskFragmentWithEmbeddedActivity(task, organizer);

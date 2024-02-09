@@ -74,6 +74,7 @@ import android.view.IWindowManager;
 import android.view.WindowManagerGlobal;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.content.PackageMonitor;
 import com.android.internal.infra.AndroidFuture;
 import com.android.internal.util.DumpUtils;
@@ -1439,6 +1440,13 @@ public class TrustManagerService extends SystemService {
         if (biometricManager == null) {
             return new long[0];
         }
+        if (android.security.Flags.fixUnlockedDeviceRequiredKeysV2()
+                && mLockPatternUtils.isProfileWithUnifiedChallenge(userId)) {
+            // Profiles with unified challenge have their own set of biometrics, but the device
+            // unlock happens via the parent user.  In this case Keystore needs to be given the list
+            // of biometric SIDs from the parent user, not the profile.
+            userId = resolveProfileParent(userId);
+        }
         return biometricManager.getAuthenticatorIds(userId);
     }
 
@@ -1758,6 +1766,11 @@ public class TrustManagerService extends SystemService {
         }
     };
 
+    @VisibleForTesting
+    void waitForIdle() {
+        mHandler.runWithScissors(() -> {}, 0);
+    }
+
     private boolean isTrustUsuallyManagedInternal(int userId) {
         synchronized (mTrustUsuallyManagedForUser) {
             int i = mTrustUsuallyManagedForUser.indexOfKey(userId);
@@ -1878,7 +1891,8 @@ public class TrustManagerService extends SystemService {
         };
     }
 
-    private final PackageMonitor mPackageMonitor = new PackageMonitor() {
+    @VisibleForTesting
+    final PackageMonitor mPackageMonitor = new PackageMonitor() {
         @Override
         public void onSomePackagesChanged() {
             refreshAgentList(UserHandle.USER_ALL);

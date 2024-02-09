@@ -16,6 +16,7 @@
 
 package com.android.server.credentials;
 
+import android.Manifest;
 import android.annotation.Nullable;
 import android.content.ComponentName;
 import android.content.Context;
@@ -23,13 +24,16 @@ import android.credentials.CredentialProviderInfo;
 import android.credentials.GetCandidateCredentialsException;
 import android.credentials.GetCandidateCredentialsResponse;
 import android.credentials.GetCredentialRequest;
+import android.credentials.GetCredentialResponse;
 import android.credentials.IGetCandidateCredentialsCallback;
 import android.credentials.ui.GetCredentialProviderData;
 import android.credentials.ui.ProviderData;
 import android.credentials.ui.RequestInfo;
 import android.os.CancellationSignal;
+import android.os.IBinder;
 import android.os.RemoteException;
 import android.service.credentials.CallingAppInfo;
+import android.service.credentials.PermissionUtils;
 import android.util.Slog;
 
 import java.util.ArrayList;
@@ -42,18 +46,32 @@ import java.util.Set;
  */
 public class GetCandidateRequestSession extends RequestSession<GetCredentialRequest,
         IGetCandidateCredentialsCallback, GetCandidateCredentialsResponse>
-        implements ProviderSession.ProviderInternalCallback<GetCandidateCredentialsResponse> {
+        implements ProviderSession.ProviderInternalCallback<GetCredentialResponse> {
     private static final String TAG = "GetCandidateRequestSession";
+
+    private static final String SESSION_ID_KEY = "autofill_session_id";
+    private static final String REQUEST_ID_KEY = "autofill_request_id";
+
+    private final IBinder mClientBinder;
+    private final int mAutofillSessionId;
+    private final int mAutofillRequestId;
 
     public GetCandidateRequestSession(
             Context context, SessionLifetime sessionCallback,
             Object lock, int userId, int callingUid,
             IGetCandidateCredentialsCallback callback, GetCredentialRequest request,
             CallingAppInfo callingAppInfo, Set<ComponentName> enabledProviders,
-            CancellationSignal cancellationSignal) {
+            CancellationSignal cancellationSignal,
+            IBinder clientBinder) {
         super(context, sessionCallback, lock, userId, callingUid, request, callback,
                 RequestInfo.TYPE_GET, callingAppInfo, enabledProviders,
-                cancellationSignal, 0L);
+                cancellationSignal, 0L, /*shouldBindClientToDeath=*/ false);
+        mClientBinder = clientBinder;
+        mAutofillSessionId = request.getData().getInt(SESSION_ID_KEY, -1);
+        mAutofillRequestId = request.getData().getInt(REQUEST_ID_KEY, -1);
+        if (mClientBinder != null) {
+            setUpClientCallbackListener(mClientBinder);
+        }
     }
 
     /**
@@ -92,12 +110,26 @@ public class GetCandidateRequestSession extends RequestSession<GetCredentialRequ
             return;
         }
 
+        cancelExistingPendingIntent();
+        mPendingIntent = mCredentialManagerUi.createPendingIntent(
+                RequestInfo.newGetRequestInfo(
+                        mRequestId, mClientRequest, mClientAppInfo.getPackageName(),
+                        PermissionUtils.hasPermission(mContext, mClientAppInfo.getPackageName(),
+                                Manifest.permission.CREDENTIAL_MANAGER_SET_ALLOWED_PROVIDERS)),
+                providerDataList,
+                /*isRequestForAllOptions=*/ true);
+
         List<GetCredentialProviderData> candidateProviderDataList = new ArrayList<>();
         for (ProviderData providerData : providerDataList) {
             candidateProviderDataList.add((GetCredentialProviderData) (providerData));
         }
-        respondToClientWithResponseAndFinish(new GetCandidateCredentialsResponse(
-                candidateProviderDataList));
+
+        try {
+            invokeClientCallbackSuccess(new GetCandidateCredentialsResponse(
+                    candidateProviderDataList, mPendingIntent));
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Issue while responding to client with error : " + e);
+        }
     }
 
     @Override
@@ -115,17 +147,27 @@ public class GetCandidateRequestSession extends RequestSession<GetCredentialRequ
     @Override
     public void onFinalErrorReceived(ComponentName componentName, String errorType,
             String message) {
-        // Not applicable for session without UI
+        respondToClientWithErrorAndFinish(errorType, message);
     }
 
     @Override
     public void onUiCancellation(boolean isUserCancellation) {
-        // Not applicable for session without UI
+        String exception = GetCandidateCredentialsException.TYPE_USER_CANCELED;
+        String message = "User cancelled the selector";
+        if (!isUserCancellation) {
+            exception = GetCandidateCredentialsException.TYPE_INTERRUPTED;
+            message = "The UI was interrupted - please try again.";
+        }
+        mRequestSessionMetric.collectFrameworkException(exception);
+        respondToClientWithErrorAndFinish(exception, message);
     }
 
     @Override
     public void onUiSelectorInvocationFailure() {
-        // Not applicable for session without UI
+        String exception = GetCandidateCredentialsException.TYPE_NO_CREDENTIAL;
+        mRequestSessionMetric.collectFrameworkException(exception);
+        respondToClientWithErrorAndFinish(exception,
+                "No credentials available.");
     }
 
     @Override
@@ -151,7 +193,23 @@ public class GetCandidateRequestSession extends RequestSession<GetCredentialRequ
 
     @Override
     public void onFinalResponseReceived(ComponentName componentName,
-            GetCandidateCredentialsResponse response) {
-        // Not applicable for session without UI
+            GetCredentialResponse response) {
+        Slog.d(TAG, "onFinalResponseReceived");
+        respondToClientWithResponseAndFinish(new GetCandidateCredentialsResponse(response));
+    }
+
+    /**
+     * Returns autofill session id. Returns -1 if unavailable.
+     */
+    public int getAutofillSessionId() {
+        return mAutofillSessionId;
+    }
+
+    /**
+     * Returns autofill request id. Returns -1 if unavailable.
+     */
+    public int getAutofillRequestId() {
+        return mAutofillRequestId;
+
     }
 }

@@ -44,10 +44,12 @@ import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICA
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICATION_PANEL_VISIBLE
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_QUICK_SETTINGS_EXPANDED
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING
+import com.android.systemui.statusbar.NotificationShadeWindowController
 import com.android.systemui.statusbar.notification.stack.shared.flexiNotifsEnabled
 import com.android.systemui.util.asIndenting
 import com.android.systemui.util.printSection
 import com.android.systemui.util.println
+import dagger.Lazy
 import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -80,8 +82,9 @@ constructor(
     private val sceneLogger: SceneLogger,
     @FalsingCollectorActual private val falsingCollector: FalsingCollector,
     private val powerInteractor: PowerInteractor,
-    private val simBouncerInteractor: SimBouncerInteractor,
-    private val authenticationInteractor: AuthenticationInteractor,
+    private val simBouncerInteractor: Lazy<SimBouncerInteractor>,
+    private val authenticationInteractor: Lazy<AuthenticationInteractor>,
+    private val windowController: NotificationShadeWindowController,
 ) : CoreStartable {
 
     override fun start() {
@@ -91,6 +94,7 @@ constructor(
             automaticallySwitchScenes()
             hydrateSystemUiState()
             collectFalsingSignals()
+            hydrateWindowFocus()
         } else {
             sceneLogger.logFrameworkEnabled(
                 isEnabled = false,
@@ -152,7 +156,7 @@ constructor(
             }
         }
         applicationScope.launch {
-            simBouncerInteractor.isAnySimSecure.collect { isAnySimLocked ->
+            simBouncerInteractor.get().isAnySimSecure.collect { isAnySimLocked ->
                 val canSwipeToEnter = deviceEntryInteractor.canSwipeToEnter.value
                 val isUnlocked = deviceEntryInteractor.isUnlocked.value
 
@@ -166,15 +170,17 @@ constructor(
                     isUnlocked && canSwipeToEnter == false -> {
                         switchToScene(
                             targetSceneKey = SceneKey.Gone,
-                            loggingReason = "All SIM cards unlocked and device already" +
-                                " unlocked and lockscreen doesn't require a swipe to dismiss."
+                            loggingReason =
+                                "All SIM cards unlocked and device already" +
+                                    " unlocked and lockscreen doesn't require a swipe to dismiss."
                         )
                     }
                     else -> {
                         switchToScene(
                             targetSceneKey = SceneKey.Lockscreen,
-                            loggingReason = "All SIM cards unlocked and device still locked" +
-                                " or lockscreen still requires a swipe to dismiss."
+                            loggingReason =
+                                "All SIM cards unlocked and device still locked" +
+                                    " or lockscreen still requires a swipe to dismiss."
                         )
                     }
                 }
@@ -262,7 +268,7 @@ constructor(
                                     " to swipe up on lockscreen to enter.",
                         )
                     } else if (
-                        authenticationInteractor.getAuthenticationMethod() ==
+                        authenticationInteractor.get().getAuthenticationMethod() ==
                             AuthenticationMethodModel.Sim
                     ) {
                         switchToScene(
@@ -341,6 +347,20 @@ constructor(
                     } else {
                         falsingCollector.onBouncerHidden()
                     }
+                }
+        }
+    }
+
+    /** Keeps the focus state of the window view up-to-date. */
+    private fun hydrateWindowFocus() {
+        applicationScope.launch {
+            sceneInteractor.transitionState
+                .mapNotNull { transitionState ->
+                    (transitionState as? ObservableTransitionState.Idle)?.scene
+                }
+                .distinctUntilChanged()
+                .collect { sceneKey ->
+                    windowController.setNotificationShadeFocusable(sceneKey != SceneKey.Gone)
                 }
         }
     }

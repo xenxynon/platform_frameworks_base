@@ -16,6 +16,7 @@
 
 package android.view;
 
+import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.content.pm.ActivityInfo.OVERRIDE_SANDBOX_VIEW_BOUNDS_APIS;
 import static android.graphics.HardwareRenderer.SYNC_CONTEXT_IS_STOPPED;
 import static android.graphics.HardwareRenderer.SYNC_LOST_SURFACE_REWARD_IF_FOUND;
@@ -25,6 +26,7 @@ import static android.view.Display.INVALID_DISPLAY;
 import static android.view.InputDevice.SOURCE_CLASS_NONE;
 import static android.view.InsetsSource.ID_IME;
 import static android.view.Surface.FRAME_RATE_CATEGORY_HIGH;
+import static android.view.Surface.FRAME_RATE_CATEGORY_HIGH_HINT;
 import static android.view.Surface.FRAME_RATE_CATEGORY_NO_PREFERENCE;
 import static android.view.View.PFLAG_DRAW_ANIMATION;
 import static android.view.View.SYSTEM_UI_FLAG_FULLSCREEN;
@@ -86,6 +88,7 @@ import static android.view.WindowManager.PROPERTY_COMPAT_ALLOW_SANDBOXING_VIEW_B
 import static android.view.WindowManagerGlobal.RELAYOUT_RES_CANCEL_AND_REDRAW;
 import static android.view.WindowManagerGlobal.RELAYOUT_RES_CONSUME_ALWAYS_SYSTEM_BARS;
 import static android.view.WindowManagerGlobal.RELAYOUT_RES_SURFACE_CHANGED;
+import static android.view.accessibility.Flags.fixMergedContentChangeEvent;
 import static android.view.accessibility.Flags.forceInvertColor;
 import static android.view.accessibility.Flags.reduceWindowContentChangedEventThrottle;
 import static android.view.inputmethod.InputMethodEditorTraceProto.InputMethodClientsTraceProto.ClientSideProto.IME_FOCUS_CONTROLLER;
@@ -111,6 +114,7 @@ import android.app.ICompatCameraControlCallback;
 import android.app.ResourcesManager;
 import android.app.WindowConfiguration;
 import android.app.compat.CompatChanges;
+import android.app.servertransaction.WindowStateResizeItem;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ClipData;
 import android.content.ClipDescription;
@@ -210,7 +214,6 @@ import android.view.animation.Interpolator;
 import android.view.autofill.AutofillManager;
 import android.view.contentcapture.ContentCaptureManager;
 import android.view.contentcapture.ContentCaptureSession;
-import android.view.contentcapture.MainContentCaptureSession;
 import android.view.inputmethod.ImeTracker;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Scroller;
@@ -237,6 +240,7 @@ import com.android.internal.policy.PhoneFallbackEventHandler;
 import com.android.internal.view.BaseSurfaceHolder;
 import com.android.internal.view.RootViewSurfaceTaker;
 import com.android.internal.view.SurfaceCallbackHelper;
+import com.android.modules.expresslog.Counter;
 import com.android.window.flags.Flags;
 
 import java.io.IOException;
@@ -254,7 +258,6 @@ import java.util.Queue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.function.Predicate;
-
 /**
  * The top of a view hierarchy, implementing the needed protocol between View
  * and the WindowManager.  This is for the most part an internal implementation
@@ -286,6 +289,7 @@ public final class ViewRootImpl implements ViewParent,
     private static final boolean DEBUG_TOUCH_NAVIGATION = false || LOCAL_LOGV;
     private static final boolean DEBUG_BLAST = false || LOCAL_LOGV;
     private static final int LOGTAG_INPUT_FOCUS = 62001;
+    private static final int LOGTAG_VIEWROOT_DRAW_EVENT = 60004;
 
     /**
      * Set to false if we do not want to use the multi threaded renderer even though
@@ -830,6 +834,8 @@ public final class ViewRootImpl implements ViewParent,
     private boolean mInsetsAnimationRunning;
 
     private long mPreviousFrameDrawnTime = -1;
+    // The largest view size percentage to the display size. Used on trace to collect metric.
+    private float mLargestChildPercentage = 0.0f;
 
     /**
      * The resolved pointer icon type requested by this window.
@@ -1008,8 +1014,10 @@ public final class ViewRootImpl implements ViewParent,
     // Used to check if there were any view invalidations in
     // the previous time frame (FRAME_RATE_IDLENESS_REEVALUATE_TIME).
     private boolean mHasInvalidation = false;
-    // Used to check if it is in the touch boosting period.
+    // Used to check if it is in the frame rate boosting period.
     private boolean mIsFrameRateBoosting = false;
+    // Used to check if it is in touch boosting period.
+    private boolean mIsTouchBoosting = false;
     // Used to check if there is a message in the message queue
     // for idleness handling.
     private boolean mHasIdledMessage = false;
@@ -1069,6 +1077,7 @@ public final class ViewRootImpl implements ViewParent,
 
     private String mTag = TAG;
     private String mFpsTraceName;
+    private String mLargestViewTraceName;
 
     boolean mHaveMoveEvent = false;
 
@@ -1331,6 +1340,7 @@ public final class ViewRootImpl implements ViewParent,
                 attrs = mWindowAttributes;
                 setTag();
                 mFpsTraceName = "FPS of " + getTitle();
+                mLargestViewTraceName = "Largest view percentage(per hundred) of " + getTitle();
 
                 if (DEBUG_KEEP_SCREEN_ON && (mClientWindowLayoutFlags
                         & WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
@@ -2021,26 +2031,24 @@ public final class ViewRootImpl implements ViewParent,
     }
 
     /** Handles messages {@link #MSG_RESIZED} and {@link #MSG_RESIZED_REPORT}. */
-    private void handleResized(int msg, SomeArgs args) {
+    private void handleResized(ClientWindowFrames frames, boolean reportDraw,
+            MergedConfiguration mergedConfiguration, InsetsState insetsState, boolean forceLayout,
+            boolean alwaysConsumeSystemBars, int displayId, int syncSeqId, boolean dragResizing) {
         if (!mAdded) {
             return;
         }
 
-        final ClientWindowFrames frames = (ClientWindowFrames) args.arg1;
-        final MergedConfiguration mergedConfiguration = (MergedConfiguration) args.arg2;
         CompatibilityInfo.applyOverrideScaleIfNeeded(mergedConfiguration);
-        final boolean forceNextWindowRelayout = args.argi1 != 0;
-        final int displayId = args.argi3;
-        final boolean dragResizing = args.argi5 != 0;
-
         final Rect frame = frames.frame;
         final Rect displayFrame = frames.displayFrame;
         final Rect attachedFrame = frames.attachedFrame;
         if (mTranslator != null) {
+            mTranslator.translateInsetsStateInScreenToAppWindow(insetsState);
             mTranslator.translateRectInScreenToAppWindow(frame);
             mTranslator.translateRectInScreenToAppWindow(displayFrame);
             mTranslator.translateRectInScreenToAppWindow(attachedFrame);
         }
+        mInsetsController.onStateChanged(insetsState);
         final float compatScale = frames.compatScale;
         final boolean frameChanged = !mWinFrame.equals(frame);
         final boolean configChanged = !mLastReportedMergedConfiguration.equals(mergedConfiguration);
@@ -2049,8 +2057,8 @@ public final class ViewRootImpl implements ViewParent,
         final boolean displayChanged = mDisplay.getDisplayId() != displayId;
         final boolean compatScaleChanged = mTmpFrames.compatScale != compatScale;
         final boolean dragResizingChanged = mPendingDragResizing != dragResizing;
-        if (msg == MSG_RESIZED && !frameChanged && !configChanged && !attachedFrameChanged
-                && !displayChanged && !forceNextWindowRelayout
+        if (!reportDraw && !frameChanged && !configChanged && !attachedFrameChanged
+                && !displayChanged && !forceLayout
                 && !compatScaleChanged && !dragResizingChanged) {
             return;
         }
@@ -2082,11 +2090,11 @@ public final class ViewRootImpl implements ViewParent,
             }
         }
 
-        mForceNextWindowRelayout |= forceNextWindowRelayout;
-        mPendingAlwaysConsumeSystemBars = args.argi2 != 0;
-        mSyncSeqId = args.argi4 > mSyncSeqId ? args.argi4 : mSyncSeqId;
+        mForceNextWindowRelayout |= forceLayout;
+        mPendingAlwaysConsumeSystemBars = alwaysConsumeSystemBars;
+        mSyncSeqId = syncSeqId > mSyncSeqId ? syncSeqId : mSyncSeqId;
 
-        if (msg == MSG_RESIZED_REPORT) {
+        if (reportDraw) {
             reportNextDraw("resized");
         }
 
@@ -4119,7 +4127,7 @@ public final class ViewRootImpl implements ViewParent,
 
         final ContentCaptureManager manager = mAttachInfo.mContentCaptureManager;
         if (manager != null && mAttachInfo.mContentCaptureEvents != null) {
-            final MainContentCaptureSession session = manager.getMainContentCaptureSession();
+            final ContentCaptureSession session = manager.getMainContentCaptureSession();
             session.notifyContentCaptureEvents(mAttachInfo.mContentCaptureEvents);
         }
         mAttachInfo.mContentCaptureEvents = null;
@@ -4758,16 +4766,14 @@ public final class ViewRootImpl implements ViewParent,
         long fps = NANOS_PER_SEC / timeDiff;
         Trace.setCounter(mFpsTraceName, fps);
         mPreviousFrameDrawnTime = expectedDrawnTime;
+
+        long percentage = (long) (mLargestChildPercentage * 100);
+        Trace.setCounter(mLargestViewTraceName, percentage);
+        mLargestChildPercentage = 0.0f;
     }
 
     private void reportDrawFinished(@Nullable Transaction t, int seqId) {
-        if (DEBUG_BLAST) {
-            Log.d(mTag, "reportDrawFinished");
-        }
-
-        if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
-            Trace.instant(Trace.TRACE_TAG_VIEW, "reportDrawFinished " + mTag + " seqId=" + seqId);
-        }
+        logAndTrace("reportDrawFinished seqId=" + seqId);
         try {
             mWindowSession.finishDrawing(mWindow, t, seqId);
         } catch (RemoteException e) {
@@ -5032,7 +5038,7 @@ public final class ViewRootImpl implements ViewParent,
 
             // Initial dispatch of window bounds to content capture
             if (mAttachInfo.mContentCaptureManager != null) {
-                MainContentCaptureSession session =
+                ContentCaptureSession session =
                         mAttachInfo.mContentCaptureManager.getMainContentCaptureSession();
                 session.notifyWindowBoundsChanged(session.getId(),
                         getConfiguration().windowConfiguration.getBounds());
@@ -5078,6 +5084,7 @@ public final class ViewRootImpl implements ViewParent,
         if (DEBUG_FPS) {
             trackFPS();
         }
+
         if (sToolkitMetricsForFrameRateDecisionFlagValue) {
             collectFrameRateDecisionMetrics();
         }
@@ -6242,8 +6249,17 @@ public final class ViewRootImpl implements ViewParent,
                 case MSG_RESIZED:
                 case MSG_RESIZED_REPORT: {
                     final SomeArgs args = (SomeArgs) msg.obj;
-                    mInsetsController.onStateChanged((InsetsState) args.arg3);
-                    handleResized(msg.what, args);
+                    final ClientWindowFrames frames = (ClientWindowFrames) args.arg1;
+                    final boolean reportDraw = msg.what == MSG_RESIZED_REPORT;
+                    final MergedConfiguration mergedConfiguration = (MergedConfiguration) args.arg2;
+                    final InsetsState insetsState = (InsetsState) args.arg3;
+                    final boolean forceLayout = args.argi1 != 0;
+                    final boolean alwaysConsumeSystemBars = args.argi2 != 0;
+                    final int displayId = args.argi3;
+                    final int syncSeqId = args.argi4;
+                    final boolean dragResizing = args.argi5 != 0;
+                    handleResized(frames, reportDraw, mergedConfiguration, insetsState, forceLayout,
+                            alwaysConsumeSystemBars, displayId, syncSeqId, dragResizing);
                     args.recycle();
                     break;
                 }
@@ -6427,11 +6443,12 @@ public final class ViewRootImpl implements ViewParent,
                      * Lower the frame rate after the boosting period (FRAME_RATE_TOUCH_BOOST_TIME).
                      */
                     mIsFrameRateBoosting = false;
+                    mIsTouchBoosting = false;
                     setPreferredFrameRateCategory(Math.max(mPreferredFrameRateCategory,
                             mLastPreferredFrameRateCategory));
                     break;
                 case MSG_CHECK_INVALIDATION_IDLE:
-                    if (!mHasInvalidation && !mIsFrameRateBoosting) {
+                    if (!mHasInvalidation && !mIsFrameRateBoosting && !mIsTouchBoosting) {
                         mPreferredFrameRateCategory = FRAME_RATE_CATEGORY_NO_PREFERENCE;
                         setPreferredFrameRateCategory(mPreferredFrameRateCategory);
                         mHasIdledMessage = false;
@@ -6946,7 +6963,11 @@ public final class ViewRootImpl implements ViewParent,
         }
 
         private int doOnBackKeyEvent(KeyEvent keyEvent) {
-            OnBackInvokedCallback topCallback = getOnBackInvokedDispatcher().getTopCallback();
+            WindowOnBackInvokedDispatcher dispatcher = getOnBackInvokedDispatcher();
+            OnBackInvokedCallback topCallback = dispatcher.getTopCallback();
+            if (dispatcher.isDispatching()) {
+                return FINISH_NOT_HANDLED;
+            }
             if (topCallback instanceof OnBackAnimationCallback) {
                 final OnBackAnimationCallback animationCallback =
                         (OnBackAnimationCallback) topCallback;
@@ -7235,7 +7256,7 @@ public final class ViewRootImpl implements ViewParent,
         }
 
         private boolean performFocusNavigation(KeyEvent event) {
-            int direction = 0;
+            @FocusDirection int direction = 0;
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_LEFT:
                     if (event.hasNoModifiers()) {
@@ -7287,6 +7308,8 @@ public final class ViewRootImpl implements ViewParent,
                                             isFastScrolling));
                             return true;
                         }
+                    } else if (moveFocusToAdjacentWindow(direction)) {
+                        return true;
                     }
 
                     // Give the focused view a last chance to handle the dpad key.
@@ -7296,10 +7319,24 @@ public final class ViewRootImpl implements ViewParent,
                 } else {
                     if (mView.restoreDefaultFocus()) {
                         return true;
+                    } else if (moveFocusToAdjacentWindow(direction)) {
+                        return true;
                     }
                 }
             }
             return false;
+        }
+
+        private boolean moveFocusToAdjacentWindow(@FocusDirection int direction) {
+            if (getConfiguration().windowConfiguration.getWindowingMode()
+                    != WINDOWING_MODE_MULTI_WINDOW) {
+                return false;
+            }
+            try {
+                return mWindowSession.moveFocusToAdjacentWindow(mWindow, direction);
+            } catch (RemoteException e) {
+                return false;
+            }
         }
 
         private boolean performKeyboardGroupNavigation(int direction) {
@@ -7437,7 +7474,7 @@ public final class ViewRootImpl implements ViewParent,
             // For the variable refresh rate project
             if (handled && shouldTouchBoost(action, mWindowAttributes.type)) {
                 // set the frame rate to the maximum value.
-                mIsFrameRateBoosting = true;
+                mIsTouchBoosting = true;
                 setPreferredFrameRateCategory(mPreferredFrameRateCategory);
             }
             /**
@@ -8810,7 +8847,7 @@ public final class ViewRootImpl implements ViewParent,
         mSurfaceControl.setTransformHint(transformHint);
 
         if (mAttachInfo.mContentCaptureManager != null) {
-            MainContentCaptureSession mainSession = mAttachInfo.mContentCaptureManager
+            ContentCaptureSession mainSession = mAttachInfo.mContentCaptureManager
                     .getMainContentCaptureSession();
             mainSession.notifyWindowBoundsChanged(mainSession.getId(),
                     getConfiguration().windowConfiguration.getBounds());
@@ -9392,20 +9429,8 @@ public final class ViewRootImpl implements ViewParent,
             boolean alwaysConsumeSystemBars, int displayId, int syncSeqId, boolean dragResizing) {
         Message msg = mHandler.obtainMessage(reportDraw ? MSG_RESIZED_REPORT : MSG_RESIZED);
         SomeArgs args = SomeArgs.obtain();
-        final boolean sameProcessCall = (Binder.getCallingPid() == android.os.Process.myPid());
-        if (sameProcessCall) {
-            insetsState = new InsetsState(insetsState, true /* copySource */);
-        }
-        if (mTranslator != null) {
-            mTranslator.translateInsetsStateInScreenToAppWindow(insetsState);
-        }
-        if (insetsState.isSourceOrDefaultVisible(ID_IME, Type.ime())) {
-            ImeTracing.getInstance().triggerClientDump("ViewRootImpl#dispatchResized",
-                    getInsetsController().getHost().getInputMethodManager(), null /* icProto */);
-        }
-        args.arg1 = sameProcessCall ? new ClientWindowFrames(frames) : frames;
-        args.arg2 = sameProcessCall && mergedConfiguration != null
-                ? new MergedConfiguration(mergedConfiguration) : mergedConfiguration;
+        args.arg1 = frames;
+        args.arg2 = mergedConfiguration;
         args.arg3 = insetsState;
         args.argi1 = forceLayout ? 1 : 0;
         args.argi2 = alwaysConsumeSystemBars ? 1 : 0;
@@ -9723,11 +9748,27 @@ public final class ViewRootImpl implements ViewParent,
             } else {
                 q.mReceiver.finishInputEvent(q.mEvent, handled);
             }
+            if (q.mEvent instanceof KeyEvent) {
+                logHandledSystemKey((KeyEvent) q.mEvent, handled);
+            }
         } else {
             q.mEvent.recycleIfNeededAfterDispatch();
         }
 
         recycleQueuedInputEvent(q);
+    }
+
+    private void logHandledSystemKey(KeyEvent event, boolean handled) {
+        final int keyCode = event.getKeyCode();
+        if (keyCode != KeyEvent.KEYCODE_STEM_PRIMARY) {
+            return;
+        }
+        if (event.isDown() && event.getRepeatCount() == 0 && handled) {
+            // Initial DOWN event is handled. Log the stem primary key press.
+            Counter.logIncrementWithUid(
+                    "input.value_app_handled_stem_primary_key_gestures_count",
+                    Process.myUid());
+        }
     }
 
     static boolean isTerminalInputEvent(InputEvent event) {
@@ -10561,6 +10602,18 @@ public final class ViewRootImpl implements ViewParent,
     }
 
     /**
+     * Checks the input event receiver for input availability.
+     * May return false negatives.
+     * @hide
+     */
+    public boolean probablyHasInput() {
+        if (mInputEventReceiver == null) {
+            return false;
+        }
+        return mInputEventReceiver.probablyHasInput();
+    }
+
+    /**
      * Adds a scroll capture callback to this window.
      *
      * @param callback the callback to add
@@ -10817,9 +10870,10 @@ public final class ViewRootImpl implements ViewParent,
         }
     }
 
-    static class W extends IWindow.Stub {
+    static class W extends IWindow.Stub implements WindowStateResizeItem.ResizeListener {
         private final WeakReference<ViewRootImpl> mViewAncestor;
         private final IWindowSession mWindowSession;
+        private boolean mIsFromResizeItem;
 
         W(ViewRootImpl viewAncestor) {
             mViewAncestor = new WeakReference<ViewRootImpl>(viewAncestor);
@@ -10827,17 +10881,46 @@ public final class ViewRootImpl implements ViewParent,
         }
 
         @Override
+        public void onExecutingWindowStateResizeItem() {
+            mIsFromResizeItem = true;
+        }
+
+        @Override
         public void resized(ClientWindowFrames frames, boolean reportDraw,
                 MergedConfiguration mergedConfiguration, InsetsState insetsState,
                 boolean forceLayout, boolean alwaysConsumeSystemBars, int displayId, int syncSeqId,
                 boolean dragResizing) {
+            final boolean isFromResizeItem = mIsFromResizeItem;
+            mIsFromResizeItem = false;
             // Although this is a AIDL method, it will only be triggered in local process through
             // either WindowStateResizeItem or WindowlessWindowManager.
             final ViewRootImpl viewAncestor = mViewAncestor.get();
-            if (viewAncestor != null) {
-                viewAncestor.dispatchResized(frames, reportDraw, mergedConfiguration, insetsState,
-                        forceLayout, alwaysConsumeSystemBars, displayId, syncSeqId, dragResizing);
+            if (viewAncestor == null) {
+                return;
             }
+            if (insetsState.isSourceOrDefaultVisible(ID_IME, Type.ime())) {
+                ImeTracing.getInstance().triggerClientDump("ViewRootImpl.W#resized",
+                        viewAncestor.getInsetsController().getHost().getInputMethodManager(),
+                        null /* icProto */);
+            }
+            // If the UI thread is the same as the current thread that is dispatching
+            // WindowStateResizeItem, then it can run directly.
+            if (isFromResizeItem && viewAncestor.mHandler.getLooper()
+                    == ActivityThread.currentActivityThread().getLooper()) {
+                viewAncestor.handleResized(frames, reportDraw, mergedConfiguration, insetsState,
+                        forceLayout, alwaysConsumeSystemBars, displayId, syncSeqId, dragResizing);
+                return;
+            }
+            // The the parameters from WindowStateResizeItem are already copied.
+            final boolean needCopy =
+                    !isFromResizeItem && (Binder.getCallingPid() == Process.myPid());
+            if (needCopy) {
+                insetsState = new InsetsState(insetsState, true /* copySource */);
+                frames = new ClientWindowFrames(frames);
+                mergedConfiguration = new MergedConfiguration(mergedConfiguration);
+            }
+            viewAncestor.dispatchResized(frames, reportDraw, mergedConfiguration, insetsState,
+                    forceLayout, alwaysConsumeSystemBars, displayId, syncSeqId, dragResizing);
         }
 
         @Override
@@ -11464,6 +11547,15 @@ public final class ViewRootImpl implements ViewParent,
                 event.setContentChangeTypes(mChangeTypes);
                 if (mAction.isPresent()) event.setAction(mAction.getAsInt());
                 if (AccessibilityEvent.DEBUG_ORIGIN) event.originStackTrace = mOrigin;
+
+                if (fixMergedContentChangeEvent()) {
+                    if ((mChangeTypes & AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE) != 0) {
+                        final View importantParent = source.getSelfOrParentImportantForA11y();
+                        if (importantParent != null) {
+                            source = importantParent;
+                        }
+                    }
+                }
                 source.sendAccessibilityEventUnchecked(event);
             } else {
                 mLastEventTimeMillis = 0;
@@ -11498,14 +11590,29 @@ public final class ViewRootImpl implements ViewParent,
             }
 
             if (mSource != null) {
-                // If there is no common predecessor, then mSource points to
-                // a removed view, hence in this case always prefer the source.
-                View predecessor = getCommonPredecessor(mSource, source);
-                if (predecessor != null) {
-                    predecessor = predecessor.getSelfOrParentImportantForA11y();
+                if (fixMergedContentChangeEvent()) {
+                    View newSource = getCommonPredecessor(mSource, source);
+                    if (newSource == null) {
+                        // If there is no common predecessor, then mSource points to
+                        // a removed view, hence in this case always prefer the source.
+                        newSource = source;
+                    }
+
+                    mChangeTypes |= changeType;
+                    if (mSource != newSource) {
+                        mChangeTypes |= AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE;
+                        mSource = newSource;
+                    }
+                } else {
+                    // If there is no common predecessor, then mSource points to
+                    // a removed view, hence in this case always prefer the source.
+                    View predecessor = getCommonPredecessor(mSource, source);
+                    if (predecessor != null) {
+                        predecessor = predecessor.getSelfOrParentImportantForA11y();
+                    }
+                    mSource = (predecessor != null) ? predecessor : source;
+                    mChangeTypes |= changeType;
                 }
-                mSource = (predecessor != null) ? predecessor : source;
-                mChangeTypes |= changeType;
 
                 final int performingAction = mAccessibilityManager.getPerformingAction();
                 if (performingAction != 0) {
@@ -11923,6 +12030,12 @@ public final class ViewRootImpl implements ViewParent,
 
                 if (syncBuffer) {
                     boolean result = mBlastBufferQueue.syncNextTransaction(transaction -> {
+                        Runnable timeoutRunnable = () -> Log.e(mTag,
+                                "Failed to submit the sync transaction after 4s. Likely to ANR "
+                                        + "soon");
+                        mHandler.postDelayed(timeoutRunnable, 4L * Build.HW_TIMEOUT_MULTIPLIER);
+                        transaction.addTransactionCommittedListener(mSimpleExecutor,
+                                () -> mHandler.removeCallbacks(timeoutRunnable));
                         surfaceSyncGroup.addTransaction(transaction);
                         surfaceSyncGroup.markSyncReady();
                     });
@@ -12118,7 +12231,10 @@ public final class ViewRootImpl implements ViewParent,
         if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
             Trace.instant(Trace.TRACE_TAG_VIEW, mTag + "-" + msg);
         }
-        Log.d(mTag, msg);
+        if (DEBUG_BLAST) {
+            Log.d(mTag, msg);
+        }
+        EventLog.writeEvent(LOGTAG_VIEWROOT_DRAW_EVENT, mTag, msg);
     }
 
     private void setPreferredFrameRateCategory(int preferredFrameRateCategory) {
@@ -12126,8 +12242,16 @@ public final class ViewRootImpl implements ViewParent,
             return;
         }
 
-        int frameRateCategory = mIsFrameRateBoosting || mInsetsAnimationRunning
-                ? FRAME_RATE_CATEGORY_HIGH : preferredFrameRateCategory;
+        int frameRateCategory = mIsTouchBoosting
+                ? FRAME_RATE_CATEGORY_HIGH_HINT : preferredFrameRateCategory;
+
+        // FRAME_RATE_CATEGORY_HIGH has a higher precedence than FRAME_RATE_CATEGORY_HIGH_HINT
+        // For now, FRAME_RATE_CATEGORY_HIGH_HINT is used for boosting with user interaction.
+        // FRAME_RATE_CATEGORY_HIGH is for boosting without user interaction
+        // (e.g., Window Initialization).
+        if (mIsFrameRateBoosting || mInsetsAnimationRunning) {
+            frameRateCategory = FRAME_RATE_CATEGORY_HIGH;
+        }
 
         try {
             if (mLastPreferredFrameRateCategory != frameRateCategory) {
@@ -12186,7 +12310,8 @@ public final class ViewRootImpl implements ViewParent,
                 || motionEventAction == MotionEvent.ACTION_UP;
         boolean undesiredType = windowType == TYPE_INPUT_METHOD;
         // use toolkitSetFrameRate flag to gate the change
-        return desiredAction && !undesiredType && sToolkitSetFrameRateReadOnlyFlagValue;
+        return desiredAction && !undesiredType && sToolkitSetFrameRateReadOnlyFlagValue
+                && getFrameRateBoostOnTouchEnabled();
     }
 
     /**
@@ -12261,6 +12386,15 @@ public final class ViewRootImpl implements ViewParent,
         return mIsFrameRateBoosting;
     }
 
+    /**
+     * Get the value of mFrameRateBoostOnTouchEnabled
+     * Can be used to checked if touch boost is enabled. The default value is true.
+     */
+    @VisibleForTesting
+    public boolean getFrameRateBoostOnTouchEnabled() {
+        return mWindowAttributes.getFrameRateBoostOnTouchEnabled();
+    }
+
     private void boostFrameRate(int boostTimeOut) {
         mIsFrameRateBoosting = true;
         setPreferredFrameRateCategory(mPreferredFrameRateCategory);
@@ -12289,5 +12423,11 @@ public final class ViewRootImpl implements ViewParent,
      */
     void setBackKeyCallbackForWindowlessWindow(@NonNull Predicate<KeyEvent> callback) {
         mWindowlessBackKeyCallback = callback;
+    }
+
+    void recordViewPercentage(float percentage) {
+        if (!Trace.isEnabled()) return;
+        // Record the largest view of percentage to the display size.
+        mLargestChildPercentage = Math.max(percentage, mLargestChildPercentage);
     }
 }

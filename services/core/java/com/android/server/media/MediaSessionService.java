@@ -29,6 +29,8 @@ import static com.android.server.media.MediaKeyDispatcher.isTripleTapOverridden;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
+import android.app.ActivityManagerInternal;
+import android.app.ForegroundServiceDelegationOptions;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -59,6 +61,7 @@ import android.media.session.ISessionManager;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
 import android.media.session.MediaSessionManager;
+import android.media.session.PlaybackState;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
@@ -86,12 +89,10 @@ import android.view.ViewConfiguration;
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.media.flags.Flags;
-import com.android.server.LocalManagerRegistry;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.Watchdog;
 import com.android.server.Watchdog.Monitor;
-import com.android.server.am.ActivityManagerLocal;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -143,7 +144,7 @@ public class MediaSessionService extends SystemService implements Monitor {
     private KeyguardManager mKeyguardManager;
     private AudioManager mAudioManager;
     private boolean mHasFeatureLeanback;
-    private ActivityManagerLocal mActivityManagerLocal;
+    private ActivityManagerInternal mActivityManagerInternal;
 
     // The FullUserRecord of the current users. (i.e. The foreground user that isn't a profile)
     // It's always not null after the MediaSessionService is started.
@@ -228,7 +229,7 @@ public class MediaSessionService extends SystemService implements Monitor {
                 NotificationManager.ACTION_NOTIFICATION_LISTENER_ENABLED_CHANGED);
         mContext.registerReceiver(mNotificationListenerEnabledChangedReceiver, filter);
 
-        mActivityManagerLocal = LocalManagerRegistry.getManager(ActivityManagerLocal.class);
+        mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
     }
 
     @Override
@@ -259,7 +260,8 @@ public class MediaSessionService extends SystemService implements Monitor {
         return mGlobalPrioritySession != null && mGlobalPrioritySession.isActive();
     }
 
-    void onSessionActiveStateChanged(MediaSessionRecordImpl record) {
+    void onSessionActiveStateChanged(
+            MediaSessionRecordImpl record, @Nullable PlaybackState playbackState) {
         synchronized (mLock) {
             FullUserRecord user = getFullUserRecordLocked(record.getUserId());
             if (user == null) {
@@ -285,7 +287,10 @@ public class MediaSessionService extends SystemService implements Monitor {
                 }
                 user.mPriorityStack.onSessionActiveStateChanged(record);
             }
-
+            setForegroundServiceAllowance(
+                    record,
+                    /* allowRunningInForeground= */ record.isActive()
+                            && (playbackState == null || playbackState.isActive()));
             mHandler.postSessionsChanged(record);
         }
     }
@@ -371,8 +376,10 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
     }
 
-    void onSessionPlaybackStateChanged(MediaSessionRecordImpl record,
-            boolean shouldUpdatePriority) {
+    void onSessionPlaybackStateChanged(
+            MediaSessionRecordImpl record,
+            boolean shouldUpdatePriority,
+            @Nullable PlaybackState playbackState) {
         synchronized (mLock) {
             FullUserRecord user = getFullUserRecordLocked(record.getUserId());
             if (user == null || !user.mPriorityStack.contains(record)) {
@@ -380,6 +387,12 @@ public class MediaSessionService extends SystemService implements Monitor {
                 return;
             }
             user.mPriorityStack.onPlaybackStateChanged(record, shouldUpdatePriority);
+            if (playbackState != null) {
+                setForegroundServiceAllowance(
+                        record,
+                        /* allowRunningInForeground= */ playbackState.isActive()
+                                && record.isActive());
+            }
         }
     }
 
@@ -543,7 +556,28 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
 
         session.close();
+        setForegroundServiceAllowance(session, /* allowRunningInForeground= */ false);
         mHandler.postSessionsChanged(session);
+    }
+
+    private void setForegroundServiceAllowance(
+            MediaSessionRecordImpl record, boolean allowRunningInForeground) {
+        if (!Flags.enableNotifyingActivityManagerWithMediaSessionStatusChange()) {
+            return;
+        }
+        ForegroundServiceDelegationOptions foregroundServiceDelegationOptions =
+                record.getForegroundServiceDelegationOptions();
+        if (foregroundServiceDelegationOptions == null) {
+            // This record doesn't support FGS delegation. In practice, this is MediaSession2.
+            return;
+        }
+        if (allowRunningInForeground) {
+            mActivityManagerInternal.startForegroundServiceDelegate(
+                    foregroundServiceDelegationOptions, /* connection= */ null);
+        } else {
+            mActivityManagerInternal.stopForegroundServiceDelegate(
+                    foregroundServiceDelegationOptions);
+        }
     }
 
     void tempAllowlistTargetPkgIfPossible(int targetUid, String targetPackage,
@@ -552,18 +586,21 @@ public class MediaSessionService extends SystemService implements Monitor {
         try {
             MediaServerUtils.enforcePackageName(mContext, callingPackage, callingUid);
             if (targetUid != callingUid) {
-                boolean canAllowWhileInUse = mActivityManagerLocal
-                        .canAllowWhileInUsePermissionInFgs(callingPid, callingUid, callingPackage);
-                boolean canStartFgs = canAllowWhileInUse
-                        || mActivityManagerLocal.canStartForegroundService(callingPid, callingUid,
-                        callingPackage);
+                boolean canAllowWhileInUse =
+                        mActivityManagerInternal.canAllowWhileInUsePermissionInFgs(
+                                callingPid, callingUid, callingPackage);
+                boolean canStartFgs =
+                        canAllowWhileInUse
+                                || mActivityManagerInternal.canStartForegroundService(
+                                        callingPid, callingUid, callingPackage);
                 Log.i(TAG, "tempAllowlistTargetPkgIfPossible callingPackage:"
                         + callingPackage + " targetPackage:" + targetPackage
                         + " reason:" + reason
                         + (canAllowWhileInUse ? " [WIU]" : "")
                         + (canStartFgs ? " [FGS]" : ""));
                 if (canAllowWhileInUse) {
-                    mActivityManagerLocal.tempAllowWhileInUsePermissionInFgs(targetUid,
+                    mActivityManagerInternal.tempAllowWhileInUsePermissionInFgs(
+                            targetUid,
                             MediaSessionDeviceConfig
                                     .getMediaSessionCallbackFgsWhileInUseTempAllowDurationMs());
                 }

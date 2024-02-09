@@ -672,6 +672,13 @@ public class PackageInstaller {
     public @interface UserActionReason {}
 
     /**
+     * The unarchival status is not set.
+     *
+     * @hide
+     */
+    public static final int UNARCHIVAL_STATUS_UNSET = -1;
+
+    /**
      * The unarchival is possible and will commence.
      *
      * <p> Note that this does not mean that the unarchival has completed. This status should be
@@ -736,6 +743,7 @@ public class PackageInstaller {
      * @hide
      */
     @IntDef(value = {
+            UNARCHIVAL_STATUS_UNSET,
             UNARCHIVAL_OK,
             UNARCHIVAL_ERROR_USER_ACTION_NEEDED,
             UNARCHIVAL_ERROR_INSUFFICIENT_STORAGE,
@@ -2344,7 +2352,6 @@ public class PackageInstaller {
      * communicated.
      *
      * @param statusReceiver Callback used to notify when the operation is completed.
-     * @param flags Flags for archiving. Can be 0 or {@link PackageManager#DELETE_SHOW_DIALOG}.
      * @throws PackageManager.NameNotFoundException If {@code packageName} isn't found or not
      *                                              available to the caller or isn't archived.
      */
@@ -2352,12 +2359,11 @@ public class PackageInstaller {
             Manifest.permission.DELETE_PACKAGES,
             Manifest.permission.REQUEST_DELETE_PACKAGES})
     @FlaggedApi(Flags.FLAG_ARCHIVING)
-    public void requestArchive(@NonNull String packageName, @NonNull IntentSender statusReceiver,
-            @DeleteFlags int flags)
+    public void requestArchive(@NonNull String packageName, @NonNull IntentSender statusReceiver)
             throws PackageManager.NameNotFoundException {
         try {
             mInstaller.requestArchive(packageName, mInstallerPackageName, statusReceiver,
-                    new UserHandle(mUserId), flags);
+                    new UserHandle(mUserId));
         } catch (ParcelableException e) {
             e.maybeRethrow(PackageManager.NameNotFoundException.class);
         } catch (RemoteException e) {
@@ -2696,8 +2702,6 @@ public class PackageInstaller {
         public int developmentInstallFlags = 0;
         /** {@hide} */
         public int unarchiveId = -1;
-        /** {@hide} */
-        public IntentSender unarchiveIntentSender;
 
         private final ArrayMap<String, Integer> mPermissionStates;
 
@@ -2750,7 +2754,6 @@ public class PackageInstaller {
             applicationEnabledSettingPersistent = source.readBoolean();
             developmentInstallFlags = source.readInt();
             unarchiveId = source.readInt();
-            unarchiveIntentSender = source.readParcelable(null, IntentSender.class);
         }
 
         /** {@hide} */
@@ -2785,7 +2788,6 @@ public class PackageInstaller {
             ret.applicationEnabledSettingPersistent = applicationEnabledSettingPersistent;
             ret.developmentInstallFlags = developmentInstallFlags;
             ret.unarchiveId = unarchiveId;
-            ret.unarchiveIntentSender = unarchiveIntentSender;
             return ret;
         }
 
@@ -3495,7 +3497,6 @@ public class PackageInstaller {
                     applicationEnabledSettingPersistent);
             pw.printHexPair("developmentInstallFlags", developmentInstallFlags);
             pw.printPair("unarchiveId", unarchiveId);
-            pw.printPair("unarchiveIntentSender", unarchiveIntentSender);
             pw.println();
         }
 
@@ -3540,7 +3541,6 @@ public class PackageInstaller {
             dest.writeBoolean(applicationEnabledSettingPersistent);
             dest.writeInt(developmentInstallFlags);
             dest.writeInt(unarchiveId);
-            dest.writeParcelable(unarchiveIntentSender, flags);
         }
 
         public static final Parcelable.Creator<SessionParams>

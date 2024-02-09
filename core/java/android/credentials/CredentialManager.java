@@ -26,12 +26,14 @@ import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
+import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.IntentSender;
 import android.os.Binder;
 import android.os.CancellationSignal;
+import android.os.IBinder;
 import android.os.ICancellationSignal;
 import android.os.OutcomeReceiver;
 import android.os.RemoteException;
@@ -135,7 +137,8 @@ public final class CredentialManager {
             @Nullable CancellationSignal cancellationSignal,
             @CallbackExecutor @NonNull Executor executor,
             @NonNull OutcomeReceiver<GetCandidateCredentialsResponse,
-                    GetCandidateCredentialsException> callback
+                    GetCandidateCredentialsException> callback,
+            @NonNull IBinder clientCallback
     ) {
         requireNonNull(request, "request must not be null");
         requireNonNull(callingPackage, "callingPackage must not be null");
@@ -153,6 +156,7 @@ public final class CredentialManager {
                     mService.getCandidateCredentials(
                             request,
                             new GetCandidateCredentialsTransport(executor, callback),
+                            clientCallback,
                             callingPackage);
         } catch (RemoteException e) {
             e.rethrowFromSystemServer();
@@ -752,7 +756,10 @@ public final class CredentialManager {
         @Override
         public void onPendingIntent(PendingIntent pendingIntent) {
             try {
-                mContext.startIntentSender(pendingIntent.getIntentSender(), null, 0, 0, 0);
+                mContext.startIntentSender(pendingIntent.getIntentSender(), null, 0, 0, 0,
+                        ActivityOptions.makeBasic()
+                            .setPendingIntentBackgroundActivityStartMode(
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle());
             } catch (IntentSender.SendIntentException e) {
                 Log.e(
                         TAG,

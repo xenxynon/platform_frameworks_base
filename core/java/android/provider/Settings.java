@@ -108,10 +108,10 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.reflect.Field;
 import java.net.URISyntaxException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -1931,9 +1931,7 @@ public final class Settings {
      * A matching Activity will only be found if
      * {@link NotificationManager#areAutomaticZenRulesUserManaged()} is true.
      * <p>
-     * Input: Intent's data URI set with an application name, using the "package" schema (like
-     * "package:com.my.app").
-     * Input: The id of the rule, provided in {@link #EXTRA_AUTOMATIC_ZEN_RULE_ID}.
+     * Input: The id of the rule, provided in the {@link #EXTRA_AUTOMATIC_ZEN_RULE_ID} extra.
      * <p>
      * Output: Nothing.
      */
@@ -3178,15 +3176,7 @@ public final class Settings {
         }
 
         public void destroy() {
-            try {
-                // If this process is the system server process, mArray is the same object as
-                // the memory int array kept inside SettingsProvider, so skipping the close()
-                if (!Settings.isInSystemServer() && !mArray.isClosed()) {
-                    mArray.close();
-                }
-            } catch (IOException e) {
-                Log.e(TAG, "Error closing backing array", e);
-            }
+            maybeCloseGenerationArray(mArray);
         }
 
         @Override
@@ -3196,6 +3186,21 @@ public final class Settings {
             } finally {
                 super.finalize();
             }
+        }
+    }
+
+    private static void maybeCloseGenerationArray(@Nullable MemoryIntArray array) {
+        if (array == null) {
+            return;
+        }
+        try {
+            // If this process is the system server process, the MemoryIntArray received from Parcel
+            // is the same object as the one kept inside SettingsProvider, so skipping the close().
+            if (!Settings.isInSystemServer() && !array.isClosed()) {
+                array.close();
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Error closing the generation tracking array", e);
         }
     }
 
@@ -3498,6 +3503,8 @@ public final class Settings {
                                         mGenerationTrackers.put(name, new GenerationTracker(name,
                                                 array, index, generation,
                                                 mGenerationTrackerErrorHandler));
+                                    } else {
+                                        maybeCloseGenerationArray(array);
                                     }
                                 }
                                 if (mGenerationTrackers.get(name) != null
@@ -3585,10 +3592,12 @@ public final class Settings {
                     || applicationInfo.isSignedWithPlatformKey();
         }
 
-        public ArrayMap<String, String> getStringsForPrefix(ContentResolver cr, String prefix,
-                List<String> names) {
+        private ArrayMap<String, String> getStringsForPrefixStripPrefix(
+                ContentResolver cr, String prefix, String[] names) {
             String namespace = prefix.substring(0, prefix.length() - 1);
             ArrayMap<String, String> keyValues = new ArrayMap<>();
+            int substringLength = prefix.length();
+
             int currentGeneration = -1;
             boolean needsGenerationTracker = false;
 
@@ -3601,22 +3610,30 @@ public final class Settings {
                                     + " type:" + mUri.getPath()
                                     + " in package:" + cr.getPackageName());
                         }
+                        // When a generation number changes, remove cached values, remove the old
+                        // generation tracker and request a new one
+                        generationTracker.destroy();
+                        mGenerationTrackers.remove(prefix);
                         for (int i = mValues.size() - 1; i >= 0; i--) {
                             String key = mValues.keyAt(i);
                             if (key.startsWith(prefix)) {
                                 mValues.remove(key);
                             }
                         }
+                        needsGenerationTracker = true;
                     } else {
                         boolean prefixCached = mValues.containsKey(prefix);
                         if (prefixCached) {
                             if (DEBUG) {
                                 Log.i(TAG, "Cache hit for prefix:" + prefix);
                             }
-                            if (!names.isEmpty()) {
+                            if (names.length > 0) {
                                 for (String name : names) {
+                                    // mValues can contain "null" values, need to use containsKey.
                                     if (mValues.containsKey(name)) {
-                                        keyValues.put(name, mValues.get(name));
+                                        keyValues.put(
+                                                name.substring(substringLength),
+                                                mValues.get(name));
                                     }
                                 }
                             } else {
@@ -3625,7 +3642,10 @@ public final class Settings {
                                     // Explicitly exclude the prefix as it is only there to
                                     // signal that the prefix has been cached.
                                     if (key.startsWith(prefix) && !key.equals(prefix)) {
-                                        keyValues.put(key, mValues.get(key));
+                                        String value = mValues.valueAt(i);
+                                        keyValues.put(
+                                                key.substring(substringLength),
+                                                value);
                                     }
                                 }
                             }
@@ -3685,14 +3705,22 @@ public final class Settings {
                 Map<String, String> flagsToValues =
                         (HashMap) b.getSerializable(Settings.NameValueTable.VALUE, java.util.HashMap.class);
                 // Only the flags requested by the caller
-                if (!names.isEmpty()) {
-                    for (Map.Entry<String, String> flag : flagsToValues.entrySet()) {
-                        if (names.contains(flag.getKey())) {
-                            keyValues.put(flag.getKey(), flag.getValue());
+                if (names.length > 0) {
+                    for (String name : names) {
+                        // flagsToValues can contain "null" values, need to use containsKey.
+                        if (flagsToValues.containsKey(name)) {
+                            keyValues.put(
+                                    name.substring(substringLength),
+                                    flagsToValues.get(name));
                         }
                     }
                 } else {
-                    keyValues.putAll(flagsToValues);
+                    keyValues.ensureCapacity(keyValues.size() + flagsToValues.size());
+                    for (Map.Entry<String, String> flag : flagsToValues.entrySet()) {
+                        keyValues.put(
+                                flag.getKey().substring(substringLength),
+                                flag.getValue());
+                    }
                 }
 
                 synchronized (NameValueCache.this) {
@@ -3714,6 +3742,8 @@ public final class Settings {
                                     new GenerationTracker(prefix, array, index, generation,
                                             mGenerationTrackerErrorHandler));
                             currentGeneration = generation;
+                        } else {
+                            maybeCloseGenerationArray(array);
                         }
                     }
                     if (mGenerationTrackers.get(prefix) != null && currentGeneration
@@ -7302,6 +7332,28 @@ public final class Settings {
                 "bluetooth_le_broadcast_app_source_name";
 
         /**
+         * This is used by LocalBluetoothLeBroadcast to downgrade the broadcast quality to improve
+         * compatibility.
+         *
+         * <ul>
+         *   <li>0 = false
+         *   <li>1 = true
+         * </ul>
+         *
+         * @hide
+         */
+        public static final String BLUETOOTH_LE_BROADCAST_IMPROVE_COMPATIBILITY =
+                "bluetooth_le_broadcast_improve_compatibility";
+
+        /**
+         * This is used by LocalBluetoothLeBroadcast to store the fallback active device address.
+         *
+         * @hide
+         */
+        public static final String BLUETOOTH_LE_BROADCAST_FALLBACK_ACTIVE_DEVICE_ADDRESS =
+                "bluetooth_le_broadcast_fallback_active_device_address";
+
+        /**
          * Ringtone routing value for hearing aid. It routes ringtone to hearing aid or device
          * speaker.
          * <ul>
@@ -7437,6 +7489,20 @@ public final class Settings {
          */
         @Readable
         public static final String DEFAULT_INPUT_METHOD = "default_input_method";
+
+        /**
+         * Used only by {@link com.android.server.inputmethod.InputMethodManagerService} as a
+         * temporary data store of {@link #DEFAULT_INPUT_METHOD} while a virtual-device-specific
+         * input method is set as default.</p>
+         *
+         * <p>This should be considered to be an implementation detail of
+         * {@link com.android.server.inputmethod.InputMethodManagerService}.  Other system
+         * components should never rely on this value.</p>
+         *
+         * @see #DEFAULT_INPUT_METHOD
+         * @hide
+         */
+        public static final String DEFAULT_DEVICE_INPUT_METHOD = "default_device_input_method";
 
         /**
          * Setting to record the input method subtype used by default, holding the ID
@@ -10134,8 +10200,12 @@ public final class Settings {
 
         /**
          * The default NFC payment component
+         *
+         * @deprecated please use {@link android.app.role.RoleManager#getRoleHolders(String)}
+         * with {@link android.app.role.RoleManager#ROLE_WALLET} parameter.
          * @hide
          */
+        @Deprecated
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         public static final String NFC_PAYMENT_DEFAULT_COMPONENT = "nfc_payment_default_component";
 
@@ -12152,6 +12222,36 @@ public final class Settings {
          */
         public static final String HIDE_PRIVATESPACE_ENTRY_POINT = "hide_privatespace_entry_point";
 
+        /** @hide */
+        public static final int PRIVATE_SPACE_AUTO_LOCK_ON_DEVICE_LOCK = 0;
+        /** @hide */
+        public static final int PRIVATE_SPACE_AUTO_LOCK_AFTER_INACTIVITY = 1;
+        /** @hide */
+        public static final int PRIVATE_SPACE_AUTO_LOCK_NEVER = 2;
+
+        /**
+         * The different auto lock options for private space.
+         *
+         * @hide
+         */
+        @IntDef(prefix = {"PRIVATE_SPACE_AUTO_LOCK_"}, value = {
+                PRIVATE_SPACE_AUTO_LOCK_ON_DEVICE_LOCK,
+                PRIVATE_SPACE_AUTO_LOCK_AFTER_INACTIVITY,
+                PRIVATE_SPACE_AUTO_LOCK_NEVER,
+        })
+        @Retention(RetentionPolicy.SOURCE)
+        public @interface PrivateSpaceAutoLockOption {
+        }
+
+
+        /**
+         *  Store auto lock value for private space.
+         *  The possible values are defined in {@link PrivateSpaceAutoLockOption}.
+         *
+         * @hide
+         */
+        public static final String PRIVATE_SPACE_AUTO_LOCK = "private_space_auto_lock";
+
         /**
          * These entries are considered common between the personal and the managed profile,
          * since the managed profile doesn't get to change them.
@@ -12169,6 +12269,7 @@ public final class Settings {
             CLONE_TO_MANAGED_PROFILE.add(SHOW_IME_WITH_HARD_KEYBOARD);
             CLONE_TO_MANAGED_PROFILE.add(ACCESSIBILITY_BOUNCE_KEYS);
             CLONE_TO_MANAGED_PROFILE.add(NOTIFICATION_BUBBLES);
+            CLONE_TO_MANAGED_PROFILE.add(NOTIFICATION_HISTORY_ENABLED);
         }
 
         /** @hide */
@@ -13429,6 +13530,16 @@ public final class Settings {
         @Readable
         public static final String OTA_DISABLE_AUTOMATIC_UPDATE = "ota_disable_automatic_update";
 
+
+        /**
+         * Whether to boot with 16K page size compatible kernel
+         * 1 = Boot with 16K kernel
+         * 0 = Boot with 4K kernel (default)
+         * @hide
+         */
+        @Readable
+        public static final String ENABLE_16K_PAGES = "enable_16k_pages";
+
         /** Timeout for package verification.
         * @hide */
         @Readable
@@ -14362,6 +14473,27 @@ public final class Settings {
         public static final String MODE_RINGER = "mode_ringer";
 
         /**
+         * Whether or not Alarm stream should always be muted with Ringer.
+         *
+         * @hide
+         */
+        public static final String MUTE_ALARM_STREAM_WITH_RINGER_MODE =
+                "mute_alarm_stream_with_ringer_mode";
+
+        /**
+         * The user's choice for whether or not Alarm stream should always be muted with Ringer.
+         *
+         * <p>Note that this is different from {@link #MUTE_ALARM_STREAM_WITH_RINGER_MODE}, which
+         * controls the real state of whether or not the Alarm stream and Ringer association occurs.
+         * The two Settings are not necessarily equal, if the final decision for the association
+         * depends on factors beyond the user's preference.
+         *
+         * @hide
+         */
+        public static final String MUTE_ALARM_STREAM_WITH_RINGER_MODE_USER_PREFERENCE =
+                "mute_alarm_stream_with_ringer_mode_user_preference";
+
+        /**
          * Overlay display devices setting.
          * The associated value is a specially formatted string that describes the
          * size and density of simulated secondary display devices.
@@ -15034,6 +15166,16 @@ public final class Settings {
         @Readable
         public static final String FOREGROUND_SERVICE_STARTS_LOGGING_ENABLED =
                 "foreground_service_starts_logging_enabled";
+
+        /**
+         * Describes whether AM's AppProfiler should collect PSS even if RSS is the default. This
+         * can be set by a user in developer settings.
+         * Default: 0
+         * @hide
+         */
+        @Readable
+        public static final String FORCE_ENABLE_PSS_PROFILING =
+                "force_enable_pss_profiling";
 
         /**
          * @hide
@@ -19651,6 +19793,24 @@ public final class Settings {
              */
             public static final String WEAR_POWER_ANOMALY_SERVICE_ENABLED =
                     "wear_power_anomaly_service_enabled";
+
+            /**
+             * A boolean that tracks whether Wrist Detection Auto-Locking is enabled.
+             *
+             * @hide
+             */
+            @Readable
+            public static final String WRIST_DETECTION_AUTO_LOCKING_ENABLED =
+                    "wear_wrist_detection_auto_locking_enabled";
+
+            /**
+             * Whether consistent notification blocking experience is enabled.
+             *
+             * @hide
+             */
+            @Readable
+            public static final String CONSISTENT_NOTIFICATION_BLOCKING_ENABLED =
+                    "consistent_notification_blocking_enabled";
         }
     }
 
@@ -19811,21 +19971,15 @@ public final class Settings {
         @RequiresPermission(Manifest.permission.READ_DEVICE_CONFIG)
         public static Map<String, String> getStrings(@NonNull ContentResolver resolver,
                 @NonNull String namespace, @NonNull List<String> names) {
-            List<String> compositeNames = new ArrayList<>(names.size());
-            for (String name : names) {
-                compositeNames.add(createCompositeName(namespace, name));
+            String[] compositeNames = new String[names.size()];
+            for (int i = 0, size = names.size(); i < size; ++i) {
+                compositeNames[i] = createCompositeName(namespace, names.get(i));
             }
 
             String prefix = createPrefix(namespace);
-            ArrayMap<String, String> rawKeyValues = sNameValueCache.getStringsForPrefix(
+
+            ArrayMap<String, String> keyValues = sNameValueCache.getStringsForPrefixStripPrefix(
                     resolver, prefix, compositeNames);
-            int size = rawKeyValues.size();
-            int substringLength = prefix.length();
-            ArrayMap<String, String> keyValues = new ArrayMap<>(size);
-            for (int i = 0; i < size; ++i) {
-                keyValues.put(rawKeyValues.keyAt(i).substring(substringLength),
-                        rawKeyValues.valueAt(i));
-            }
             return keyValues;
         }
 
@@ -20151,12 +20305,13 @@ public final class Settings {
         private static String createCompositeName(@NonNull String namespace, @NonNull String name) {
             Preconditions.checkNotNull(namespace);
             Preconditions.checkNotNull(name);
-            return createPrefix(namespace) + name;
+            var sb = new StringBuilder(namespace.length() + 1 + name.length());
+            return sb.append(namespace).append('/').append(name).toString();
         }
 
         private static String createPrefix(@NonNull String namespace) {
             Preconditions.checkNotNull(namespace);
-            return namespace + "/";
+            return namespace + '/';
         }
 
         private static Uri createNamespaceUri(@NonNull String namespace) {

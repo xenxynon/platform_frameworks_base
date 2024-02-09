@@ -36,7 +36,7 @@ import org.xmlpull.v1.XmlPullParserFactory
 @Postsubmit
 class AndroidPackageParsingValidationTest {
     companion object {
-        private val parser2 = PackageParser2.forParsingFileWithDefaults()
+        private val parser2 = PackageParserUtils.forParsingFileWithDefaults()
         private val apks = ((PackageManagerService.SYSTEM_PARTITIONS)
                 .flatMap {
                     listOfNotNull(it.privAppFolder, it.appFolder, it.overlayFolder)
@@ -157,7 +157,7 @@ class AndroidPackageParsingValidationTest {
         validateTagCount("uses-library", 1000, tag)
         validateTagCount("activity-alias", 4000, tag)
         validateTagCount("provider", 8000, tag)
-        validateTagCount("activity", 40000, tag)
+        validateTagCount("activity", 30000, tag)
     }
 
     @Test
@@ -465,7 +465,8 @@ class AndroidPackageParsingValidationTest {
             R.styleable.AndroidManifestData_pathAdvancedPattern,
             4000
         )
-        validateTagAttr(tag, "mimeType", R.styleable.AndroidManifestData_mimeType, 512)
+        validateTagAttr(tag, "mimeType", R.styleable.AndroidManifestData_mimeType, 255)
+        validateTagAttr(tag, "mimeGroup", R.styleable.AndroidManifestData_mimeGroup, 1024)
     }
 
     @Test

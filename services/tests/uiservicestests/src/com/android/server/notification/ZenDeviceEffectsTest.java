@@ -18,18 +18,30 @@ package com.android.server.notification;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import android.app.Flags;
 import android.os.Parcel;
+import android.platform.test.flag.junit.SetFlagsRule;
 import android.service.notification.ZenDeviceEffects;
 
 import androidx.test.runner.AndroidJUnit4;
 
 import com.android.server.UiServiceTestCase;
 
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class ZenDeviceEffectsTest extends UiServiceTestCase {
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+
+    @Before
+    public final void setUp() {
+        mSetFlagsRule.enableFlags(Flags.FLAG_MODES_API);
+    }
 
     @Test
     public void builder() {

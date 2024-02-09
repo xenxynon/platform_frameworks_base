@@ -37,6 +37,7 @@ import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_TOAST;
 import static android.window.DisplayAreaOrganizer.FEATURE_VENDOR_FIRST;
 
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.doAnswer;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.never;
@@ -79,12 +80,14 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.platform.test.annotations.Presubmit;
+import android.util.ArraySet;
 import android.util.MergedConfiguration;
 import android.view.ContentRecordingSession;
 import android.view.IWindow;
 import android.view.InputChannel;
 import android.view.InsetsSourceControl;
 import android.view.InsetsState;
+import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.view.WindowInsets;
@@ -100,10 +103,12 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import com.android.compatibility.common.util.AdoptShellPermissionsRule;
 import com.android.internal.os.IResultReceiver;
 import com.android.server.LocalServices;
+import com.android.server.wm.SensitiveContentPackages.PackageInfo;
 import com.android.server.wm.WindowManagerService.WindowContainerInfo;
 
 import com.google.common.truth.Expect;
 
+import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -130,6 +135,11 @@ public class WindowManagerServiceTests extends WindowTestsBase {
 
     @Rule
     public Expect mExpect = Expect.create();
+
+    @After
+    public void tearDown() {
+        mWm.mSensitiveContentPackages.clearBlockedApps();
+    }
 
     @Test
     public void testIsRequestedOrientationMapped() {
@@ -813,6 +823,90 @@ public class WindowManagerServiceTests extends WindowTestsBase {
     }
 
     @Test
+    public void addBlockScreenCaptureForApps() {
+        String testPackage = "test";
+        int ownerId1 = 20;
+        int ownerId2 = 21;
+        PackageInfo blockedPackage = new PackageInfo(testPackage, ownerId1);
+        ArraySet<PackageInfo> blockedPackages = new ArraySet();
+        blockedPackages.add(blockedPackage);
+
+        WindowManagerInternal wmInternal = LocalServices.getService(WindowManagerInternal.class);
+        wmInternal.addBlockScreenCaptureForApps(blockedPackages);
+
+        assertTrue(mWm.mSensitiveContentPackages
+                .shouldBlockScreenCaptureForApp(testPackage, ownerId1));
+        assertFalse(mWm.mSensitiveContentPackages
+                .shouldBlockScreenCaptureForApp(testPackage, ownerId2));
+        verify(mWm).refreshScreenCaptureDisabled();
+    }
+
+    @Test
+    public void addBlockScreenCaptureForApps_duplicate_verifyNoRefresh() {
+        String testPackage = "test";
+        int ownerId1 = 20;
+        int ownerId2 = 21;
+        PackageInfo blockedPackage = new PackageInfo(testPackage, ownerId1);
+        ArraySet<PackageInfo> blockedPackages = new ArraySet();
+        blockedPackages.add(blockedPackage);
+
+        WindowManagerInternal wmInternal = LocalServices.getService(WindowManagerInternal.class);
+        wmInternal.addBlockScreenCaptureForApps(blockedPackages);
+        wmInternal.addBlockScreenCaptureForApps(blockedPackages);
+
+        verify(mWm, times(1)).refreshScreenCaptureDisabled();
+    }
+
+    @Test
+    public void addBlockScreenCaptureForApps_notDuplicate_verifyRefresh() {
+        String testPackage = "test";
+        int ownerId1 = 20;
+        int ownerId2 = 21;
+        PackageInfo blockedPackage = new PackageInfo(testPackage, ownerId1);
+        PackageInfo blockedPackage2 = new PackageInfo(testPackage, ownerId2);
+        ArraySet<PackageInfo> blockedPackages = new ArraySet();
+        blockedPackages.add(blockedPackage);
+        ArraySet<PackageInfo> blockedPackages2 = new ArraySet();
+        blockedPackages2.add(blockedPackage);
+        blockedPackages2.add(blockedPackage2);
+
+        WindowManagerInternal wmInternal = LocalServices.getService(WindowManagerInternal.class);
+        wmInternal.addBlockScreenCaptureForApps(blockedPackages);
+        wmInternal.addBlockScreenCaptureForApps(blockedPackages2);
+
+        assertTrue(mWm.mSensitiveContentPackages
+                .shouldBlockScreenCaptureForApp(testPackage, ownerId1));
+        assertTrue(mWm.mSensitiveContentPackages
+                .shouldBlockScreenCaptureForApp(testPackage, ownerId2));
+        verify(mWm, times(2)).refreshScreenCaptureDisabled();
+    }
+
+    @Test
+    public void clearBlockedApps_clearsCache() {
+        String testPackage = "test";
+        int ownerId1 = 20;
+        PackageInfo blockedPackage = new PackageInfo(testPackage, ownerId1);
+        ArraySet<PackageInfo> blockedPackages = new ArraySet();
+        blockedPackages.add(blockedPackage);
+
+        WindowManagerInternal wmInternal = LocalServices.getService(WindowManagerInternal.class);
+        wmInternal.addBlockScreenCaptureForApps(blockedPackages);
+        wmInternal.clearBlockedApps();
+
+        assertFalse(mWm.mSensitiveContentPackages
+                .shouldBlockScreenCaptureForApp(testPackage, ownerId1));
+        verify(mWm, times(2)).refreshScreenCaptureDisabled();
+    }
+
+    @Test
+    public void clearBlockedApps_alreadyEmpty_verifyNoRefresh() {
+        WindowManagerInternal wmInternal = LocalServices.getService(WindowManagerInternal.class);
+        wmInternal.clearBlockedApps();
+
+        verify(mWm, never()).refreshScreenCaptureDisabled();
+    }
+
+    @Test
     public void testisLetterboxBackgroundMultiColored() {
         assertThat(setupLetterboxConfigurationWithBackgroundType(
                 LETTERBOX_BACKGROUND_APP_COLOR_BACKGROUND_FLOATING)).isTrue();
@@ -949,6 +1043,57 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         verify(mTransaction).setInputWindowInfo(
                 eq(surfaceControl),
                 argThat(h -> (h.inputConfig & InputConfig.SPY) == InputConfig.SPY));
+    }
+
+    @Test
+    public void testDrawMagnifiedViewport() {
+        final int displayId = mDisplayContent.mDisplayId;
+        // Use real surface, so ViewportWindow's BlastBufferQueue can be created.
+        final ArrayList<SurfaceControl> surfaceControls = new ArrayList<>();
+        mWm.mSurfaceControlFactory = s -> new SurfaceControl.Builder() {
+            @Override
+            public SurfaceControl build() {
+                final SurfaceControl sc = super.build();
+                surfaceControls.add(sc);
+                return sc;
+            }
+        };
+        mWm.mAccessibilityController.setMagnificationCallbacks(displayId,
+                mock(WindowManagerInternal.MagnificationCallbacks.class));
+        final boolean[] lockCanvasInWmLock = { false };
+        final Surface surface = mWm.mAccessibilityController.forceShowMagnifierSurface(displayId);
+        spyOn(surface);
+        doAnswer(invocationOnMock -> {
+            lockCanvasInWmLock[0] |= Thread.holdsLock(mWm.mGlobalLock);
+            invocationOnMock.callRealMethod();
+            return null;
+        }).when(surface).lockCanvas(any());
+        mWm.mAccessibilityController.drawMagnifiedRegionBorderIfNeeded(displayId, mTransaction);
+        waitUntilHandlersIdle();
+        try {
+            verify(surface).lockCanvas(any());
+
+            clearInvocations(surface);
+            // Invalidate and redraw.
+            mWm.mAccessibilityController.onDisplaySizeChanged(mDisplayContent);
+            mWm.mAccessibilityController.drawMagnifiedRegionBorderIfNeeded(displayId, mTransaction);
+            // Turn off magnification to release surface.
+            mWm.mAccessibilityController.setMagnificationCallbacks(displayId, null);
+            if (!com.android.window.flags.Flags.drawMagnifierBorderOutsideWmlock()) {
+                verify(surface).release();
+                assertTrue(lockCanvasInWmLock[0]);
+                return;
+            }
+            waitUntilHandlersIdle();
+            // lockCanvas must not be called after releasing.
+            verify(surface, never()).lockCanvas(any());
+            verify(surface).release();
+            assertFalse(lockCanvasInWmLock[0]);
+        } finally {
+            for (int i = surfaceControls.size() - 1; i >= 0; --i) {
+                surfaceControls.get(i).release();
+            }
+        }
     }
 
     @Test

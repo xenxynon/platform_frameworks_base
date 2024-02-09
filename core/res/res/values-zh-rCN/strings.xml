@@ -434,6 +434,10 @@
     <string name="permdesc_foregroundServiceSystemExempted" msgid="947381760834649622">"允许该应用使用“systemExempted”类型的前台服务"</string>
     <string name="permlab_foregroundServiceFileManagement" msgid="2585000987966045030">"运行“fileManagement”类型的前台服务"</string>
     <string name="permdesc_foregroundServiceFileManagement" msgid="417103601269698508">"允许该应用使用“fileManagement”类型的前台服务"</string>
+    <!-- no translation found for permlab_foregroundServiceMediaProcessing (3045295152245381864) -->
+    <skip />
+    <!-- no translation found for permdesc_foregroundServiceMediaProcessing (8303086172106677312) -->
+    <skip />
     <string name="permlab_foregroundServiceSpecialUse" msgid="7973536745876645082">"运行“specialUse”类型的前台服务"</string>
     <string name="permdesc_foregroundServiceSpecialUse" msgid="646713654541885919">"允许该应用使用“specialUse”类型的前台服务"</string>
     <string name="permlab_getPackageSize" msgid="375391550792886641">"计算应用存储空间"</string>
@@ -632,7 +636,8 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"使用屏幕锁定凭据"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"输入您的屏幕锁定凭据才能继续"</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"请用力按住传感器"</string>
-    <string name="fingerprint_acquired_insufficient" msgid="623888149088216458">"无法识别指纹，请重试。"</string>
+    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
+    <skip />
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"请清洁指纹传感器，然后重试"</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"请清洁传感器，然后重试"</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"请用力按住传感器"</string>
@@ -696,7 +701,8 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"看不到您的脸，请将手机举到与眼睛齐平的位置。"</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"摄像头过于晃动。请将手机拿稳。"</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"请重新注册您的面孔。"</string>
-    <string name="face_acquired_too_different" msgid="2520389515612972889">"无法识别人脸，请重试。"</string>
+    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
+    <skip />
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"请略微调整头部的位置"</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"请尽量直视手机"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"请尽量直视手机"</string>
@@ -1882,8 +1888,8 @@
     <string name="confirm_battery_saver" msgid="5247976246208245754">"确定"</string>
     <string name="battery_saver_description_with_learn_more" msgid="5444908404021316250">"在省电模式下，系统会启用深色主题，并限制或关闭后台活动、某些视觉效果、特定功能和部分网络连接。"</string>
     <string name="battery_saver_description" msgid="8518809702138617167">"在省电模式下，系统会启用深色主题，并限制或关闭后台活动、某些视觉效果、特定功能和部分网络连接。"</string>
-    <string name="data_saver_description" msgid="4995164271550590517">"为了减少流量消耗，流量节省程序会阻止某些应用在后台收发数据。您当前使用的应用可以收发数据，但频率可能会降低。举例而言，这可能意味着图片只有在您点按之后才会显示。"</string>
-    <string name="data_saver_enable_title" msgid="7080620065745260137">"要开启流量节省程序吗？"</string>
+    <string name="data_saver_description" msgid="4995164271550590517">"为了减少流量消耗，省流模式会阻止某些应用在后台收发数据。您当前使用的应用可以收发数据，但频率可能会降低。举例而言，这可能意味着图片只有在您点按之后才会显示。"</string>
+    <string name="data_saver_enable_title" msgid="7080620065745260137">"要开启省流模式吗？"</string>
     <string name="data_saver_enable_button" msgid="4399405762586419726">"开启"</string>
     <string name="zen_mode_duration_minutes_summary" msgid="4555514757230849789">"{count,plural, =1{1 分钟（直到 {formattedTime}）}other{# 分钟（直到 {formattedTime}）}}"</string>
     <string name="zen_mode_duration_minutes_summary_short" msgid="1187553788355486950">"{count,plural, =1{1 分钟（直到 {formattedTime}）}other{# 分钟（直到 {formattedTime}）}}"</string>
@@ -1906,8 +1912,7 @@
     <string name="zen_mode_default_weekends_name" msgid="4707200272709377930">"周末"</string>
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"活动"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"睡眠"</string>
-    <!-- no translation found for zen_mode_implicit_trigger_description (5714956693073007111) -->
-    <skip />
+    <string name="zen_mode_implicit_trigger_description" msgid="5714956693073007111">"由<xliff:g id="APP_NAME">%1$s</xliff:g>管理"</string>
     <string name="zen_mode_implicit_activated" msgid="2634285680776672994">"已启用"</string>
     <string name="zen_mode_implicit_deactivated" msgid="8688441768371501750">"已停用"</string>
     <string name="muted_by" msgid="91464083490094950">"<xliff:g id="THIRD_PARTY">%1$s</xliff:g>正在将某些音效设为静音"</string>
@@ -2366,4 +2371,5 @@
     <string name="profile_label_work_3" msgid="4834572253956798917">"工作 3"</string>
     <string name="profile_label_test" msgid="9168641926186071947">"测试"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"共用"</string>
+    <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
 </resources>

@@ -220,6 +220,9 @@ java_library {
     required: [
         "libukey2_jni_shared",
     ],
+    lint: {
+        baseline_filename: "lint-baseline.xml",
+    },
 
     // Uncomment to enable output of certain warnings (deprecated, unchecked)
     //javacflags: ["-Xlint"],

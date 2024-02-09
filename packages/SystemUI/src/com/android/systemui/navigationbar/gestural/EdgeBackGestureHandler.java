@@ -628,7 +628,7 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
             }
 
             if (!mIsEnabled) {
-                mGestureNavigationSettingsObserver.unregister();
+                mBackgroundExecutor.execute(mGestureNavigationSettingsObserver::unregister);
                 if (DEBUG_MISSING_GESTURE) {
                     Log.d(DEBUG_MISSING_GESTURE_TAG, "Unregister display listener");
                 }
@@ -646,7 +646,7 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
                 }
 
             } else {
-                mGestureNavigationSettingsObserver.register();
+                mBackgroundExecutor.execute(mGestureNavigationSettingsObserver::register);
                 updateDisplaySize();
                 if (DEBUG_MISSING_GESTURE) {
                     Log.d(DEBUG_MISSING_GESTURE_TAG, "Register display listener");
@@ -762,7 +762,8 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
     }
 
     private void updateMLModelState() {
-        boolean newState = mIsGestureHandlingEnabled && DeviceConfig.getBoolean(
+        boolean newState = mIsGestureHandlingEnabled && mContext.getResources().getBoolean(
+                R.bool.config_useBackGestureML) && DeviceConfig.getBoolean(
                 DeviceConfig.NAMESPACE_SYSTEMUI,
                 SystemUiDeviceConfigFlags.USE_BACK_GESTURE_ML_MODEL, false);
 

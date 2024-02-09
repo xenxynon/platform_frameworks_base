@@ -277,7 +277,7 @@
     <string name="notification_channel_account" msgid="6436294521740148173">"ଆକାଉଣ୍ଟର ସ୍ଥିତି"</string>
     <string name="notification_channel_developer" msgid="1691059964407549150">"ଡେଭଲପରଙ୍କ ମେସେଜ୍‍"</string>
     <string name="notification_channel_developer_important" msgid="7197281908918789589">"ଗୁରୁତ୍ଵପୂର୍ଣ୍ଣ ଡେଭେଲପର୍ ମେସେଜ୍‌ଗୁଡ଼ିକ"</string>
-    <string name="notification_channel_updates" msgid="7907863984825495278">"ଅପଡେଟ୍‍"</string>
+    <string name="notification_channel_updates" msgid="7907863984825495278">"ଅପଡେଟ କରନ୍ତୁ"</string>
     <string name="notification_channel_network_status" msgid="2127687368725272809">"ନେଟୱର୍କ ସ୍ଥିତି"</string>
     <string name="notification_channel_network_alerts" msgid="6312366315654526528">"ନେଟୱର୍କ ଅଲର୍ଟ"</string>
     <string name="notification_channel_network_available" msgid="6083697929214165169">"ନେଟ୍‌ୱର୍କ ଉପଲବ୍ଧ ଅଛି"</string>
@@ -434,6 +434,10 @@
     <string name="permdesc_foregroundServiceSystemExempted" msgid="947381760834649622">"\"systemExempted\" ପ୍ରକାର ସହ ଫୋରଗ୍ରାଉଣ୍ଡ ସେବାଗୁଡ଼ିକୁ ବ୍ୟବହାର କରିବା ପାଇଁ ଆପକୁ ଅନୁମତି ଦିଏ"</string>
     <string name="permlab_foregroundServiceFileManagement" msgid="2585000987966045030">"\"fileManagement\" ପ୍ରକାର ସହ ଫୋରଗ୍ରାଉଣ୍ଡ ସେବାଗୁଡ଼ିକୁ ଚଲାଏ"</string>
     <string name="permdesc_foregroundServiceFileManagement" msgid="417103601269698508">"\"fileManagement\" ପ୍ରକାର ସହ ଫୋରଗ୍ରାଉଣ୍ଡ ସେବାଗୁଡ଼ିକୁ ବ୍ୟବହାର କରିବା ପାଇଁ ଆପକୁ ଅନୁମତି ଦିଏ"</string>
+    <!-- no translation found for permlab_foregroundServiceMediaProcessing (3045295152245381864) -->
+    <skip />
+    <!-- no translation found for permdesc_foregroundServiceMediaProcessing (8303086172106677312) -->
+    <skip />
     <string name="permlab_foregroundServiceSpecialUse" msgid="7973536745876645082">"\"specialUse\" ପ୍ରକାର ସହ ଫୋରଗ୍ରାଉଣ୍ଡ ସେବାଗୁଡ଼ିକୁ ଚଲାଏ"</string>
     <string name="permdesc_foregroundServiceSpecialUse" msgid="646713654541885919">"\"specialUse\" ପ୍ରକାର ସହ ଫୋରଗ୍ରାଉଣ୍ଡ ସେବାଗୁଡ଼ିକୁ ବ୍ୟବହାର କରିବା ପାଇଁ ଆପକୁ ଅନୁମତି ଦିଏ"</string>
     <string name="permlab_getPackageSize" msgid="375391550792886641">"ଆପ୍‍ ଷ୍ଟୋରେଜ୍‍ ସ୍ଥାନର ମାପ କରନ୍ତୁ"</string>
@@ -632,7 +636,8 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"ସ୍କ୍ରିନ୍ ଲକ୍ ବ୍ୟବହାର କରନ୍ତୁ"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"ଜାରି ରଖିବାକୁ ଆପଣଙ୍କ ସ୍କ୍ରିନ୍ ଲକ୍ ଏଣ୍ଟର୍ କରନ୍ତୁ"</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"ସେନ୍ସର ଉପରେ ଦୃଢ଼ ଭାବେ ଦବାନ୍ତୁ"</string>
-    <string name="fingerprint_acquired_insufficient" msgid="623888149088216458">"ଟିପଚିହ୍ନକୁ ଚିହ୍ନଟ କରାଯାଇପାରିବ ନାହିଁ। ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ।"</string>
+    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
+    <skip />
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"ଟିପଚିହ୍ନ ସେନ୍ସରକୁ ପରିଷ୍କାର କରି ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ"</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"ସେନ୍ସରକୁ ପରିଷ୍କାର କରି ପୁଣି ଚେଷ୍ଟା କରନ୍ତୁ"</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"ସେନ୍ସର ଉପରେ ଦୃଢ଼ ଭାବେ ଦବାନ୍ତୁ"</string>
@@ -696,7 +701,8 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"ଆପଣଙ୍କ ଫେସ ଦେଖାଯାଉନାହିଁ। ଆପଣଙ୍କ ଫୋନକୁ ଆଖି ସିଧାରେ ଧରି ରଖନ୍ତୁ।"</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"ଅତ୍ୟଧିକ ଅସ୍ଥିର। ଫୋନ୍‍କୁ ସ୍ଥିର ଭାବେ ଧରନ୍ତୁ।"</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"ଦୟାକରି ଆପଣଙ୍କର ମୁହଁ ପୁଣି-ଏନ୍‍ରୋଲ୍ କରନ୍ତୁ।"</string>
-    <string name="face_acquired_too_different" msgid="2520389515612972889">"ଫେସ ଚିହ୍ନଟ କରାଯାଇପାରିବ ନାହିଁ। ପୁଣି ଚେଷ୍ଟା କର।"</string>
+    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
+    <skip />
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"ଆପଣଙ୍କ ମୁଣ୍ଡର ସ୍ଥିତି ସାମାନ୍ୟ ବଦଳାନ୍ତୁ"</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"ଆପଣଙ୍କ ଫୋନକୁ ସମ୍ପୂର୍ଣ୍ଣ ସିଧା ଦେଖନ୍ତୁ"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"ଆପଣଙ୍କ ଫୋନକୁ ସମ୍ପୂର୍ଣ୍ଣ ସିଧା ଦେଖନ୍ତୁ"</string>
@@ -1906,8 +1912,7 @@
     <string name="zen_mode_default_weekends_name" msgid="4707200272709377930">"ସପ୍ତାହାନ୍ତ"</string>
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"ଇଭେଣ୍ଟ"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"ଶୋଇବା"</string>
-    <!-- no translation found for zen_mode_implicit_trigger_description (5714956693073007111) -->
-    <skip />
+    <string name="zen_mode_implicit_trigger_description" msgid="5714956693073007111">"<xliff:g id="APP_NAME">%1$s</xliff:g> ଦ୍ୱାରା ପରିଚାଳିତ"</string>
     <string name="zen_mode_implicit_activated" msgid="2634285680776672994">"ଚାଲୁ ଅଛି"</string>
     <string name="zen_mode_implicit_deactivated" msgid="8688441768371501750">"ବନ୍ଦ ଅଛି"</string>
     <string name="muted_by" msgid="91464083490094950">"<xliff:g id="THIRD_PARTY">%1$s</xliff:g> କିଛି ସାଉଣ୍ଡକୁ ମ୍ୟୁଟ୍ କରୁଛି"</string>
@@ -2366,4 +2371,5 @@
     <string name="profile_label_work_3" msgid="4834572253956798917">"ୱାର୍କ 3"</string>
     <string name="profile_label_test" msgid="9168641926186071947">"ଟେଷ୍ଟ"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"କମ୍ୟୁନାଲ"</string>
+    <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
 </resources>

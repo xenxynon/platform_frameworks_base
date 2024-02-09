@@ -16,6 +16,8 @@
 
 package com.android.systemui.statusbar.phone;
 
+import static com.android.systemui.Flags.predictiveBackAnimateDialogs;
+
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.BroadcastReceiver;
@@ -45,8 +47,6 @@ import com.android.systemui.Dependency;
 import com.android.systemui.animation.DialogLaunchAnimator;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.qualifiers.Application;
-import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.Flags;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.res.R;
 import com.android.systemui.shared.system.QuickStepContract;
@@ -78,7 +78,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
     public static final boolean DEFAULT_DISMISS_ON_DEVICE_LOCK = true;
 
     private final Context mContext;
-    private final FeatureFlags mFeatureFlags;
     private final DialogDelegate<SystemUIDialog> mDelegate;
     @Nullable private final DismissReceiver mDismissReceiver;
     private final Handler mHandler = new Handler();
@@ -110,7 +109,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         // SystemUIDialogFactory and make all other dialogs create a SystemUIDialog to which we set
         // the content and attach listeners.
         this(context, theme, dismissOnDeviceLock,
-                Dependency.get(FeatureFlags.class),
                 Dependency.get(SystemUIDialogManager.class),
                 Dependency.get(SysUiState.class),
                 Dependency.get(BroadcastDispatcher.class),
@@ -119,7 +117,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
 
     public static class Factory {
         private final Context mContext;
-        private final FeatureFlags mFeatureFlags;
         private final SystemUIDialogManager mSystemUIDialogManager;
         private final SysUiState mSysUiState;
         private final BroadcastDispatcher mBroadcastDispatcher;
@@ -128,13 +125,11 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         @Inject
         public Factory(
                 @Application Context context,
-                FeatureFlags featureFlags,
                 SystemUIDialogManager systemUIDialogManager,
                 SysUiState sysUiState,
                 BroadcastDispatcher broadcastDispatcher,
                 DialogLaunchAnimator dialogLaunchAnimator) {
             mContext = context;
-            mFeatureFlags = featureFlags;
             mSystemUIDialogManager = systemUIDialogManager;
             mSysUiState = sysUiState;
             mBroadcastDispatcher = broadcastDispatcher;
@@ -147,6 +142,14 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
          */
         public SystemUIDialog create() {
             return create(new DialogDelegate<>(){}, mContext);
+        }
+
+        /** Creates a new instance of {@link SystemUIDialog} with no customized behavior.
+         *
+         * When you just need a dialog created with a specific {@link Context}, call this.
+         */
+        public SystemUIDialog create(Context context) {
+            return create(new DialogDelegate<>(){}, context);
         }
 
         /**
@@ -169,7 +172,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
                     context,
                     DEFAULT_THEME,
                     DEFAULT_DISMISS_ON_DEVICE_LOCK,
-                    mFeatureFlags,
                     mSystemUIDialogManager,
                     mSysUiState,
                     mBroadcastDispatcher,
@@ -182,7 +184,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
             Context context,
             int theme,
             boolean dismissOnDeviceLock,
-            FeatureFlags featureFlags,
             SystemUIDialogManager dialogManager,
             SysUiState sysUiState,
             BroadcastDispatcher broadcastDispatcher,
@@ -191,7 +192,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
                 context,
                 theme,
                 dismissOnDeviceLock,
-                featureFlags,
                 dialogManager,
                 sysUiState,
                 broadcastDispatcher,
@@ -203,7 +203,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
             Context context,
             int theme,
             boolean dismissOnDeviceLock,
-            FeatureFlags featureFlags,
             SystemUIDialogManager dialogManager,
             SysUiState sysUiState,
             BroadcastDispatcher broadcastDispatcher,
@@ -213,7 +212,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
                 context,
                 theme,
                 dismissOnDeviceLock,
-                featureFlags,
                 dialogManager,
                 sysUiState,
                 broadcastDispatcher,
@@ -225,7 +223,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
             Context context,
             int theme,
             boolean dismissOnDeviceLock,
-            FeatureFlags featureFlags,
             SystemUIDialogManager dialogManager,
             SysUiState sysUiState,
             BroadcastDispatcher broadcastDispatcher,
@@ -233,7 +230,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
             DialogDelegate<SystemUIDialog> delegate) {
         super(context, theme);
         mContext = context;
-        mFeatureFlags = featureFlags;
         mDelegate = delegate;
 
         applyFlags(this);
@@ -261,7 +257,7 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         for (int i = 0; i < mOnCreateRunnables.size(); i++) {
             mOnCreateRunnables.get(i).run();
         }
-        if (mFeatureFlags.isEnabled(Flags.WM_ENABLE_PREDICTIVE_BACK_QS_DIALOG_ANIM)) {
+        if (predictiveBackAnimateDialogs()) {
             DialogKt.registerAnimationOnBackInvoked(
                     /* dialog = */ this,
                     /* targetView = */ getWindow().getDecorView()

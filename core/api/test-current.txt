@@ -483,10 +483,15 @@ package android.app {
   }
 
   public class UiModeManager {
+    method @FlaggedApi("android.app.modes_api") @RequiresPermission(android.Manifest.permission.MODIFY_DAY_NIGHT_MODE) public int getAttentionModeThemeOverlay();
     method public boolean isNightModeLocked();
     method public boolean isUiModeLocked();
     method @RequiresPermission(value=android.Manifest.permission.TOGGLE_AUTOMOTIVE_PROJECTION, conditional=true) public boolean releaseProjection(int);
     method @RequiresPermission(value=android.Manifest.permission.TOGGLE_AUTOMOTIVE_PROJECTION, conditional=true) public boolean requestProjection(int);
+    field @FlaggedApi("android.app.modes_api") public static final int MODE_ATTENTION_THEME_OVERLAY_DAY = 1002; // 0x3ea
+    field @FlaggedApi("android.app.modes_api") public static final int MODE_ATTENTION_THEME_OVERLAY_NIGHT = 1001; // 0x3e9
+    field @FlaggedApi("android.app.modes_api") public static final int MODE_ATTENTION_THEME_OVERLAY_OFF = 1000; // 0x3e8
+    field @FlaggedApi("android.app.modes_api") public static final int MODE_ATTENTION_THEME_OVERLAY_UNKNOWN = -1; // 0xffffffff
     field public static final int PROJECTION_TYPE_ALL = -1; // 0xffffffff
     field public static final int PROJECTION_TYPE_AUTOMOTIVE = 1; // 0x1
     field public static final int PROJECTION_TYPE_NONE = 0; // 0x0
@@ -510,6 +515,7 @@ package android.app {
     method public int getActivityType();
     method @Nullable public android.graphics.Rect getAppBounds();
     method @NonNull public android.graphics.Rect getBounds();
+    method public int getDisplayRotation();
     method @NonNull public android.graphics.Rect getMaxBounds();
     method public int getRotation();
     method public int getWindowingMode();
@@ -1009,6 +1015,7 @@ package android.content.pm {
     field public static final long OVERRIDE_CAMERA_COMPAT_DISABLE_REFRESH = 264304459L; // 0xfc0f74bL
     field public static final long OVERRIDE_CAMERA_COMPAT_ENABLE_REFRESH_VIA_PAUSE = 264301586L; // 0xfc0ec12L
     field public static final long OVERRIDE_ENABLE_COMPAT_FAKE_FOCUS = 263259275L; // 0xfb1048bL
+    field @FlaggedApi("com.android.window.flags.app_compat_properties_api") public static final long OVERRIDE_ENABLE_COMPAT_IGNORE_ORIENTATION_REQUEST_WHEN_LOOP_DETECTED = 273509367L; // 0x104d6bf7L
     field public static final long OVERRIDE_ENABLE_COMPAT_IGNORE_REQUESTED_ORIENTATION = 254631730L; // 0xf2d5f32L
     field public static final long OVERRIDE_LANDSCAPE_ORIENTATION_TO_REVERSE_LANDSCAPE = 266124927L; // 0xfdcbe7fL
     field public static final long OVERRIDE_MIN_ASPECT_RATIO = 174042980L; // 0xa5faf64L
@@ -1165,6 +1172,7 @@ package android.content.pm {
     method public int getShowInLauncher();
     field public static final int SHOW_IN_LAUNCHER_NO = 2; // 0x2
     field public static final int SHOW_IN_LAUNCHER_SEPARATE = 1; // 0x1
+    field public static final int SHOW_IN_LAUNCHER_UNKNOWN = -1; // 0xffffffff
     field public static final int SHOW_IN_LAUNCHER_WITH_PARENT = 0; // 0x0
   }
 
@@ -1870,6 +1878,7 @@ package android.media {
     method public void setRampingRingerEnabled(boolean);
     method @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED) public void setRs2Value(float);
     method @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING) public void setTestDeviceConnectionState(@NonNull android.media.AudioDeviceAttributes, boolean);
+    method @FlaggedApi("android.media.audio.focus_exclusive_with_recording") @RequiresPermission(android.Manifest.permission.QUERY_AUDIO_STATE) public boolean shouldNotificationSoundPlay(@NonNull android.media.AudioAttributes);
   }
 
   public static final class AudioRecord.MetricsConstants {
@@ -2331,6 +2340,9 @@ package android.os {
     field public static final int CPU_LOAD_RESET = 2; // 0x2
     field public static final int CPU_LOAD_RESUME = 3; // 0x3
     field public static final int CPU_LOAD_UP = 0; // 0x0
+    field @FlaggedApi("android.os.adpf_gpu_report_actual_work_duration") public static final int GPU_LOAD_DOWN = 6; // 0x6
+    field @FlaggedApi("android.os.adpf_gpu_report_actual_work_duration") public static final int GPU_LOAD_RESET = 7; // 0x7
+    field @FlaggedApi("android.os.adpf_gpu_report_actual_work_duration") public static final int GPU_LOAD_UP = 5; // 0x5
   }
 
   public final class PowerManager {
@@ -2342,9 +2354,7 @@ package android.os {
   }
 
   public class Process {
-    method public static final int getAppUidForSdkSandboxUid(int);
     method public static final int getThreadScheduler(int) throws java.lang.IllegalArgumentException;
-    method public static final boolean isSdkSandboxUid(int);
     method public static final int toSdkSandboxUid(int);
     field public static final int FIRST_APP_ZYGOTE_ISOLATED_UID = 90000; // 0x15f90
     field public static final int FIRST_ISOLATED_UID = 99000; // 0x182b8
@@ -3007,6 +3017,10 @@ package android.service.notification {
     method @Deprecated public boolean isBound();
   }
 
+  public static final class ZenPolicy.Builder {
+    ctor public ZenPolicy.Builder(@Nullable android.service.notification.ZenPolicy);
+  }
+
 }
 
 package android.service.quickaccesswallet {
@@ -3235,7 +3249,7 @@ package android.telephony {
     method @RequiresPermission(android.Manifest.permission.MODIFY_PHONE_STATE) public void refreshUiccProfile();
     method @Deprecated public void setCarrierTestOverride(String, String, String, String, String, String, String);
     method public void setCarrierTestOverride(String, String, String, String, String, String, String, String, String);
-    method @RequiresPermission(android.Manifest.permission.BIND_TELECOM_CONNECTION_SERVICE) public void setVoiceServiceStateOverride(boolean);
+    method @FlaggedApi("com.android.server.telecom.flags.telecom_resolve_hidden_dependencies") @RequiresPermission(android.Manifest.permission.BIND_TELECOM_CONNECTION_SERVICE) public void setVoiceServiceStateOverride(boolean);
     field public static final int HAL_SERVICE_DATA = 1; // 0x1
     field public static final int HAL_SERVICE_IMS = 7; // 0x7
     field public static final int HAL_SERVICE_MESSAGING = 2; // 0x2
@@ -3611,6 +3625,10 @@ package android.view {
     method @Nullable public android.view.View getStatusBarBackgroundView();
   }
 
+  public static final class WindowInsets.Type {
+    method @NonNull public static String toString(int);
+  }
+
   public interface WindowManager extends android.view.ViewManager {
     method public default int getDisplayImePolicy(int);
     method public static boolean hasWindowExtensionsEnabled();
@@ -3674,6 +3692,7 @@ package android.view.animation {
 
   public class AnimationUtils {
     method @FlaggedApi("android.view.flags.expected_presentation_time_read_only") public static void lockAnimationClock(long, long);
+    method public static void lockAnimationClock(long);
     method public static void unlockAnimationClock();
   }
 

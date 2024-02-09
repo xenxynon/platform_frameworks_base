@@ -19,8 +19,10 @@ package com.android.systemui.keyguard.data.repository
 
 import com.android.systemui.CoreStartable
 import com.android.systemui.dagger.SysUISingleton
-import com.android.systemui.keyguard.domain.interactor.KeyguardFaceAuthInteractor
-import com.android.systemui.keyguard.domain.interactor.SystemUIKeyguardFaceAuthInteractor
+import com.android.systemui.deviceentry.data.repository.DeviceEntryFaceAuthRepository
+import com.android.systemui.deviceentry.data.repository.DeviceEntryFaceAuthRepositoryImpl
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntryFaceAuthInteractor
+import com.android.systemui.deviceentry.domain.interactor.SystemUIDeviceEntryFaceAuthInteractor
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.TableLogBufferFactory
 import dagger.Binds
@@ -38,27 +40,27 @@ interface KeyguardFaceAuthModule {
 
     @Binds
     @IntoMap
-    @ClassKey(SystemUIKeyguardFaceAuthInteractor::class)
-    fun bind(impl: SystemUIKeyguardFaceAuthInteractor): CoreStartable
+    @ClassKey(SystemUIDeviceEntryFaceAuthInteractor::class)
+    fun bind(impl: SystemUIDeviceEntryFaceAuthInteractor): CoreStartable
 
     @Binds
     fun keyguardFaceAuthInteractor(
-        impl: SystemUIKeyguardFaceAuthInteractor
-    ): KeyguardFaceAuthInteractor
+        impl: SystemUIDeviceEntryFaceAuthInteractor
+    ): DeviceEntryFaceAuthInteractor
 
     companion object {
         @Provides
         @SysUISingleton
         @FaceAuthTableLog
         fun provideFaceAuthTableLog(factory: TableLogBufferFactory): TableLogBuffer {
-            return factory.create("FaceAuthTableLog", 100)
+            return factory.create("FaceAuthTableLog", 400)
         }
 
         @Provides
         @SysUISingleton
         @FaceDetectTableLog
         fun provideFaceDetectTableLog(factory: TableLogBufferFactory): TableLogBuffer {
-            return factory.create("FaceDetectTableLog", 100)
+            return factory.create("FaceDetectTableLog", 400)
         }
     }
 }

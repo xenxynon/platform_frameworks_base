@@ -21,6 +21,7 @@ import static android.Manifest.permission.ASSOCIATE_COMPANION_DEVICES;
 import static android.Manifest.permission.DELIVER_COMPANION_MESSAGES;
 import static android.Manifest.permission.MANAGE_COMPANION_DEVICES;
 import static android.Manifest.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE;
+import static android.Manifest.permission.REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION;
 import static android.Manifest.permission.USE_COMPANION_TRANSPORTS;
 import static android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
 import static android.companion.AssociationRequest.DEVICE_PROFILE_AUTOMOTIVE_PROJECTION;
@@ -82,6 +83,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.UserInfo;
+import android.hardware.power.Mode;
 import android.net.MacAddress;
 import android.net.NetworkPolicyManager;
 import android.os.Binder;
@@ -90,6 +92,7 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
+import android.os.PowerManagerInternal;
 import android.os.PowerWhitelistManager;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
@@ -164,6 +167,7 @@ public class CompanionDeviceManagerService extends SystemService {
     private final SystemDataTransferRequestStore mSystemDataTransferRequestStore;
     private AssociationRequestsProcessor mAssociationRequestsProcessor;
     private SystemDataTransferProcessor mSystemDataTransferProcessor;
+    private BackupRestoreProcessor mBackupRestoreProcessor;
     private CompanionDevicePresenceMonitor mDevicePresenceMonitor;
     private CompanionApplicationController mCompanionAppController;
     private CompanionTransportManager mTransportManager;
@@ -174,6 +178,7 @@ public class CompanionDeviceManagerService extends SystemService {
     private final PowerWhitelistManager mPowerWhitelistManager;
     private final UserManager mUserManager;
     final PackageManagerInternal mPackageManagerInternal;
+    private final PowerManagerInternal mPowerManagerInternal;
 
     /**
      * A structure that consists of two nested maps, and effectively maps (userId + packageName) to
@@ -234,6 +239,7 @@ public class CompanionDeviceManagerService extends SystemService {
 
         mOnPackageVisibilityChangeListener =
                 new OnPackageVisibilityChangeListener(mActivityManager);
+        mPowerManagerInternal = LocalServices.getService(PowerManagerInternal.class);
     }
 
     @Override
@@ -256,6 +262,9 @@ public class CompanionDeviceManagerService extends SystemService {
         mSystemDataTransferProcessor = new SystemDataTransferProcessor(this,
                 mPackageManagerInternal, mAssociationStore,
                 mSystemDataTransferRequestStore, mTransportManager);
+        mBackupRestoreProcessor = new BackupRestoreProcessor(
+                /* cdmService */ this, mAssociationStore, mPersistentStore,
+                mSystemDataTransferRequestStore, mAssociationRequestsProcessor);
         // TODO(b/279663946): move context sync to a dedicated system service
         mCrossDeviceSyncController = new CrossDeviceSyncController(getContext(), mTransportManager);
 
@@ -283,7 +292,9 @@ public class CompanionDeviceManagerService extends SystemService {
         final Set<Integer> usersToPersistStateFor = new ArraySet<>();
 
         for (AssociationInfo association : allAssociations) {
-            if (!association.isRevoked()) {
+            if (association.isPending()) {
+                mBackupRestoreProcessor.addToPendingAppInstall(association);
+            } else if (!association.isRevoked()) {
                 activeAssociations.add(association);
             } else if (maybeRemoveRoleHolderForAssociation(association)) {
                 // Nothing more to do here, but we'll need to persist all the associations to the
@@ -501,7 +512,7 @@ public class CompanionDeviceManagerService extends SystemService {
         updateAtm(userId, updatedAssociations);
     }
 
-    private void persistStateForUser(@UserIdInt int userId) {
+    void persistStateForUser(@UserIdInt int userId) {
         // We want to store both active associations and the revoked (removed) association that we
         // are keeping around for the final clean-up (delayed role holder removal).
         final List<AssociationInfo> allAssociations;
@@ -510,6 +521,9 @@ public class CompanionDeviceManagerService extends SystemService {
                 mAssociationStore.getAssociationsForUser(userId));
         // ... and add the revoked (removed) association, that are yet to be permanently removed.
         allAssociations.addAll(getPendingRoleHolderRemovalAssociationsForUser(userId));
+        // ... and add the restored associations that are pending missing package installation.
+        allAssociations.addAll(mBackupRestoreProcessor
+                .getAssociationsPendingAppInstallForUser(userId));
 
         final Map<String, Set<Integer>> usedIdsForUser = getPreviouslyUsedIdsForUser(userId);
 
@@ -575,6 +589,23 @@ public class CompanionDeviceManagerService extends SystemService {
         }
 
         mCompanionAppController.onPackagesChanged(userId);
+    }
+
+    private void onPackageAddedInternal(@UserIdInt int userId, @NonNull String packageName) {
+        if (DEBUG) Log.i(TAG, "onPackageAddedInternal() u" + userId + "/" + packageName);
+
+        Set<AssociationInfo> associationsPendingAppInstall = mBackupRestoreProcessor
+                .getAssociationsPendingAppInstallForUser(userId);
+        for (AssociationInfo association : associationsPendingAppInstall) {
+            if (!packageName.equals(association.getPackageName())) continue;
+
+            AssociationInfo newAssociation = new AssociationInfo.Builder(association)
+                    .setPending(false)
+                    .build();
+            mAssociationRequestsProcessor.maybeGrantRoleAndStoreAssociation(newAssociation,
+                    null, null);
+            mBackupRestoreProcessor.removeFromPendingAppInstall(association);
+        }
     }
 
     // Revoke associations if the selfManaged companion device does not connect for 3 months.
@@ -923,6 +954,10 @@ public class CompanionDeviceManagerService extends SystemService {
             mAssociationStore.updateAssociation(association);
 
             mDevicePresenceMonitor.onSelfManagedDeviceConnected(associationId);
+
+            if (association.getDeviceProfile() == REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION) {
+                mPowerManagerInternal.setPowerMode(Mode.AUTOMOTIVE_PROJECTION, true);
+            }
         }
 
         @Override
@@ -937,6 +972,10 @@ public class CompanionDeviceManagerService extends SystemService {
             }
 
             mDevicePresenceMonitor.onSelfManagedDeviceDisconnected(associationId);
+
+            if (association.getDeviceProfile() == REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION) {
+                mPowerManagerInternal.setPowerMode(Mode.AUTOMOTIVE_PROJECTION, false);
+            }
         }
 
         @Override
@@ -1052,13 +1091,14 @@ public class CompanionDeviceManagerService extends SystemService {
 
         @Override
         public byte[] getBackupPayload(int userId) {
-            // TODO(b/286124853): back up CDM data
-            return new byte[0];
+            Log.i(TAG, "getBackupPayload() userId=" + userId);
+            return mBackupRestoreProcessor.getBackupPayload(userId);
         }
 
         @Override
         public void applyRestoredPayload(byte[] payload, int userId) {
-            // TODO(b/286124853): restore CDM data
+            Log.i(TAG, "applyRestoredPayload() userId=" + userId);
+            mBackupRestoreProcessor.applyRestoredPayload(payload, userId);
         }
 
         @Override
@@ -1067,7 +1107,8 @@ public class CompanionDeviceManagerService extends SystemService {
                 @NonNull String[] args) {
             return new CompanionDeviceShellCommand(CompanionDeviceManagerService.this,
                     mAssociationStore, mDevicePresenceMonitor, mTransportManager,
-                    mSystemDataTransferProcessor, mAssociationRequestsProcessor)
+                    mSystemDataTransferProcessor, mAssociationRequestsProcessor,
+                    mBackupRestoreProcessor)
                     .exec(this, in.getFileDescriptor(), out.getFileDescriptor(),
                             err.getFileDescriptor(), args);
         }
@@ -1138,6 +1179,15 @@ public class CompanionDeviceManagerService extends SystemService {
             // user-to-association-ids-range (e.g. associations with IDs from 1 to 100,000 should
             // always belong to u0), so let's check all the associations.
             for (AssociationInfo it : mAssociationStore.getAssociations()) {
+                usedIds.put(it.getId(), true);
+            }
+
+            // Some IDs may be reserved by associations that aren't stored yet due to missing
+            // package after a backup restoration. We don't want the ID to have been taken by
+            // another association by the time when it is activated from the package installation.
+            final Set<AssociationInfo> pendingAssociations = mBackupRestoreProcessor
+                    .getAssociationsPendingAppInstallForUser(userId);
+            for (AssociationInfo it: pendingAssociations) {
                 usedIds.put(it.getId(), true);
             }
 
@@ -1499,6 +1549,11 @@ public class CompanionDeviceManagerService extends SystemService {
         public void onPackageModified(String packageName) {
             onPackageModifiedInternal(getChangingUserId(), packageName);
         }
+
+        @Override
+        public void onPackageAdded(String packageName, int uid) {
+            onPackageAddedInternal(getChangingUserId(), packageName);
+        }
     };
 
     static int getFirstAssociationIdForUser(@UserIdInt int userId) {
@@ -1702,7 +1757,7 @@ public class CompanionDeviceManagerService extends SystemService {
         }
     }
 
-    private static class PerUserAssociationSet extends PerUser<Set<AssociationInfo>> {
+    static class PerUserAssociationSet extends PerUser<Set<AssociationInfo>> {
         @Override
         protected @NonNull Set<AssociationInfo> create(int userId) {
             return new ArraySet<>();

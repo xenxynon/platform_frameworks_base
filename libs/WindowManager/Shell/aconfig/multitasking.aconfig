@@ -1,13 +1,6 @@
 package: "com.android.wm.shell"
 
 flag {
-    name: "example_flag"
-    namespace: "multitasking"
-    description: "An Example Flag"
-    bug: "300136750"
-}
-
-flag {
     name: "enable_app_pairs"
     namespace: "multitasking"
     description: "Enables the ability to create and save app pairs to the Home screen"
@@ -56,4 +49,11 @@ flag {
     namespace: "multitasking"
     description: "Enables left/right split in portrait"
     bug: "291018646"
+}
+
+flag {
+    name: "enable_new_bubble_animations"
+    namespace: "multitasking"
+    description: "Enables new animations for expand and collapse for bubbles"
+    bug: "311450609"
 }

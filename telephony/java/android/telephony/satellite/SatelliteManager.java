@@ -49,8 +49,10 @@ import com.android.telephony.Rlog;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,8 +77,9 @@ public final class SatelliteManager {
     private static final ConcurrentHashMap<SatelliteProvisionStateCallback,
             ISatelliteProvisionStateCallback> sSatelliteProvisionStateCallbackMap =
             new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<SatelliteStateCallback, ISatelliteStateCallback>
-            sSatelliteStateCallbackMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<SatelliteModemStateCallback,
+            ISatelliteModemStateCallback>
+            sSatelliteModemStateCallbackMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<SatelliteTransmissionUpdateCallback,
             ISatelliteTransmissionUpdateCallback> sSatelliteTransmissionUpdateCallbackMap =
             new ConcurrentHashMap<>();
@@ -624,6 +627,11 @@ public final class SatelliteManager {
     /**
      * Request to get whether the satellite service is supported on the device.
      *
+     * <p>
+     * Note: This API only checks whether the device supports the satellite feature. The result will
+     * not be affected by whether the device is provisioned.
+     * </p>
+     *
      * @param executor The executor on which the callback will be called.
      * @param callback The callback object to which the result will be delivered.
      *                 If the request is successful, {@link OutcomeReceiver#onResult(Object)}
@@ -920,10 +928,19 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public static final int SATELLITE_COMMUNICATION_RESTRICTION_REASON_GEOLOCATION = 1;
 
+    /**
+     * Satellite communication restricted by entitlement server. This can be triggered based on
+     * the EntitlementStatus value received from the entitlement server to enable or disable
+     * satellite.
+     */
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final int SATELLITE_COMMUNICATION_RESTRICTION_REASON_ENTITLEMENT = 2;
+
     /** @hide */
     @IntDef(prefix = "SATELLITE_COMMUNICATION_RESTRICTION_REASON_", value = {
             SATELLITE_COMMUNICATION_RESTRICTION_REASON_USER,
-            SATELLITE_COMMUNICATION_RESTRICTION_REASON_GEOLOCATION
+            SATELLITE_COMMUNICATION_RESTRICTION_REASON_GEOLOCATION,
+            SATELLITE_COMMUNICATION_RESTRICTION_REASON_ENTITLEMENT
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SatelliteCommunicationRestrictionReason {}
@@ -1301,21 +1318,22 @@ public final class SatelliteManager {
     @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
     @SatelliteResult public int registerForSatelliteModemStateChanged(
             @NonNull @CallbackExecutor Executor executor,
-            @NonNull SatelliteStateCallback callback) {
+            @NonNull SatelliteModemStateCallback callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
 
         try {
             ITelephony telephony = getITelephony();
             if (telephony != null) {
-                ISatelliteStateCallback internalCallback = new ISatelliteStateCallback.Stub() {
+                ISatelliteModemStateCallback internalCallback =
+                        new ISatelliteModemStateCallback.Stub() {
                     @Override
                     public void onSatelliteModemStateChanged(int state) {
                         executor.execute(() -> Binder.withCleanCallingIdentity(() ->
                                 callback.onSatelliteModemStateChanged(state)));
                     }
                 };
-                sSatelliteStateCallbackMap.put(callback, internalCallback);
+                sSatelliteModemStateCallbackMap.put(callback, internalCallback);
                 return telephony.registerForSatelliteModemStateChanged(mSubId, internalCallback);
             } else {
                 throw new IllegalStateException("telephony service is null.");
@@ -1332,16 +1350,18 @@ public final class SatelliteManager {
      * If callback was not registered before, the request will be ignored.
      *
      * @param callback The callback that was passed to
-     * {@link #registerForSatelliteModemStateChanged(Executor, SatelliteStateCallback)}.
+     * {@link #registerForSatelliteModemStateChanged(Executor, SatelliteModemStateCallback)}.
      *
      * @throws SecurityException if the caller doesn't have required permission.
      * @throws IllegalStateException if the Telephony process is not currently available.
      */
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
     @FlaggedApi(Flags.FLAG_OEM_ENABLED_SATELLITE_FLAG)
-    public void unregisterForSatelliteModemStateChanged(@NonNull SatelliteStateCallback callback) {
+    public void unregisterForSatelliteModemStateChanged(
+            @NonNull SatelliteModemStateCallback callback) {
         Objects.requireNonNull(callback);
-        ISatelliteStateCallback internalCallback = sSatelliteStateCallbackMap.remove(callback);
+        ISatelliteModemStateCallback internalCallback = sSatelliteModemStateCallbackMap.remove(
+                callback);
 
         try {
             ITelephony telephony = getITelephony();
@@ -2131,6 +2151,35 @@ public final class SatelliteManager {
             loge("unregisterForSatelliteCapabilitiesChanged() RemoteException: " + ex);
             ex.rethrowFromSystemServer();
         }
+    }
+
+    /**
+     * Get all satellite PLMNs for which attach is enable for carrier.
+     *
+     * @param subId subId The subscription ID of the carrier.
+     *
+     * @return List of plmn for carrier satellite service. If no plmn is available, empty list will
+     * be returned.
+     */
+    @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
+    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    @NonNull public List<String> getAllSatellitePlmnsForCarrier(int subId) {
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            throw new IllegalArgumentException("Invalid subscription ID");
+        }
+
+        try {
+            ITelephony telephony = getITelephony();
+            if (telephony != null) {
+                return telephony.getAllSatellitePlmnsForCarrier(subId);
+            } else {
+                throw new IllegalStateException("Telephony service is null.");
+            }
+        } catch (RemoteException ex) {
+            loge("getAllSatellitePlmnsForCarrier() RemoteException: " + ex);
+            ex.rethrowFromSystemServer();
+        }
+        return new ArrayList<>();
     }
 
     private static ITelephony getITelephony() {

@@ -16,13 +16,13 @@
 
 package android.content.pm;
 
+import android.annotation.FlaggedApi;
 import android.annotation.FloatRange;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.TestApi;
 import android.app.Activity;
-import android.app.compat.CompatChanges;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.Disabled;
 import android.compat.annotation.EnabledSince;
@@ -36,12 +36,12 @@ import android.content.res.TypedArray;
 import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.UserHandle;
 import android.util.ArraySet;
 import android.util.Printer;
 import android.window.OnBackInvokedCallback;
 
 import com.android.internal.util.Parcelling;
+import com.android.window.flags.Flags;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -1099,6 +1099,8 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
     @ChangeId
     @Overridable
     @Disabled
+    @TestApi
+    @FlaggedApi(Flags.FLAG_APP_COMPAT_PROPERTIES_API)
     public static final long OVERRIDE_ENABLE_COMPAT_IGNORE_ORIENTATION_REQUEST_WHEN_LOOP_DETECTED =
             273509367L; // buganizer id
 
@@ -1786,8 +1788,7 @@ public class ActivityInfo extends ComponentInfo implements Parcelable {
      * @hide
      */
     public boolean isChangeEnabled(long changeId) {
-        return CompatChanges.isChangeEnabled(changeId, applicationInfo.packageName,
-                UserHandle.getUserHandleForUid(applicationInfo.uid));
+        return applicationInfo.isChangeEnabled(changeId);
     }
 
     /** @hide */

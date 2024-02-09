@@ -17,7 +17,7 @@
 package com.android.wm.shell.back;
 
 import static com.android.internal.jank.InteractionJankMonitor.CUJ_PREDICTIVE_BACK_HOME;
-import static com.android.window.flags.Flags.predictiveBackSystemAnimations;
+import static com.android.window.flags.Flags.predictiveBackSystemAnims;
 import static com.android.wm.shell.common.ExecutorUtils.executeRemoteCallWithTaskPermission;
 import static com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_BACK_PREVIEW;
 import static com.android.wm.shell.sysui.ShellSharedConstants.KEY_EXTRA_SHELL_BACK_ANIMATION;
@@ -176,6 +176,10 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
     private StatusBarCustomizer mCustomizer;
     private boolean mTrackingLatency;
 
+    // Keep previous navigation type before remove mBackNavigationInfo.
+    @BackNavigationInfo.BackTargetType
+    private int mPreviousNavigationType;
+
     public BackAnimationController(
             @NonNull ShellInit shellInit,
             @NonNull ShellController shellController,
@@ -240,7 +244,7 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
     private void setupAnimationDeveloperSettingsObserver(
             @NonNull ContentResolver contentResolver,
             @NonNull @ShellBackgroundThread final Handler backgroundHandler) {
-        if (predictiveBackSystemAnimations()) {
+        if (predictiveBackSystemAnims()) {
             ProtoLog.d(WM_SHELL_BACK_PREVIEW, "Back animation aconfig flag is enabled, therefore "
                     + "developer settings flag is ignored and no content observer registered");
             return;
@@ -263,7 +267,7 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
      */
     @ShellBackgroundThread
     private void updateEnableAnimationFromFlags() {
-        boolean isEnabled = predictiveBackSystemAnimations() || isDeveloperSettingEnabled();
+        boolean isEnabled = predictiveBackSystemAnims() || isDeveloperSettingEnabled();
         mEnableAnimations.set(isEnabled);
         ProtoLog.d(WM_SHELL_BACK_PREVIEW, "Back animation enabled=%s", isEnabled);
     }
@@ -403,8 +407,8 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
         mCurrentTracker.updateStartLocation();
         // Dispatch onBackStarted, only to app callbacks.
         // System callbacks will receive onBackStarted when the remote animation starts.
-        if (!shouldDispatchToAnimator()) {
-            tryDispatchOnBackStarted(mActiveCallback, mCurrentTracker.createStartEvent(null));
+        if (!shouldDispatchToAnimator() && mActiveCallback != null) {
+            tryDispatchAppOnBackStarted(mActiveCallback, mCurrentTracker.createStartEvent(null));
         }
     }
 
@@ -507,7 +511,7 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
             mActiveCallback = mBackNavigationInfo.getOnBackInvokedCallback();
             // App is handling back animation. Cancel system animation latency tracking.
             cancelLatencyTracking();
-            tryDispatchOnBackStarted(mActiveCallback, touchTracker.createStartEvent(null));
+            tryDispatchAppOnBackStarted(mActiveCallback, touchTracker.createStartEvent(null));
         }
     }
 
@@ -551,14 +555,24 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
                 && mBackNavigationInfo.isPrepareRemoteAnimation();
     }
 
-    private void tryDispatchOnBackStarted(IOnBackInvokedCallback callback,
+    private void tryDispatchAppOnBackStarted(
+            IOnBackInvokedCallback callback,
             BackMotionEvent backEvent) {
-        if (callback == null || mOnBackStartDispatched) {
+        if (mOnBackStartDispatched && callback != null) {
+            return;
+        }
+        dispatchOnBackStarted(callback, backEvent);
+        mOnBackStartDispatched = true;
+    }
+
+    private void dispatchOnBackStarted(
+            IOnBackInvokedCallback callback,
+            BackMotionEvent backEvent) {
+        if (callback == null) {
             return;
         }
         try {
             callback.onBackStarted(backEvent);
-            mOnBackStartDispatched = true;
         } catch (RemoteException e) {
             Log.e(TAG, "dispatchOnBackStarted error: ", e);
         }
@@ -861,6 +875,7 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
         mShellBackAnimationRegistry.resetDefaultCrossActivity();
         cancelLatencyTracking();
         if (mBackNavigationInfo != null) {
+            mPreviousNavigationType = mBackNavigationInfo.getType();
             mBackNavigationInfo.onBackNavigationFinished(triggerBack);
             mBackNavigationInfo = null;
         }
@@ -940,9 +955,17 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
 
                                     if (apps.length >= 1) {
                                         mCurrentTracker.updateStartLocation();
-                                        tryDispatchOnBackStarted(
-                                                mActiveCallback,
-                                                mCurrentTracker.createStartEvent(apps[0]));
+                                        BackMotionEvent startEvent =
+                                                mCurrentTracker.createStartEvent(apps[0]);
+                                        // {@code mActiveCallback} is the callback from
+                                        // the BackAnimationRunners and not a real app-side
+                                        // callback. We also dispatch to the app-side callback
+                                        // (which should be a system callback with PRIORITY_SYSTEM)
+                                        // to keep consistent with app registered callbacks.
+                                        dispatchOnBackStarted(mActiveCallback, startEvent);
+                                        tryDispatchAppOnBackStarted(
+                                                mBackNavigationInfo.getOnBackInvokedCallback(),
+                                                startEvent);
                                     }
 
                                     // Dispatch the first progress after animation start for
@@ -965,7 +988,9 @@ public class BackAnimationController implements RemoteCallable<BackAnimationCont
                         mShellExecutor.execute(
                                 () -> {
                                     if (!mShellBackAnimationRegistry.cancel(
-                                            mBackNavigationInfo.getType())) {
+                                            mBackNavigationInfo != null
+                                                    ? mBackNavigationInfo.getType()
+                                                    : mPreviousNavigationType)) {
                                         return;
                                     }
                                     if (!mBackGestureStarted) {

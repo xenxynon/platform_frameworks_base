@@ -16,8 +16,10 @@
 
 package android.hardware.biometrics;
 
+import android.annotation.DrawableRes;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.graphics.Bitmap;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -30,11 +32,14 @@ import java.util.List;
  */
 public class PromptInfo implements Parcelable {
 
+    @DrawableRes private int mLogoRes = -1;
+    @Nullable private Bitmap mLogoBitmap;
     @NonNull private CharSequence mTitle;
     private boolean mUseDefaultTitle;
     @Nullable private CharSequence mSubtitle;
     private boolean mUseDefaultSubtitle;
     @Nullable private CharSequence mDescription;
+    @Nullable private PromptContentViewParcelable mContentView;
     @Nullable private CharSequence mDeviceCredentialTitle;
     @Nullable private CharSequence mDeviceCredentialSubtitle;
     @Nullable private CharSequence mDeviceCredentialDescription;
@@ -55,11 +60,15 @@ public class PromptInfo implements Parcelable {
     }
 
     PromptInfo(Parcel in) {
+        mLogoRes = in.readInt();
+        mLogoBitmap = in.readTypedObject(Bitmap.CREATOR);
         mTitle = in.readCharSequence();
         mUseDefaultTitle = in.readBoolean();
         mSubtitle = in.readCharSequence();
         mUseDefaultSubtitle = in.readBoolean();
         mDescription = in.readCharSequence();
+        mContentView = in.readParcelable(PromptContentViewParcelable.class.getClassLoader(),
+                PromptContentViewParcelable.class);
         mDeviceCredentialTitle = in.readCharSequence();
         mDeviceCredentialSubtitle = in.readCharSequence();
         mDeviceCredentialDescription = in.readCharSequence();
@@ -95,11 +104,14 @@ public class PromptInfo implements Parcelable {
 
     @Override
     public void writeToParcel(Parcel dest, int flags) {
+        dest.writeInt(mLogoRes);
+        dest.writeTypedObject(mLogoBitmap, 0);
         dest.writeCharSequence(mTitle);
         dest.writeBoolean(mUseDefaultTitle);
         dest.writeCharSequence(mSubtitle);
         dest.writeBoolean(mUseDefaultSubtitle);
         dest.writeCharSequence(mDescription);
+        dest.writeParcelable(mContentView, 0);
         dest.writeCharSequence(mDeviceCredentialTitle);
         dest.writeCharSequence(mDeviceCredentialSubtitle);
         dest.writeCharSequence(mDeviceCredentialDescription);
@@ -152,9 +164,30 @@ public class PromptInfo implements Parcelable {
         }
         return false;
     }
+
+    /**
+     * Returns whether MANAGE_BIOMETRIC_DIALOG is contained.
+     */
+    public boolean containsManageBioApiConfigurations() {
+        if (mLogoRes != -1) {
+            return true;
+        } else if (mLogoBitmap != null) {
+            return true;
+        }
+        return false;
+    }
     // LINT.ThenChange(frameworks/base/core/java/android/hardware/biometrics/BiometricPrompt.java)
 
     // Setters
+    public void setLogoRes(@DrawableRes int logoRes) {
+        mLogoRes = logoRes;
+        checkOnlyOneLogoSet();
+    }
+
+    public void setLogoBitmap(@NonNull Bitmap logoBitmap) {
+        mLogoBitmap = logoBitmap;
+        checkOnlyOneLogoSet();
+    }
 
     public void setTitle(CharSequence title) {
         mTitle = title;
@@ -174,6 +207,10 @@ public class PromptInfo implements Parcelable {
 
     public void setDescription(CharSequence description) {
         mDescription = description;
+    }
+
+    public void setContentView(PromptContentView view) {
+        mContentView = (PromptContentViewParcelable) view;
     }
 
     public void setDeviceCredentialTitle(CharSequence deviceCredentialTitle) {
@@ -236,6 +273,14 @@ public class PromptInfo implements Parcelable {
     }
 
     // Getters
+    @DrawableRes
+    public int getLogoRes() {
+        return mLogoRes;
+    }
+
+    public Bitmap getLogoBitmap() {
+        return mLogoBitmap;
+    }
 
     public CharSequence getTitle() {
         return mTitle;
@@ -255,6 +300,15 @@ public class PromptInfo implements Parcelable {
 
     public CharSequence getDescription() {
         return mDescription;
+    }
+
+    /**
+     * Gets the content view for the prompt.
+     *
+     * @return The content view for the prompt, or null if the prompt has no content view.
+     */
+    public PromptContentView getContentView() {
+        return mContentView;
     }
 
     public CharSequence getDeviceCredentialTitle() {
@@ -319,5 +373,12 @@ public class PromptInfo implements Parcelable {
 
     public boolean isShowEmergencyCallButton() {
         return mShowEmergencyCallButton;
+    }
+
+    private void checkOnlyOneLogoSet() {
+        if (mLogoRes != -1 && mLogoBitmap != null) {
+            throw new IllegalStateException(
+                    "Exclusively one of logo resource or logo bitmap can be set");
+        }
     }
 }

@@ -19,7 +19,6 @@ package com.android.systemui.keyguard.ui.composable.section
 import android.view.View
 import android.widget.ImageView
 import androidx.annotation.IdRes
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,10 +35,10 @@ import com.android.systemui.animation.view.LaunchableImageView
 import com.android.systemui.keyguard.ui.binder.KeyguardIndicationAreaBinder
 import com.android.systemui.keyguard.ui.binder.KeyguardQuickAffordanceViewBinder
 import com.android.systemui.keyguard.ui.view.KeyguardIndicationArea
+import com.android.systemui.keyguard.ui.viewmodel.AodAlphaViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardIndicationAreaViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardQuickAffordanceViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardQuickAffordancesCombinedViewModel
-import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.KeyguardIndicationController
@@ -56,54 +55,41 @@ constructor(
     private val vibratorHelper: VibratorHelper,
     private val indicationController: KeyguardIndicationController,
     private val indicationAreaViewModel: KeyguardIndicationAreaViewModel,
-    private val keyguardRootViewModel: KeyguardRootViewModel,
+    private val alphaViewModel: AodAlphaViewModel,
 ) {
-    @Composable
-    fun SceneScope.BottomArea(
-        modifier: Modifier = Modifier,
-    ) {
-        Row(
-            modifier =
-                modifier
-                    .padding(
-                        horizontal =
-                            dimensionResource(R.dimen.keyguard_affordance_horizontal_offset)
-                    )
-                    .padding(
-                        bottom = dimensionResource(R.dimen.keyguard_affordance_vertical_offset)
-                    ),
-        ) {
-            Shortcut(
-                isStart = true,
-            )
-
-            IndicationArea(
-                modifier = Modifier.weight(1f),
-            )
-
-            Shortcut(
-                isStart = false,
-            )
-        }
-    }
-
+    /**
+     * Renders a single lockscreen shortcut.
+     *
+     * @param isStart Whether the shortcut goes on the left (in left-to-right locales).
+     * @param applyPadding Whether to apply padding around the shortcut, this is needed if the
+     *   shortcut is placed along the edges of the display.
+     */
     @Composable
     fun SceneScope.Shortcut(
         isStart: Boolean,
+        applyPadding: Boolean,
         modifier: Modifier = Modifier,
     ) {
         MovableElement(
             key = if (isStart) StartButtonElementKey else EndButtonElementKey,
             modifier = modifier,
         ) {
-            Shortcut(
-                viewId = if (isStart) R.id.start_button else R.id.end_button,
-                viewModel = if (isStart) viewModel.startButton else viewModel.endButton,
-                transitionAlpha = viewModel.transitionAlpha,
-                falsingManager = falsingManager,
-                vibratorHelper = vibratorHelper,
-                indicationController = indicationController,
-            )
+            content {
+                Shortcut(
+                    viewId = if (isStart) R.id.start_button else R.id.end_button,
+                    viewModel = if (isStart) viewModel.startButton else viewModel.endButton,
+                    transitionAlpha = viewModel.transitionAlpha,
+                    falsingManager = falsingManager,
+                    vibratorHelper = vibratorHelper,
+                    indicationController = indicationController,
+                    modifier =
+                        if (applyPadding) {
+                            Modifier.shortcutPadding()
+                        } else {
+                            Modifier
+                        }
+                )
+            }
         }
     }
 
@@ -113,13 +99,15 @@ constructor(
     ) {
         MovableElement(
             key = IndicationAreaElementKey,
-            modifier = modifier,
+            modifier = modifier.shortcutPadding(),
         ) {
-            IndicationArea(
-                indicationAreaViewModel = indicationAreaViewModel,
-                keyguardRootViewModel = keyguardRootViewModel,
-                indicationController = indicationController,
-            )
+            content {
+                IndicationArea(
+                    indicationAreaViewModel = indicationAreaViewModel,
+                    alphaViewModel = alphaViewModel,
+                    indicationController = indicationController,
+                )
+            }
         }
     }
 
@@ -195,7 +183,7 @@ constructor(
     @Composable
     private fun IndicationArea(
         indicationAreaViewModel: KeyguardIndicationAreaViewModel,
-        keyguardRootViewModel: KeyguardRootViewModel,
+        alphaViewModel: AodAlphaViewModel,
         indicationController: KeyguardIndicationController,
         modifier: Modifier = Modifier,
     ) {
@@ -208,7 +196,7 @@ constructor(
                     KeyguardIndicationAreaBinder.bind(
                         view = view,
                         viewModel = indicationAreaViewModel,
-                        keyguardRootViewModel = keyguardRootViewModel,
+                        aodAlphaViewModel = alphaViewModel,
                         indicationController = indicationController,
                     )
                 )
@@ -217,6 +205,14 @@ constructor(
             onRelease = { disposable?.dispose() },
             modifier = modifier.fillMaxWidth(),
         )
+    }
+
+    @Composable
+    private fun Modifier.shortcutPadding(): Modifier {
+        return this.padding(
+                horizontal = dimensionResource(R.dimen.keyguard_affordance_horizontal_offset)
+            )
+            .padding(bottom = dimensionResource(R.dimen.keyguard_affordance_vertical_offset))
     }
 }
 

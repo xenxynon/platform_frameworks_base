@@ -53,6 +53,7 @@ import android.graphics.Rect;
 import android.os.Binder;
 import android.platform.test.annotations.Presubmit;
 import android.view.SurfaceControl;
+import android.view.View;
 import android.window.ITaskFragmentOrganizer;
 import android.window.TaskFragmentAnimationParams;
 import android.window.TaskFragmentInfo;
@@ -90,8 +91,7 @@ public class TaskFragmentTest extends WindowTestsBase {
         mOrganizer = new TaskFragmentOrganizer(Runnable::run);
         mIOrganizer = ITaskFragmentOrganizer.Stub.asInterface(mOrganizer.getOrganizerToken()
                 .asBinder());
-        mAtm.mWindowOrganizerController.mTaskFragmentOrganizerController
-                .registerOrganizer(mIOrganizer);
+        registerTaskFragmentOrganizer(mIOrganizer);
         mTaskFragment = new TaskFragmentBuilder(mAtm)
                 .setCreateParentTask()
                 .setOrganizer(mOrganizer)
@@ -269,8 +269,7 @@ public class TaskFragmentTest extends WindowTestsBase {
         mTaskFragment.getTask().addChild(activityBelow, 0);
 
         // Ensure the activity below is visible
-        mTaskFragment.getTask().ensureActivitiesVisible(null /* starting */, 0 /* configChanges */,
-                false /* preserveWindows */);
+        mTaskFragment.getTask().ensureActivitiesVisible(null /* starting */);
         assertEquals(true, activityBelow.isVisibleRequested());
     }
 
@@ -686,6 +685,9 @@ public class TaskFragmentTest extends WindowTestsBase {
         // Return Task bounds if dimming on parent Task.
         final Rect dimBounds = new Rect();
         mTaskFragment.setEmbeddedDimArea(EMBEDDED_DIM_AREA_PARENT_TASK);
+        final Dimmer dimmer = mTaskFragment.getDimmer();
+        spyOn(dimmer);
+        doReturn(taskBounds).when(dimmer).getDimBounds();
         mTaskFragment.getDimBounds(dimBounds);
         assertEquals(taskBounds, dimBounds);
 
@@ -693,5 +695,76 @@ public class TaskFragmentTest extends WindowTestsBase {
         mTaskFragment.setEmbeddedDimArea(EMBEDDED_DIM_AREA_TASK_FRAGMENT);
         mTaskFragment.getDimBounds(dimBounds);
         assertEquals(taskFragmentBounds, dimBounds);
+    }
+
+    @Test
+    public void testMoveFocusToAdjacentWindow() {
+        // Setup two activities in ActivityEmbedding split.
+        final Task task = createTask(mDisplayContent);
+        final TaskFragment taskFragmentLeft = new TaskFragmentBuilder(mAtm)
+                .setParentTask(task)
+                .createActivityCount(2)
+                .setOrganizer(mOrganizer)
+                .setFragmentToken(new Binder())
+                .build();
+        final TaskFragment taskFragmentRight = new TaskFragmentBuilder(mAtm)
+                .setParentTask(task)
+                .createActivityCount(1)
+                .setOrganizer(mOrganizer)
+                .setFragmentToken(new Binder())
+                .build();
+        taskFragmentLeft.setAdjacentTaskFragment(taskFragmentRight);
+        taskFragmentLeft.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        taskFragmentRight.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        task.setBounds(0, 0, 1200, 1000);
+        taskFragmentLeft.setBounds(0, 0, 600, 1000);
+        taskFragmentRight.setBounds(600, 0, 1200, 1000);
+        final ActivityRecord appLeftTop = taskFragmentLeft.getTopMostActivity();
+        final ActivityRecord appLeftBottom = taskFragmentLeft.getBottomMostActivity();
+        final ActivityRecord appRightTop = taskFragmentRight.getTopMostActivity();
+        appLeftTop.setVisibleRequested(true);
+        appRightTop.setVisibleRequested(true);
+        final WindowState winLeftTop = createAppWindow(appLeftTop, "winLeftTop");
+        final WindowState winLeftBottom = createAppWindow(appLeftBottom, "winLeftBottom");
+        final WindowState winRightTop = createAppWindow(appRightTop, "winRightTop");
+        winLeftTop.setHasSurface(true);
+        winRightTop.setHasSurface(true);
+
+        taskFragmentLeft.setResumedActivity(appLeftTop, "test");
+        taskFragmentRight.setResumedActivity(appRightTop, "test");
+        appLeftTop.setState(RESUMED, "test");
+        appRightTop.setState(RESUMED, "test");
+        mDisplayContent.mFocusedApp = appRightTop;
+
+        // Make the appLeftTop be the focused activity and ensure the focused app is updated.
+        appLeftTop.moveFocusableActivityToTop("test");
+        assertEquals(winLeftTop, mDisplayContent.mCurrentFocus);
+
+        // Send request from a non-focused window with valid direction.
+        assertFalse(mWm.moveFocusToAdjacentWindow(null, winLeftBottom.mClient, View.FOCUS_RIGHT));
+        // The focus should remain the same.
+        assertEquals(winLeftTop, mDisplayContent.mCurrentFocus);
+
+        // Send request from the focused window with valid direction.
+        assertTrue(mWm.moveFocusToAdjacentWindow(null, winLeftTop.mClient, View.FOCUS_RIGHT));
+        // The focus should change.
+        assertEquals(winRightTop, mDisplayContent.mCurrentFocus);
+
+        // Send request from the focused window with invalid direction.
+        assertFalse(mWm.moveFocusToAdjacentWindow(null, winRightTop.mClient, View.FOCUS_UP));
+        // The focus should remain the same.
+        assertEquals(winRightTop, mDisplayContent.mCurrentFocus);
+
+        // Send request from the focused window with valid direction.
+        assertTrue(mWm.moveFocusToAdjacentWindow(null, winRightTop.mClient, View.FOCUS_BACKWARD));
+        // The focus should change.
+        assertEquals(winLeftTop, mDisplayContent.mCurrentFocus);
+    }
+
+    private WindowState createAppWindow(ActivityRecord app, String name) {
+        final WindowState win = createWindow(null, TYPE_BASE_APPLICATION, app, name,
+                0 /* ownerId */, false /* ownerCanAddInternalSystemWindow */, new TestIWindow());
+        mWm.mWindowMap.put(win.mClient.asBinder(), win);
+        return win;
     }
 }

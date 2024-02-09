@@ -50,6 +50,8 @@ import com.android.systemui.statusbar.phone.SystemUIDialog;
 
 import com.google.zxing.WriterException;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Dialog for media output broadcast.
  */
@@ -102,10 +104,11 @@ public class MediaOutputBroadcastDialog extends MediaOutputBaseDialog {
             if (mAlertDialog == null || mBroadcastErrorMessage == null) {
                 return;
             }
+            byte[] code = s.toString().getBytes(StandardCharsets.UTF_8);
             boolean breakBroadcastCodeRuleTextLengthLessThanMin =
-                    s.length() > 0 && s.length() < BROADCAST_CODE_MIN_LENGTH;
+                    code.length > 0 && code.length < BROADCAST_CODE_MIN_LENGTH;
             boolean breakBroadcastCodeRuleTextLengthMoreThanMax =
-                    s.length() > BROADCAST_CODE_MAX_LENGTH;
+                    code.length > BROADCAST_CODE_MAX_LENGTH;
             boolean breakRule = breakBroadcastCodeRuleTextLengthLessThanMin
                     || breakBroadcastCodeRuleTextLengthMoreThanMax;
 
@@ -143,9 +146,10 @@ public class MediaOutputBroadcastDialog extends MediaOutputBaseDialog {
             if (mAlertDialog == null || mBroadcastErrorMessage == null) {
                 return;
             }
+            byte[] name = s.toString().getBytes(StandardCharsets.UTF_8);
             boolean breakBroadcastNameRuleTextLengthMoreThanMax =
-                    s.length() > BROADCAST_NAME_MAX_LENGTH;
-            boolean breakRule = breakBroadcastNameRuleTextLengthMoreThanMax || (s.length() == 0);
+                    name.length > BROADCAST_NAME_MAX_LENGTH;
+            boolean breakRule = breakBroadcastNameRuleTextLengthMoreThanMax || (name.length == 0);
 
             if (breakBroadcastNameRuleTextLengthMoreThanMax) {
                 mBroadcastErrorMessage.setText(
@@ -493,13 +497,7 @@ public class MediaOutputBroadcastDialog extends MediaOutputBaseDialog {
 
     @Override
     public boolean isBroadcastSupported() {
-        boolean isBluetoothLeDevice = false;
-        if (mMediaOutputController.getCurrentConnectedMediaDevice() != null) {
-            isBluetoothLeDevice = mMediaOutputController.isBluetoothLeDevice(
-                    mMediaOutputController.getCurrentConnectedMediaDevice());
-        }
-
-        return mMediaOutputController.isBroadcastSupported() && isBluetoothLeDevice;
+        return mMediaOutputController.isBroadcastSupported();
     }
 
     @Override
@@ -523,6 +521,7 @@ public class MediaOutputBroadcastDialog extends MediaOutputBaseDialog {
     public void handleLeBroadcastMetadataChanged() {
         Log.d(TAG, "handleLeBroadcastMetadataChanged:");
         refreshUi();
+        startBroadcastWithConnectedDevices();
     }
 
     @Override

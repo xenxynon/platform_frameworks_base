@@ -32,6 +32,7 @@ import android.hardware.display.VirtualDisplayConfig;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Message;
+import android.util.ArraySet;
 import android.util.Pair;
 import android.view.ContentRecordingSession;
 import android.view.Display;
@@ -51,6 +52,7 @@ import android.window.ScreenCapture;
 import com.android.internal.policy.KeyInterceptionInfo;
 import com.android.server.input.InputManagerService;
 import com.android.server.policy.WindowManagerPolicy;
+import com.android.server.wm.SensitiveContentPackages.PackageInfo;
 
 import java.lang.annotation.Retention;
 import java.util.List;
@@ -1012,4 +1014,20 @@ public abstract class WindowManagerInternal {
      */
     public abstract void setOrientationRequestPolicy(boolean respected,
             int[] fromOrientations, int[] toOrientations);
+
+    /**
+     * Set whether screen capture should be disabled for all windows of a specific app windows based
+     * on sensitive content protections.
+     *
+     * @param packageInfos set of {@link PackageInfo} whose windows should be blocked from capture
+     */
+    public abstract void addBlockScreenCaptureForApps(@NonNull ArraySet<PackageInfo> packageInfos);
+
+    /**
+     * Clears apps added to collection of apps in which screen capture should be disabled.
+     *
+     * <p> This clears and resets any existing set or added applications from
+     * * {@link #addBlockScreenCaptureForApps(ArraySet)}
+     */
+    public abstract void clearBlockedApps();
 }

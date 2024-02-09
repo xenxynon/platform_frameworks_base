@@ -2409,6 +2409,17 @@ class ContextImpl extends Context {
         }
     }
 
+    @Override
+    public int checkContentUriPermissionFull(Uri uri, int pid, int uid, int modeFlags) {
+        try {
+            return ActivityManager.getService().checkContentUriPermissionFull(
+                    ContentProvider.getUriWithoutUserId(uri), pid, uid, modeFlags,
+                    resolveUserId(uri));
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     @NonNull
     @Override
     public int[] checkUriPermissions(@NonNull List<Uri> uris, int pid, int uid,
@@ -3481,24 +3492,13 @@ class ContextImpl extends Context {
         }
         mResources = r;
 
-        // only do this if the user already has more than one preferred locale
-        if (android.content.res.Flags.defaultLocale()
-                && r.getConfiguration().getLocales().size() > 1) {
-            LocaleConfig lc;
-            if (getUserId() < 0) {
-                lc = LocaleConfig.fromContextIgnoringOverride(this);
-            } else {
-                // This is needed because the app might have locale config overrides that need to
-                // be read from disk in order for resources to correctly choose which values to
-                // load.
-                StrictMode.ThreadPolicy policy = StrictMode.allowThreadDiskReads();
-                try {
-                    lc = new LocaleConfig(this);
-                } finally {
-                    StrictMode.setThreadPolicy(policy);
-                }
+        if (r != null) {
+            // only do this if the user already has more than one preferred locale
+            if (android.content.res.Flags.defaultLocale()
+                    && r.getConfiguration().getLocales().size() > 1) {
+                LocaleConfig lc = LocaleConfig.fromContextIgnoringOverride(this);
+                mResourcesManager.setLocaleConfig(lc);
             }
-            mResourcesManager.setLocaleConfig(lc);
         }
     }
 

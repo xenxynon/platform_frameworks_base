@@ -20,3 +20,31 @@ flag {
     description: "Flag for GnssMeasurementRequest WorkSource API"
     bug: "295235160"
 }
+
+flag {
+    name: "release_supl_connection_on_timeout"
+    namespace: "location"
+    description: "Flag for releasing SUPL connection on timeout"
+    bug: "315024652"
+}
+
+flag {
+    name: "location_validation"
+    namespace: "location"
+    description: "Flag for location validation"
+    bug: "314328533"
+}
+
+flag {
+    name: "gnss_configuration_from_resource"
+    namespace: "location"
+    description: "Flag for GNSS configuration from resource"
+    bug: "317734846"
+}
+
+flag {
+    name: "replace_future_elapsed_realtime_jni"
+    namespace: "location"
+    description: "Flag for replacing future elapsedRealtime in JNI"
+    bug: "314328533"
+}

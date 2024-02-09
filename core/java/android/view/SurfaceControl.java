@@ -22,13 +22,13 @@ import static android.graphics.Matrix.MSKEW_X;
 import static android.graphics.Matrix.MSKEW_Y;
 import static android.graphics.Matrix.MTRANS_X;
 import static android.graphics.Matrix.MTRANS_Y;
-import static android.view.Display.INVALID_DISPLAY;
 import static android.view.SurfaceControlProto.HASH_CODE;
 import static android.view.SurfaceControlProto.LAYER_ID;
 import static android.view.SurfaceControlProto.NAME;
 
 import android.Manifest;
 import android.annotation.CallbackExecutor;
+import android.annotation.FlaggedApi;
 import android.annotation.FloatRange;
 import android.annotation.IntDef;
 import android.annotation.IntRange;
@@ -38,7 +38,6 @@ import android.annotation.RequiresPermission;
 import android.annotation.Size;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
-import android.content.Context;
 import android.graphics.ColorSpace;
 import android.graphics.GraphicBuffer;
 import android.graphics.Matrix;
@@ -53,13 +52,8 @@ import android.hardware.HardwareBuffer;
 import android.hardware.OverlayProperties;
 import android.hardware.SyncFence;
 import android.hardware.display.DeviceProductInfo;
-import android.hardware.display.DisplayManager;
-import android.hardware.display.DisplayManagerGlobal;
 import android.hardware.display.DisplayedContentSample;
 import android.hardware.display.DisplayedContentSamplingAttributes;
-import android.hardware.display.IDisplayManager;
-import android.hardware.display.IVirtualDisplayCallback;
-import android.hardware.display.VirtualDisplay;
 import android.hardware.graphics.common.DisplayDecorationSupport;
 import android.opengl.EGLDisplay;
 import android.opengl.EGLSync;
@@ -68,8 +62,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.RemoteException;
-import android.os.ServiceManager;
 import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Slog;
@@ -80,6 +72,7 @@ import android.view.Surface.OutOfResourcesException;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.Preconditions;
 import com.android.internal.util.VirtualRefBasePtr;
+import com.android.window.flags.Flags;
 
 import dalvik.system.CloseGuard;
 
@@ -286,6 +279,8 @@ public final class SurfaceControl implements Parcelable {
     private static native int nativeGetLayerId(long nativeObject);
     private static native void nativeAddTransactionCommittedListener(long nativeObject,
             TransactionCommittedListener listener);
+    private static native void nativeAddTransactionCompletedListener(long nativeObject,
+            Consumer<TransactionStats> listener);
     private static native void nativeSanitize(long transactionObject, int pid, int uid);
     private static native void nativeSetDestinationFrame(long transactionObj, long nativeObject,
             int l, int t, int r, int b);
@@ -299,6 +294,10 @@ public final class SurfaceControl implements Parcelable {
     private static native void nativeClearTrustedPresentationCallback(long transactionObj,
             long nativeObject);
     private static native StalledTransactionInfo nativeGetStalledTransactionInfo(int pid);
+    private static native void nativeSetDesiredPresentTimeNanos(long transactionObj,
+                                                                long desiredPresentTimeNanos);
+    private static native void nativeSetFrameTimeline(long transactionObj,
+                                                           long vsyncId);
 
     /**
      * Transforms that can be applied to buffers as they are displayed to a window.
@@ -2358,92 +2357,6 @@ public final class SurfaceControl implements Parcelable {
     }
 
     /**
-     * Because this API is now going through {@link DisplayManager}, orientation and displayRect
-     * will automatically be computed based on configuration changes. Because of this, the params
-     * orientation and displayRect are ignored
-     *
-     * @hide
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.TIRAMISU,
-            publicAlternatives = "Use {@code VirtualDisplay#resize(int, int, int)} instead.",
-            trackingBug = 247078497)
-    public static void setDisplayProjection(IBinder displayToken, int orientation,
-            Rect layerStackRect, Rect displayRect) {
-        DisplayManagerGlobal.getInstance().resizeVirtualDisplay(
-                IVirtualDisplayCallback.Stub.asInterface(displayToken), layerStackRect.width(),
-                layerStackRect.height(), 1);
-    }
-
-    /**
-     * @hide
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.TIRAMISU,
-            publicAlternatives = "Use {@code MediaProjection#createVirtualDisplay()} with flag "
-                    + " {@code VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR} for mirroring instead.",
-            trackingBug = 247078497)
-    public static void setDisplayLayerStack(IBinder displayToken, int layerStack) {
-        IBinder b = ServiceManager.getService(Context.DISPLAY_SERVICE);
-        if (b == null) {
-            throw new UnsupportedOperationException();
-        }
-
-        IDisplayManager dm = IDisplayManager.Stub.asInterface(b);
-        try {
-            dm.setDisplayIdToMirror(displayToken, layerStack);
-        } catch (RemoteException e) {
-            throw new UnsupportedOperationException(e);
-        }
-    }
-
-    /**
-     * @hide
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.TIRAMISU,
-            publicAlternatives = "Use {@code VirtualDisplay#setSurface(Surface)} instead.",
-            trackingBug = 247078497)
-    public static void setDisplaySurface(IBinder displayToken, Surface surface) {
-        IVirtualDisplayCallback virtualDisplayCallback =
-                IVirtualDisplayCallback.Stub.asInterface(displayToken);
-        DisplayManagerGlobal dm = DisplayManagerGlobal.getInstance();
-        dm.setVirtualDisplaySurface(virtualDisplayCallback, surface);
-    }
-
-    /**
-     * Secure is no longer supported because this is only called from outside system which cannot
-     * create secure displays.
-     * @hide
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.TIRAMISU,
-            publicAlternatives = "Use {@code MediaProjection#createVirtualDisplay()} or "
-                    + "{@code DisplayManager#createVirtualDisplay()} instead.",
-            trackingBug = 247078497)
-    public static IBinder createDisplay(String name, boolean secure) {
-        if (name == null) {
-            throw new IllegalArgumentException("name must not be null");
-        }
-
-        // We don't have a size yet so pass in 1 for width and height since 0 is invalid
-        VirtualDisplay vd = DisplayManager.createVirtualDisplay(name, 1 /* width */, 1 /* height */,
-                INVALID_DISPLAY, null /* Surface */);
-        return vd == null ? null : vd.getToken().asBinder();
-    }
-
-    /**
-     * @hide
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.TIRAMISU,
-            publicAlternatives = "Use {@code VirtualDisplay#release()} instead.",
-            trackingBug = 247078497)
-    public static void destroyDisplay(IBinder displayToken) {
-        if (displayToken == null) {
-            throw new IllegalArgumentException("displayToken must not be null");
-        }
-
-        DisplayManagerGlobal.getInstance().releaseVirtualDisplay(
-                IVirtualDisplayCallback.Stub.asInterface(displayToken));
-    }
-
-    /**
      * Returns whether protected content is supported in GPU composition.
      * @hide
      */
@@ -2646,6 +2559,50 @@ public final class SurfaceControl implements Parcelable {
          */
         void onTransactionCommitted();
     }
+
+    /**
+     * Transaction stats given to the listener registered in
+     * {@link SurfaceControl.Transaction#addTransactionCompletedListener}
+     */
+    @FlaggedApi(Flags.FLAG_SDK_DESIRED_PRESENT_TIME)
+    public static final class TransactionStats {
+        private long mLatchTimeNanos;
+        private SyncFence mSyncFence;
+
+        // called from native
+        private TransactionStats(long latchTimeNanos, long presentFencePtr) {
+            mLatchTimeNanos = latchTimeNanos;
+            mSyncFence = new SyncFence(presentFencePtr);
+        }
+
+        /**
+         * Close the TransactionStats. Called by the framework when the listener returns.
+         * @hide
+         */
+        public void close() {
+            mSyncFence.close();
+        }
+
+        /**
+         * Returns the timestamp (in CLOCK_MONOTONIC) of when the frame was latched by the
+         * framework and queued for presentation.
+         */
+        @FlaggedApi(Flags.FLAG_SDK_DESIRED_PRESENT_TIME)
+        public long getLatchTimeNanos() {
+            return mLatchTimeNanos;
+        }
+
+        /**
+         * Returns a new SyncFence that signals when the transaction has been presented.
+         * The caller takes ownership of the fence and is responsible for closing
+         * it by calling {@link SyncFence#close}.
+         * If a device does not support present fences, an empty fence will be returned.
+         */
+        @FlaggedApi(Flags.FLAG_SDK_DESIRED_PRESENT_TIME)
+        public @NonNull SyncFence getPresentFence() {
+            return new SyncFence(mSyncFence);
+        }
+    };
 
     /**
      * Threshold values that are sent with
@@ -4283,12 +4240,35 @@ public final class SurfaceControl implements Parcelable {
         }
 
         /**
-         * Sets the frame timeline vsync id received from choreographer
-         * {@link Choreographer#getVsyncId()} that corresponds to the transaction submitted on that
-         * surface control.
+         * Sets the frame timeline to use in SurfaceFlinger.
          *
-         * @hide
+         * A frame timeline should be chosen based on the frame deadline the application
+         * can meet when rendering the frame and the application's desired presentation time.
+         * By setting a frame timeline, SurfaceFlinger tries to present the frame at the
+         * corresponding expected presentation time.
+         *
+         * To receive frame timelines, a callback must be posted to Choreographer using
+         * {@link Choreographer#postVsyncCallback} The vsyncId can then be extracted from the
+         * {@link Choreographer.FrameTimeline#getVsyncId}.
+         *
+         * @param vsyncId The vsync ID received from Choreographer, setting the frame's
+         *                presentation target to the corresponding expected presentation time
+         *                and deadline from the frame to be rendered. A stale or invalid value
+         *                will be ignored.
+         *
          */
+        @FlaggedApi(Flags.FLAG_SDK_DESIRED_PRESENT_TIME)
+        @NonNull
+        public Transaction setFrameTimeline(long vsyncId) {
+            if (!Flags.sdkDesiredPresentTime()) {
+                Log.w(TAG, "addTransactionCompletedListener was called but flag is disabled");
+                return this;
+            }
+            nativeSetFrameTimelineVsync(mNativeObject, vsyncId);
+            return this;
+        }
+
+        /** @hide */
         @NonNull
         public Transaction setFrameTimelineVsync(long frameTimelineVsyncId) {
             nativeSetFrameTimelineVsync(mNativeObject, frameTimelineVsyncId);
@@ -4305,6 +4285,9 @@ public final class SurfaceControl implements Parcelable {
          * to avoid dropping frames (overwriting transactions), and unable to use timestamps (Which
          * provide a more efficient solution), then this method provides a method to pace your
          * transaction application.
+         * The listener is invoked once the transaction is applied, and never again. Multiple
+         * listeners can be added to the same transaction, however the order the listeners will
+         * be called is not guaranteed.
          *
          * @param executor The executor that the callback should be invoked on.
          * @param listener The callback that will be invoked when the transaction has been
@@ -4317,6 +4300,33 @@ public final class SurfaceControl implements Parcelable {
             TransactionCommittedListener listenerInner =
                     () -> executor.execute(listener::onTransactionCommitted);
             nativeAddTransactionCommittedListener(mNativeObject, listenerInner);
+            return this;
+        }
+
+        /**
+         * Request to add a TransactionCompletedListener.
+         *
+         * The listener is invoked when transaction is presented, and never again. Multiple
+         * listeners can be added to the same transaction, however the order the listeners will
+         * be called is not guaranteed.
+         *
+         * @param executor The executor that the callback should be invoked on.
+         * @param listener The callback that will be invoked when the transaction has been
+         *                 completed.
+         */
+        @FlaggedApi(Flags.FLAG_SDK_DESIRED_PRESENT_TIME)
+        @NonNull
+        public Transaction addTransactionCompletedListener(
+                @NonNull @CallbackExecutor Executor executor,
+                @NonNull Consumer<TransactionStats> listener) {
+
+            if (!Flags.sdkDesiredPresentTime()) {
+                Log.w(TAG, "addTransactionCompletedListener was called but flag is disabled");
+                return this;
+            }
+            Consumer<TransactionStats> listenerInner = stats -> executor.execute(
+                                    () -> listener.andThen(TransactionStats::close).accept(stats));
+            nativeAddTransactionCompletedListener(mNativeObject, listenerInner);
             return this;
         }
 
@@ -4418,6 +4428,30 @@ public final class SurfaceControl implements Parcelable {
             return this;
         }
 
+        /**
+         * Specifies a desiredPresentTimeNanos for the transaction. The framework will try to
+         * present the transaction at or after the time specified.
+         *
+         * Transactions will not be presented until all of their acquire fences have signaled even
+         * if the app requests an earlier present time.
+         *
+         * If an earlier transaction has a desired present time of x, and a later transaction has
+         * a desired present time that is before x, the later transaction will not preempt the
+         * earlier transaction.
+         *
+         * @param desiredPresentTimeNanos The desired time (in CLOCK_MONOTONIC) for the transaction.
+         * @return This transaction
+         */
+        @FlaggedApi(Flags.FLAG_SDK_DESIRED_PRESENT_TIME)
+        @NonNull
+        public Transaction setDesiredPresentTimeNanos(long desiredPresentTimeNanos) {
+            if (!Flags.sdkDesiredPresentTime()) {
+                Log.w(TAG, "addTransactionCompletedListener was called but flag is disabled");
+                return this;
+            }
+            nativeSetDesiredPresentTimeNanos(mNativeObject, desiredPresentTimeNanos);
+            return this;
+        }
         /**
          * Writes the transaction to parcel, clearing the transaction as if it had been applied so
          * it can be used to store future transactions. It's the responsibility of the parcel

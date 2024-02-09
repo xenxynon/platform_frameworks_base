@@ -16,7 +16,9 @@
 
 #include <SkFontMetrics.h>
 #include <SkRRect.h>
+#include <com_android_graphics_hwui_flags.h>
 
+#include "../utils/Color.h"
 #include "Canvas.h"
 #include "FeatureFlags.h"
 #include "MinikinUtils.h"
@@ -27,7 +29,11 @@
 #include "hwui/PaintFilter.h"
 #include "pipeline/skia/SkiaRecordingCanvas.h"
 
+namespace flags = com::android::graphics::hwui::flags;
+
 namespace android {
+
+inline constexpr int kHighContrastTextBorderWidth = 4;
 
 static inline void drawStroke(SkScalar left, SkScalar right, SkScalar top, SkScalar thickness,
                               const Paint& paint, Canvas* canvas) {
@@ -41,15 +47,26 @@ static void simplifyPaint(int color, Paint* paint) {
     paint->setShader(nullptr);
     paint->setColorFilter(nullptr);
     paint->setLooper(nullptr);
-    paint->setStrokeWidth(4 + 0.04 * paint->getSkFont().getSize());
+    paint->setStrokeWidth(kHighContrastTextBorderWidth + 0.04 * paint->getSkFont().getSize());
     paint->setStrokeJoin(SkPaint::kRound_Join);
     paint->setLooper(nullptr);
 }
 
 class DrawTextFunctor {
 public:
+    /**
+     * Creates a Functor to draw the given text layout.
+     *
+     * @param layout
+     * @param canvas
+     * @param paint
+     * @param x
+     * @param y
+     * @param totalAdvance
+     * @param bounds bounds of the text. Only required if high contrast text mode is enabled.
+     */
     DrawTextFunctor(const minikin::Layout& layout, Canvas* canvas, const Paint& paint, float x,
-                    float y, float totalAdvance)
+                    float y, float totalAdvance, const minikin::MinikinRect& bounds)
             : layout(layout)
             , canvas(canvas)
             , paint(paint)
@@ -57,7 +74,8 @@ public:
             , y(y)
             , totalAdvance(totalAdvance)
             , underlinePosition(0)
-            , underlineThickness(0) {}
+            , underlineThickness(0)
+            , bounds(bounds) {}
 
     void operator()(size_t start, size_t end) {
         auto glyphFunc = [&](uint16_t* text, float* positions) {
@@ -73,15 +91,30 @@ public:
         if (CC_UNLIKELY(canvas->isHighContrastText() && paint.getAlpha() != 0)) {
             // high contrast draw path
             int color = paint.getColor();
-            int channelSum = SkColorGetR(color) + SkColorGetG(color) + SkColorGetB(color);
-            bool darken = channelSum < (128 * 3);
+            bool darken;
+            if (flags::high_contrast_text_luminance()) {
+                uirenderer::Lab lab = uirenderer::sRGBToLab(color);
+                darken = lab.L <= 50;
+            } else {
+                int channelSum = SkColorGetR(color) + SkColorGetG(color) + SkColorGetB(color);
+                darken = channelSum < (128 * 3);
+            }
 
             // outline
             gDrawTextBlobMode = DrawTextBlobMode::HctOutline;
             Paint outlinePaint(paint);
             simplifyPaint(darken ? SK_ColorWHITE : SK_ColorBLACK, &outlinePaint);
             outlinePaint.setStyle(SkPaint::kStrokeAndFill_Style);
-            canvas->drawGlyphs(glyphFunc, glyphCount, outlinePaint, x, y, totalAdvance);
+            if (flags::high_contrast_text_small_text_rect()) {
+                auto bgBounds(bounds);
+                auto padding = kHighContrastTextBorderWidth + 0.1f * paint.getSkFont().getSize();
+                bgBounds.offset(x, y);
+                canvas->drawRect(bgBounds.mLeft - padding, bgBounds.mTop - padding,
+                                 bgBounds.mRight + padding, bgBounds.mBottom + padding,
+                                 outlinePaint);
+            } else {
+                canvas->drawGlyphs(glyphFunc, glyphCount, outlinePaint, x, y, totalAdvance);
+            }
 
             // inner
             gDrawTextBlobMode = DrawTextBlobMode::HctInner;
@@ -136,6 +169,7 @@ private:
     float totalAdvance;
     float underlinePosition;
     float underlineThickness;
+    const minikin::MinikinRect& bounds;
 };
 
 }  // namespace android

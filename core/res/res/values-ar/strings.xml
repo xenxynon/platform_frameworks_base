@@ -438,6 +438,10 @@
     <string name="permdesc_foregroundServiceSystemExempted" msgid="947381760834649622">"‏يسمح هذا الإذن للتطبيق بالاستفادة من الخدمات التي تعمل في المقدّمة ذات النوع \"systemExempted\"."</string>
     <string name="permlab_foregroundServiceFileManagement" msgid="2585000987966045030">"‏تشغيل الخدمة التي تعمل في المقدّمة ذات النوع \"fileManagement\""</string>
     <string name="permdesc_foregroundServiceFileManagement" msgid="417103601269698508">"‏يسمح هذا الإذن للتطبيق بالاستفادة من الخدمات التي تعمل في المقدّمة ذات النوع \"fileManagement\""</string>
+    <!-- no translation found for permlab_foregroundServiceMediaProcessing (3045295152245381864) -->
+    <skip />
+    <!-- no translation found for permdesc_foregroundServiceMediaProcessing (8303086172106677312) -->
+    <skip />
     <string name="permlab_foregroundServiceSpecialUse" msgid="7973536745876645082">"‏تشغيل الخدمة التي تعمل في المقدّمة ذات النوع \"specialUse\""</string>
     <string name="permdesc_foregroundServiceSpecialUse" msgid="646713654541885919">"‏يسمح هذا الإذن للتطبيق بالاستفادة من الخدمات التي تعمل في المقدّمة ذات النوع \"specialUse\"."</string>
     <string name="permlab_getPackageSize" msgid="375391550792886641">"قياس مساحة تخزين التطبيق"</string>
@@ -636,7 +640,8 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"استخدام قفل الشاشة"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"أدخِل قفل الشاشة للمتابعة"</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"اضغط بقوة على أداة الاستشعار"</string>
-    <string name="fingerprint_acquired_insufficient" msgid="623888149088216458">"يتعذّر التعرّف على بصمة الإصبع. يُرجى إعادة المحاولة."</string>
+    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
+    <skip />
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"يُرجى تنظيف مستشعر بصمات الإصبع ثم إعادة المحاولة."</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"تنظيف المستشعر ثم إعادة المحاولة"</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"اضغط بقوة على أداة الاستشعار"</string>
@@ -700,7 +705,8 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"ارفع هاتفك إلى مستوى العينَين لأنّه تتعذّر رؤية وجهك"</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"حركة أكثر من اللازم. يُرجى حمل الهاتف بثبات."</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"يُرجى إعادة تسجيل وجهك."</string>
-    <string name="face_acquired_too_different" msgid="2520389515612972889">"يتعذّر التعرّف على الوجه. يُرجى إعادة المحاولة."</string>
+    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
+    <skip />
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"غيِّر موضع رأسك قليلاً."</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"يُرجى النظر إلى هاتفك مباشرةً"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"يُرجى النظر إلى هاتفك مباشرةً"</string>
@@ -1910,8 +1916,7 @@
     <string name="zen_mode_default_weekends_name" msgid="4707200272709377930">"نهاية الأسبوع"</string>
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"حدث"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"النوم"</string>
-    <!-- no translation found for zen_mode_implicit_trigger_description (5714956693073007111) -->
-    <skip />
+    <string name="zen_mode_implicit_trigger_description" msgid="5714956693073007111">"تحت إدارة \"<xliff:g id="APP_NAME">%1$s</xliff:g>\""</string>
     <string name="zen_mode_implicit_activated" msgid="2634285680776672994">"مفعَّل"</string>
     <string name="zen_mode_implicit_deactivated" msgid="8688441768371501750">"غير مفعَّل"</string>
     <string name="muted_by" msgid="91464083490094950">"يعمل <xliff:g id="THIRD_PARTY">%1$s</xliff:g> على كتم بعض الأصوات."</string>
@@ -2317,7 +2322,7 @@
     <string name="sensor_privacy_start_use_dialog_turn_on_button" msgid="7089318886628390827">"إزالة الحظر"</string>
     <string name="sensor_privacy_notification_channel_label" msgid="936036783155261349">"الخصوصية في جهاز الاستشعار"</string>
     <string name="splash_screen_view_icon_description" msgid="180638751260598187">"رمز التطبيق"</string>
-    <string name="splash_screen_view_branding_description" msgid="7911129347402728216">"الصورة الذهنية للعلامة التجارية للتطبيق"</string>
+    <string name="splash_screen_view_branding_description" msgid="7911129347402728216">"هوية العلامة التجارية للتطبيق"</string>
     <string name="view_and_control_notification_title" msgid="4300765399209912240">"التحقّق من إعدادات الوصول"</string>
     <string name="view_and_control_notification_content" msgid="8003766498562604034">"يمكن لخدمة <xliff:g id="SERVICE_NAME">%s</xliff:g> الاطّلاع على شاشتك والتحكّم فيها. انقر لمراجعة الإعدادات."</string>
     <string name="ui_translation_accessibility_translated_text" msgid="3197547218178944544">"<xliff:g id="MESSAGE">%1$s</xliff:g> (مُترجَم)."</string>
@@ -2344,9 +2349,9 @@
     <string name="permdesc_startForegroundServicesFromBackground" msgid="4071826571656001537">"يسمح هذا الإذن للتطبيق المصاحب ببدء الخدمات التي تعمل في المقدّمة من الخلفية."</string>
     <string name="mic_access_on_toast" msgid="2666925317663845156">"الميكروفون متاح."</string>
     <string name="mic_access_off_toast" msgid="8111040892954242437">"تم حظر الميكروفون."</string>
-    <string name="connected_display_unavailable_notification_title" msgid="5265409360902073556">"يتعذّر إجراء نسخ مطابق لمحتوى جهازك إلى الشاشة"</string>
+    <string name="connected_display_unavailable_notification_title" msgid="5265409360902073556">"يتعذّر البثّ على الشاشة"</string>
     <string name="connected_display_unavailable_notification_content" msgid="3845903313751217516">"يُرجى استخدام كابل آخر وإعادة المحاولة."</string>
-    <string name="connected_display_thermally_unavailable_notification_content" msgid="9205758199439955949">"جهازك ساخن للغاية ولا يمكنه إجراء نسخ مطابق للمحتوى إلى الشاشة إلى أن تنخفض حرارته."</string>
+    <string name="connected_display_thermally_unavailable_notification_content" msgid="9205758199439955949">"جهازك ساخن للغاية ولا يمكنه البث على الشاشة إلى أن تنخفض حرارته."</string>
     <string name="concurrent_display_notification_name" msgid="1526911253558311131">"Dual Screen"</string>
     <string name="concurrent_display_notification_active_title" msgid="4892473462327943673">"‏ميزة Dual Screen مفعّلة"</string>
     <string name="concurrent_display_notification_active_content" msgid="5889355473710601270">"يستخدم \"<xliff:g id="APP_NAME">%1$s</xliff:g>\" كلتا الشاشتين لعرض المحتوى."</string>
@@ -2370,4 +2375,5 @@
     <string name="profile_label_work_3" msgid="4834572253956798917">"ملف العمل 3"</string>
     <string name="profile_label_test" msgid="9168641926186071947">"ملف شخصي تجريبي"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"ملف شخصي مشترك"</string>
+    <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
 </resources>

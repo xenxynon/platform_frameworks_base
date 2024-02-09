@@ -16,6 +16,8 @@
 
 package android.content;
 
+import static android.content.flags.Flags.FLAG_ENABLE_BIND_PACKAGE_ISOLATED_PROCESS;
+
 import android.annotation.AttrRes;
 import android.annotation.CallbackExecutor;
 import android.annotation.CheckResult;
@@ -296,6 +298,7 @@ public abstract class Context {
             BIND_ALLOW_ACTIVITY_STARTS,
             BIND_INCLUDE_CAPABILITIES,
             BIND_SHARED_ISOLATED_PROCESS,
+            BIND_PACKAGE_ISOLATED_PROCESS,
             BIND_EXTERNAL_SERVICE
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -318,6 +321,7 @@ public abstract class Context {
             BIND_ALLOW_ACTIVITY_STARTS,
             BIND_INCLUDE_CAPABILITIES,
             BIND_SHARED_ISOLATED_PROCESS,
+            BIND_PACKAGE_ISOLATED_PROCESS,
             // Intentionally not include BIND_EXTERNAL_SERVICE, because it'd cause sign-extension.
             // This would allow Android Studio to show a warning, if someone tries to use
             // BIND_EXTERNAL_SERVICE BindServiceFlags.
@@ -510,6 +514,26 @@ public abstract class Context {
      *
      */
     public static final int BIND_SHARED_ISOLATED_PROCESS = 0x00002000;
+
+    /**
+     * Flag for {@link #bindIsolatedService}: Bind the service into a shared isolated process,
+     * but only with other isolated services from the same package that declare the same process
+     * name.
+     *
+     * <p>Specifying this flag allows multiple isolated services defined in the same package to be
+     * running in a single shared isolated process. This shared isolated process must be specified
+     * since this flag will not work with the default application process.
+     *
+     * <p>This flag is different from {@link #BIND_SHARED_ISOLATED_PROCESS} since it only
+     * allows binding services from the same package in the same shared isolated process. This also
+     * means the shared package isolated process is global, and not scoped to each potential
+     * calling app.
+     *
+     * <p>The shared isolated process instance is identified by the "android:process" attribute
+     * defined by the service. This flag cannot be used without this attribute set.
+     */
+    @FlaggedApi(FLAG_ENABLE_BIND_PACKAGE_ISOLATED_PROCESS)
+    public static final int BIND_PACKAGE_ISOLATED_PROCESS = 1 << 14;
 
     /***********    Public flags above this line ***********/
     /***********    Hidden flags below this line ***********/
@@ -3547,6 +3571,8 @@ public abstract class Context {
      *
      * @param receiver The BroadcastReceiver to unregister.
      *
+     * @throws IllegalArgumentException if the {@code receiver} was not previously registered or
+     *                                  already unregistered.
      * @see #registerReceiver
      */
     public abstract void unregisterReceiver(BroadcastReceiver receiver);
@@ -4217,6 +4243,7 @@ public abstract class Context {
             VIRTUALIZATION_SERVICE,
             GRAMMATICAL_INFLECTION_SERVICE,
             SECURITY_STATE_SERVICE,
+           //@hide: ECM_ENHANCED_CONFIRMATION_SERVICE,
 
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -6509,6 +6536,18 @@ public abstract class Context {
     public static final String SECURITY_STATE_SERVICE = "security_state";
 
     /**
+     * Use with {@link #getSystemService(String)} to retrieve an
+     * {@link android.app.ecm.EnhancedConfirmationManager}.
+     *
+     * @see #getSystemService(String)
+     * @see android.app.ecm.EnhancedConfirmationManager
+     * @hide
+     */
+    @FlaggedApi(android.permission.flags.Flags.FLAG_ENHANCED_CONFIRMATION_MODE_APIS_ENABLED)
+    @SystemApi
+    public static final String ECM_ENHANCED_CONFIRMATION_SERVICE = "ecm_enhanced_confirmation";
+
+    /**
      * Determine whether the given permission is allowed for a particular
      * process and user ID running in the system.
      *
@@ -6740,7 +6779,7 @@ public abstract class Context {
             @Intent.AccessUriMode int modeFlags);
 
     /**
-     * Determine whether a particular process and user ID has been granted
+     * Determine whether a particular process and uid has been granted
      * permission to access a specific URI.  This only checks for permissions
      * that have been explicitly granted -- if the given process/uid has
      * more general access to the URI's content provider then this check will
@@ -6764,7 +6803,38 @@ public abstract class Context {
             @Intent.AccessUriMode int modeFlags);
 
     /**
-     * Determine whether a particular process and user ID has been granted
+     * Determine whether a particular process and uid has been granted
+     * permission to access a specific content URI.
+     *
+     * <p>Unlike {@link #checkUriPermission(Uri, int, int, int)}, this method
+     * checks for general access to the URI's content provider, as well as
+     * explicitly granted permissions.</p>
+     *
+     * <p>Note, this check will throw an {@link IllegalArgumentException}
+     * for non-content URIs.</p>
+     *
+     * @param uri The content uri that is being checked.
+     * @param pid (Optional) The process ID being checked against. If the
+     * pid is unknown, pass -1.
+     * @param uid The UID being checked against.  A uid of 0 is the root
+     * user, which will pass every permission check.
+     * @param modeFlags The access modes to check.
+     *
+     * @return {@link PackageManager#PERMISSION_GRANTED} if the given
+     * pid/uid is allowed to access that uri, or
+     * {@link PackageManager#PERMISSION_DENIED} if it is not.
+     *
+     * @see #checkUriPermission(Uri, int, int, int)
+     */
+    @FlaggedApi(android.security.Flags.FLAG_CONTENT_URI_PERMISSION_APIS)
+    @PackageManager.PermissionResult
+    public int checkContentUriPermissionFull(@NonNull Uri uri, int pid, int uid,
+            @Intent.AccessUriMode int modeFlags) {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
+
+    /**
+     * Determine whether a particular process and uid has been granted
      * permission to access a list of URIs.  This only checks for permissions
      * that have been explicitly granted -- if the given process/uid has
      * more general access to the URI's content provider then this check will
@@ -6800,7 +6870,7 @@ public abstract class Context {
             @Intent.AccessUriMode int modeFlags, IBinder callerToken);
 
     /**
-     * Determine whether the calling process and user ID has been
+     * Determine whether the calling process and uid has been
      * granted permission to access a specific URI.  This is basically
      * the same as calling {@link #checkUriPermission(Uri, int, int,
      * int)} with the pid and uid returned by {@link
@@ -6823,7 +6893,7 @@ public abstract class Context {
     public abstract int checkCallingUriPermission(Uri uri, @Intent.AccessUriMode int modeFlags);
 
     /**
-     * Determine whether the calling process and user ID has been
+     * Determine whether the calling process and uid has been
      * granted permission to access a list of URIs.  This is basically
      * the same as calling {@link #checkUriPermissions(List, int, int, int)}
      * with the pid and uid returned by {@link
@@ -6917,7 +6987,7 @@ public abstract class Context {
             @Intent.AccessUriMode int modeFlags);
 
     /**
-     * If a particular process and user ID has not been granted
+     * If a particular process and uid has not been granted
      * permission to access a specific URI, throw {@link
      * SecurityException}.  This only checks for permissions that have
      * been explicitly granted -- if the given process/uid has more
@@ -6937,7 +7007,7 @@ public abstract class Context {
             Uri uri, int pid, int uid, @Intent.AccessUriMode int modeFlags, String message);
 
     /**
-     * If the calling process and user ID has not been granted
+     * If the calling process and uid has not been granted
      * permission to access a specific URI, throw {@link
      * SecurityException}.  This is basically the same as calling
      * {@link #enforceUriPermission(Uri, int, int, int, String)} with

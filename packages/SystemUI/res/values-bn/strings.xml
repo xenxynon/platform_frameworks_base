@@ -188,10 +188,12 @@
     <string name="face_reenroll_failure_dialog_content" msgid="7073947334397236935">"\'ফেস আনলক\' সেট-আপ করা যায়নি। আবার চেষ্টা করতে সেটিংসে যান।"</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"আঙ্গুলের ছাপের সেন্সর স্পর্শ করুন"</string>
     <string name="fingerprint_dialog_authenticated_confirmation" msgid="1603899612957562862">"চালিয়ে যেতে \'আনলক করুন\' আইকনে প্রেস করুন"</string>
-    <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"মুখ শনাক্ত করতে পারছি না। পরিবর্তে আঙ্গুলের ছাপ ব্যবহার করুন।"</string>
+    <!-- no translation found for fingerprint_dialog_use_fingerprint_instead (5542430577183894219) -->
+    <skip />
     <!-- no translation found for keyguard_face_failed_use_fp (7140293906176164263) -->
     <skip />
-    <string name="keyguard_face_failed" msgid="9044619102286917151">"ফেস শনাক্ত করা যায়নি"</string>
+    <!-- no translation found for keyguard_face_failed (2346762871330729634) -->
+    <skip />
     <string name="keyguard_suggest_fingerprint" msgid="8742015961962702960">"পরিবর্তে ফিঙ্গারপ্রিন্ট ব্যবহার করুন"</string>
     <string name="keyguard_face_unlock_unavailable" msgid="1581949044193418736">"\'ফেস আনলক\' উপলভ্য নেই"</string>
     <string name="accessibility_bluetooth_connected" msgid="4745196874551115205">"ব্লুটুথ সংযুক্ত হয়েছে৷"</string>
@@ -330,12 +332,17 @@
     <string name="quick_settings_screen_record_label" msgid="8650355346742003694">"স্ক্রিন রেকর্ড"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"শুরু করুন"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"বন্ধ করুন"</string>
-    <!-- no translation found for qs_record_issue_label (8166290137285529059) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_start (2979831312582567056) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_stop (3531747965741982657) -->
-    <skip />
+    <string name="qs_record_issue_label" msgid="8166290137285529059">"রেকর্ডিংয়ে সমস্যা"</string>
+    <string name="qs_record_issue_start" msgid="2979831312582567056">"শুরু করুন"</string>
+    <string name="qs_record_issue_stop" msgid="3531747965741982657">"বন্ধ করুন"</string>
+    <string name="qs_record_issue_dropdown_header" msgid="5995983175678658329">"ডিভাইস ব্যবহার করার সময় কোথায় অসুবিধা হয়েছিল?"</string>
+    <string name="qs_record_issue_dropdown_prompt" msgid="2526949919167046219">"সমস্যার প্রকার বেছে নিন"</string>
+    <string name="qs_record_issue_dropdown_screenrecord" msgid="6396141928484257626">"স্ক্রিন রেকর্ড"</string>
+  <string-array name="qs_record_issue_types">
+    <item msgid="2947988124014085798">"পারফর্ম্যান্স"</item>
+    <item msgid="1627504621139124393">"ইউজার ইন্টারফেস"</item>
+    <item msgid="8309220355268900335">"ব্যাটারি"</item>
+  </string-array>
     <string name="quick_settings_onehanded_label" msgid="2416537930246274991">"এক হাতে ব্যবহার করার মোড"</string>
     <string name="quick_settings_contrast_label" msgid="988087460210159123">"কনট্রাস্ট"</string>
     <string name="quick_settings_contrast_standard" msgid="2538227821968061832">"স্ট্যান্ডার্ড"</string>
@@ -408,12 +415,19 @@
     <string name="keyguard_indication_charging_time_dock" msgid="3149328898931741271">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • চার্জ হচ্ছে • পুরো চার্জ হতে আরও <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g> সময় লাগবে"</string>
     <string name="communal_tutorial_indicator_text" msgid="4503010353591430123">"কমিউনিটি টিউটোরিয়াল চালু করতে বাঁদিকে সোয়াইপ করুন"</string>
     <string name="button_to_open_widget_editor" msgid="5599945944349057600">"উইজেট এডিটর খুলুন"</string>
-    <!-- no translation found for button_to_remove_widget (3948204829181214098) -->
+    <!-- no translation found for cta_tile_button_to_open_widget_editor (3871562362382963878) -->
     <skip />
-    <!-- no translation found for hub_mode_add_widget_button_text (4831464661209971729) -->
+    <!-- no translation found for cta_tile_button_to_dismiss (3377597875997861754) -->
     <skip />
-    <!-- no translation found for hub_mode_editing_exit_button_text (3704686734192264771) -->
+    <!-- no translation found for cta_label_to_edit_widget (6496885074209203756) -->
     <skip />
+    <!-- no translation found for cta_label_to_open_widget_picker (3874946756976360699) -->
+    <skip />
+    <!-- no translation found for popup_on_dismiss_cta_tile_text (8292501780996070019) -->
+    <skip />
+    <string name="button_to_remove_widget" msgid="3948204829181214098">"সরান"</string>
+    <string name="hub_mode_add_widget_button_text" msgid="4831464661209971729">"উইজেট যোগ করুন"</string>
+    <string name="hub_mode_editing_exit_button_text" msgid="3704686734192264771">"হয়ে গেছে"</string>
     <string name="accessibility_multi_user_switch_switcher" msgid="5330448341251092660">"ব্যবহারকারী পাল্টে দিন"</string>
     <string name="accessibility_multi_user_list_switcher" msgid="8574105376229857407">"পুলডাউন মেনু"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"এই সেশনের সব অ্যাপ ও ডেটা মুছে ফেলা হবে।"</string>
@@ -832,6 +846,8 @@
     <string name="notification_channel_setup" msgid="7660580986090760350">"সেট-আপ"</string>
     <string name="notification_channel_storage" msgid="2720725707628094977">"স্টোরেজ"</string>
     <string name="notification_channel_hints" msgid="7703783206000346876">"হিন্ট"</string>
+    <!-- no translation found for notification_channel_accessibility (8956203986976245820) -->
+    <skip />
     <string name="instant_apps" msgid="8337185853050247304">"Instant Apps"</string>
     <string name="instant_apps_title" msgid="8942706782103036910">"<xliff:g id="APP">%1$s</xliff:g> চলছে"</string>
     <string name="instant_apps_message" msgid="6112428971833011754">"অ্যাপটি ইনস্টল না করে চালু করা হয়েছে।"</string>
@@ -867,7 +883,6 @@
     <string name="auto_saver_title" msgid="6873691178754086596">"ব্যাটারি সেভার চালু হওয়ার সময় সেট করতে ট্যাপ করুন"</string>
     <string name="auto_saver_text" msgid="3214960308353838764">"ব্যাটারির চার্জ শেষ হয়ে যাওয়ার সম্ভাবনা দেখা দিলে চালু করুন"</string>
     <string name="no_auto_saver_action" msgid="7467924389609773835">"না থাক"</string>
-    <string name="heap_dump_tile_name" msgid="2464189856478823046">"Dump SysUI Heap"</string>
     <string name="ongoing_privacy_dialog_a11y_title" msgid="2205794093673327974">"ব্যবহার হচ্ছে"</string>
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"অ্যাপ্লিকেশনগুলি আপনার <xliff:g id="TYPES_LIST">%s</xliff:g> ব্যবহার করছে।"</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
@@ -928,6 +943,10 @@
     <string name="accessibility_floating_button_migration_tooltip" msgid="5217151214439341902">"অ্যাক্সেসিবিলিটি ফিচার খুলতে ট্যাপ করুন। কাস্টমাইজ করুন বা সেটিংসে এই বোতামটি সরিয়ে দিন।\n\n"<annotation id="link">"সেটিংস দেখুন"</annotation></string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"এটি অস্থায়ীভাবে লুকাতে বোতামটি কোণে সরান"</string>
     <string name="accessibility_floating_button_undo" msgid="511112888715708241">"আগের অবস্থায় ফিরুন"</string>
+    <!-- no translation found for accessibility_floating_button_hidden_notification_title (4115036997406994799) -->
+    <skip />
+    <!-- no translation found for accessibility_floating_button_hidden_notification_text (1457021647040915658) -->
+    <skip />
     <string name="accessibility_floating_button_undo_message_label_text" msgid="9017658016426242640">"<xliff:g id="FEATURE_NAME">%s</xliff:g>-এর শর্টকাট সরানো হয়েছে"</string>
     <string name="accessibility_floating_button_undo_message_number_text" msgid="4909270290725226075">"{count,plural, =1{#টি শর্টকাট সরানো হয়েছে}one{#টি শর্টকাট সরানো হয়েছে}other{#টি শর্টকাট সরানো হয়েছে}}"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"উপরে বাঁদিকে সরান"</string>
@@ -1206,9 +1225,9 @@
     <string name="assistant_attention_content_description" msgid="4166330881435263596">"ব্যবহারকারীর উপস্থিতি শনাক্ত করা হয়েছে"</string>
     <string name="set_default_notes_app_toast_content" msgid="2812374329662610753">"\'সেটিংস\' থেকে ডিফল্ট নোট নেওয়ার অ্যাপ সেট করুন"</string>
     <string name="install_app" msgid="5066668100199613936">"অ্যাপ ইনস্টল করুন"</string>
+    <string name="dismissible_keyguard_swipe" msgid="2213369651289613196">"চালিয়ে যেতে সোয়াইপ করুন"</string>
     <string name="connected_display_dialog_start_mirroring" msgid="6237895789920854982">"এক্সটার্নাল ডিসপ্লেতে মিরর করবেন?"</string>
-    <!-- no translation found for connected_display_dialog_dual_display_stop_warning (2917631104216376315) -->
-    <skip />
+    <string name="connected_display_dialog_dual_display_stop_warning" msgid="4174707498892447947">"আপনার ইনার ডিসপ্লে মিরর করা হবে। আপনার ফ্রন্ট ডিসপ্লে বন্ধ করা হবে।"</string>
     <string name="mirror_display" msgid="2515262008898122928">"ডিসপ্লে দেখান"</string>
     <string name="dismiss_dialog" msgid="2195508495854675882">"বাতিল করুন"</string>
     <string name="connected_display_icon_desc" msgid="6373560639989971997">"ডিসপ্লে কানেক্ট করা আছে"</string>

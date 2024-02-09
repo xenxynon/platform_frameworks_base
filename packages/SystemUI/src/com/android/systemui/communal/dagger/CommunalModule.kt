@@ -16,17 +16,16 @@
 
 package com.android.systemui.communal.dagger
 
-import android.content.Context
 import com.android.systemui.communal.data.db.CommunalDatabaseModule
 import com.android.systemui.communal.data.repository.CommunalMediaRepositoryModule
+import com.android.systemui.communal.data.repository.CommunalPrefsRepositoryModule
 import com.android.systemui.communal.data.repository.CommunalRepositoryModule
 import com.android.systemui.communal.data.repository.CommunalTutorialRepositoryModule
 import com.android.systemui.communal.data.repository.CommunalWidgetRepositoryModule
 import com.android.systemui.communal.widgets.EditWidgetsActivityStarter
 import com.android.systemui.communal.widgets.EditWidgetsActivityStarterImpl
-import com.android.systemui.dagger.qualifiers.Application
+import dagger.Binds
 import dagger.Module
-import dagger.Provides
 
 @Module(
     includes =
@@ -36,13 +35,12 @@ import dagger.Provides
             CommunalTutorialRepositoryModule::class,
             CommunalWidgetRepositoryModule::class,
             CommunalDatabaseModule::class,
+            CommunalPrefsRepositoryModule::class,
         ]
 )
-class CommunalModule {
-    @Provides
-    fun provideEditWidgetsActivityStarter(
-        @Application context: Context
-    ): EditWidgetsActivityStarter {
-        return EditWidgetsActivityStarterImpl(context)
-    }
+interface CommunalModule {
+    @Binds
+    fun bindEditWidgetsActivityStarter(
+        starter: EditWidgetsActivityStarterImpl
+    ): EditWidgetsActivityStarter
 }

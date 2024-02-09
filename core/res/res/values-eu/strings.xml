@@ -434,6 +434,10 @@
     <string name="permdesc_foregroundServiceSystemExempted" msgid="947381760834649622">"Aurreko planoko zerbitzuak (systemExempted motakoak) erabiltzeko baimena ematen dio aplikazioari"</string>
     <string name="permlab_foregroundServiceFileManagement" msgid="2585000987966045030">"exekutatu aurreko planoko zerbitzu bat (fileManagement motakoa)"</string>
     <string name="permdesc_foregroundServiceFileManagement" msgid="417103601269698508">"Aurreko planoko zerbitzuak (fileManagement motakoak) erabiltzeko baimena ematen die aplikazioei."</string>
+    <!-- no translation found for permlab_foregroundServiceMediaProcessing (3045295152245381864) -->
+    <skip />
+    <!-- no translation found for permdesc_foregroundServiceMediaProcessing (8303086172106677312) -->
+    <skip />
     <string name="permlab_foregroundServiceSpecialUse" msgid="7973536745876645082">"exekutatu aurreko planoko zerbitzu bat (specialUse motakoa)"</string>
     <string name="permdesc_foregroundServiceSpecialUse" msgid="646713654541885919">"Aurreko planoko zerbitzuak (specialUse motakoak) erabiltzeko baimena ematen dio aplikazioari"</string>
     <string name="permlab_getPackageSize" msgid="375391550792886641">"neurtu aplikazioen biltegiratzeko tokia"</string>
@@ -558,7 +562,7 @@
     <string name="permlab_changeTetherState" msgid="9079611809931863861">"aldatu telefono bidezko konektagarritasuna"</string>
     <string name="permdesc_changeTetherState" msgid="3025129606422533085">"Partekatutako Interneterako konexioaren egoera aldatzeko baimena ematen die aplikazioei."</string>
     <string name="permlab_accessWifiState" msgid="5552488500317911052">"ikusi wifi-konexioak"</string>
-    <string name="permdesc_accessWifiState" msgid="6913641669259483363">"Wi-Fi sareei buruzko informazioa ikusteko baimena ematen die aplikazioei, adibidez, Wi-Fi konexioa aktibatuta dagoen eta konektatutako Wi-Fi gailuen izenak zein diren."</string>
+    <string name="permdesc_accessWifiState" msgid="6913641669259483363">"Wi-Fi sareei buruzko informazioa ikusteko baimena ematen die aplikazioei, adibidez, wifi-konexioa aktibatuta dagoen eta konektatutako Wi-Fi gailuen izenak zein diren."</string>
     <string name="permlab_changeWifiState" msgid="7947824109713181554">"konektatu wifira edo deskonektatu bertatik"</string>
     <string name="permdesc_changeWifiState" msgid="7170350070554505384">"Wi-Fi sarbide-puntuetara konektatzeko edo haietatik deskonektatzeko baimena ematen die aplikazioei, baita Wi-Fi sareen gailu-konfigurazioari aldaketak egitekoa ere."</string>
     <string name="permlab_changeWifiMulticastState" msgid="285626875870754696">"onartu Wi-Fi Multicast harrera"</string>
@@ -632,7 +636,8 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Erabili pantailaren blokeoa"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"Aurrera egiteko, desblokeatu pantailaren blokeoa"</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"Sakatu irmo sentsorea"</string>
-    <string name="fingerprint_acquired_insufficient" msgid="623888149088216458">"Ezin da hauteman hatz-marka. Saiatu berriro."</string>
+    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
+    <skip />
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"Garbitu hatz-marken sentsorea eta saiatu berriro"</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"Garbitu sentsorea eta saiatu berriro"</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"Sakatu irmo sentsorea"</string>
@@ -696,7 +701,8 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"Ezin da hauteman aurpegia. Eutsi telefonoari begien parean."</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"Mugimendu gehiegi dago. Eutsi tinko telefonoari."</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"Erregistratu berriro aurpegia."</string>
-    <string name="face_acquired_too_different" msgid="2520389515612972889">"Ezin da hauteman aurpegia. Saiatu berriro."</string>
+    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
+    <skip />
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"Aldatu buruaren posizioa apur bat"</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"Begiratu zuzenago telefonoari"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"Begiratu zuzenago telefonoari"</string>
@@ -1906,8 +1912,7 @@
     <string name="zen_mode_default_weekends_name" msgid="4707200272709377930">"Asteburua"</string>
     <string name="zen_mode_default_events_name" msgid="2280682960128512257">"Gertaera"</string>
     <string name="zen_mode_default_every_night_name" msgid="1467765312174275823">"Lo egiteko"</string>
-    <!-- no translation found for zen_mode_implicit_trigger_description (5714956693073007111) -->
-    <skip />
+    <string name="zen_mode_implicit_trigger_description" msgid="5714956693073007111">"Kudeatzailea: <xliff:g id="APP_NAME">%1$s</xliff:g>"</string>
     <string name="zen_mode_implicit_activated" msgid="2634285680776672994">"Aktibatuta"</string>
     <string name="zen_mode_implicit_deactivated" msgid="8688441768371501750">"Desaktibatuta"</string>
     <string name="muted_by" msgid="91464083490094950">"<xliff:g id="THIRD_PARTY">%1$s</xliff:g> soinu batzuk isilarazten ari da"</string>
@@ -2332,7 +2337,7 @@
     <string name="default_card_name" msgid="9198284935962911468">"<xliff:g id="CARDNUMBER">%d</xliff:g> TXARTELA"</string>
     <string name="permlab_companionProfileWatch" msgid="2457738382085872542">"Aplikazio osagarrien erloju-profilaren baimena erlojuak kudeatzeko"</string>
     <string name="permdesc_companionProfileWatch" msgid="5655698581110449397">"Erlojuak kudeatzeko baimena ematen die aplikazio osagarriei."</string>
-    <string name="permlab_observeCompanionDevicePresence" msgid="9008994909653990465">"Begiratu gailu osagarrien presentzia"</string>
+    <string name="permlab_observeCompanionDevicePresence" msgid="9008994909653990465">"Begiratu gailu osagarrien presentziari"</string>
     <string name="permdesc_observeCompanionDevicePresence" msgid="3011699826788697852">"Gailu osagarrien presentzia begiratzeko baimena ematen die aplikazio osagarriei gailuak inguruan edo urrun daudenean."</string>
     <string name="permlab_deliverCompanionMessages" msgid="3931552294842980887">"Entregatu aplikazio osagarrien mezuak"</string>
     <string name="permdesc_deliverCompanionMessages" msgid="2170847384281412850">"Beste gailuetan mezuak entregatzeko baimena ematen die aplikazio osagarriei."</string>
@@ -2366,4 +2371,5 @@
     <string name="profile_label_work_3" msgid="4834572253956798917">"Lanekoa 3"</string>
     <string name="profile_label_test" msgid="9168641926186071947">"Probakoa"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"Partekatua"</string>
+    <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
 </resources>

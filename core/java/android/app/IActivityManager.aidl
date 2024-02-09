@@ -116,6 +116,7 @@ interface IActivityManager {
      * @throws RemoteException
      * @return Returns A binder token identifying the UidObserver registration.
      */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.PACKAGE_USAGE_STATS)")
     IBinder registerUidObserverForUids(in IUidObserver observer, int which, int cutpoint,
             String callingPackage, in int[] uids);
 
@@ -274,6 +275,7 @@ interface IActivityManager {
     int getProcessLimit();
     int checkUriPermission(in Uri uri, int pid, int uid, int mode, int userId,
             in IBinder callerToken);
+    int checkContentUriPermissionFull(in Uri uri, int pid, int uid, int mode, int userId);
     int[] checkUriPermissions(in List<Uri> uris, int pid, int uid, int mode, int userId,
                 in IBinder callerToken);
     void grantUriPermission(in IApplicationThread caller, in String targetPkg, in Uri uri,
@@ -715,7 +717,7 @@ interface IActivityManager {
      * @param listener    A listener to for the callback upon completion of startup data collection.
      * @param userId      The userId in the multi-user environment.
      */
-    void setApplicationStartInfoCompleteListener(IApplicationStartInfoCompleteListener listener,
+    void addApplicationStartInfoCompleteListener(IApplicationStartInfoCompleteListener listener,
             int userId);
 
 
@@ -724,7 +726,8 @@ interface IActivityManager {
      *
      * @param userId      The userId in the multi-user environment.
      */
-    void clearApplicationStartInfoCompleteListener(int userId);
+    void removeApplicationStartInfoCompleteListener(IApplicationStartInfoCompleteListener listener,
+            int userId);
 
 
     /**

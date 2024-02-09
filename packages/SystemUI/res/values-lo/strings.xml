@@ -188,10 +188,12 @@
     <string name="face_reenroll_failure_dialog_content" msgid="7073947334397236935">"ບໍ່ສາມາດຕັ້ງຄ່າການປົດລັອກດ້ວຍໜ້າໄດ້. ກະລຸນາເຂົ້າໄປການຕັ້ງຄ່າເພື່ອລອງໃໝ່."</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"ແຕະໃສ່ເຊັນເຊີລາຍນິ້ວມື"</string>
     <string name="fingerprint_dialog_authenticated_confirmation" msgid="1603899612957562862">"ກົດໄອຄອນປົດລັອກເພື່ອສືບຕໍ່"</string>
-    <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"ບໍ່ສາມາດຈຳແນກໜ້າໄດ້. ກະລຸນາໃຊ້ລາຍນິ້ວມືແທນ."</string>
+    <!-- no translation found for fingerprint_dialog_use_fingerprint_instead (5542430577183894219) -->
+    <skip />
     <!-- no translation found for keyguard_face_failed_use_fp (7140293906176164263) -->
     <skip />
-    <string name="keyguard_face_failed" msgid="9044619102286917151">"ບໍ່ສາມາດຈຳແນກໃບໜ້າໄດ້"</string>
+    <!-- no translation found for keyguard_face_failed (2346762871330729634) -->
+    <skip />
     <string name="keyguard_suggest_fingerprint" msgid="8742015961962702960">"ກະລຸນາໃຊ້ລາຍນິ້ວມືແທນ"</string>
     <string name="keyguard_face_unlock_unavailable" msgid="1581949044193418736">"ໃຊ້ການປົດລັອກດ້ວຍໜ້າບໍ່ໄດ້"</string>
     <string name="accessibility_bluetooth_connected" msgid="4745196874551115205">"ເຊື່ອມຕໍ່ Bluetooth ແລ້ວ."</string>
@@ -330,12 +332,17 @@
     <string name="quick_settings_screen_record_label" msgid="8650355346742003694">"ບັນທຶກໜ້າຈໍ"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"ເລີ່ມ"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"ຢຸດ"</string>
-    <!-- no translation found for qs_record_issue_label (8166290137285529059) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_start (2979831312582567056) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_stop (3531747965741982657) -->
-    <skip />
+    <string name="qs_record_issue_label" msgid="8166290137285529059">"ບັນຫາກ່ຽວກັບການບັນທຶກ"</string>
+    <string name="qs_record_issue_start" msgid="2979831312582567056">"ເລີ່ມ"</string>
+    <string name="qs_record_issue_stop" msgid="3531747965741982657">"ຢຸດ"</string>
+    <string name="qs_record_issue_dropdown_header" msgid="5995983175678658329">"ສ່ວນໃດຂອງປະສົບການອຸປະກອນຂອງທ່ານໄດ້ຮັບຜົນກະທົບ?"</string>
+    <string name="qs_record_issue_dropdown_prompt" msgid="2526949919167046219">"ເລືອກປະເພດບັນຫາ"</string>
+    <string name="qs_record_issue_dropdown_screenrecord" msgid="6396141928484257626">"ບັນທຶກໜ້າຈໍ"</string>
+  <string-array name="qs_record_issue_types">
+    <item msgid="2947988124014085798">"ປະສິດທິພາບ"</item>
+    <item msgid="1627504621139124393">"ສ່ວນຕິດຕໍ່ຜູ້ໃຊ້"</item>
+    <item msgid="8309220355268900335">"ແບັດເຕີຣີ"</item>
+  </string-array>
     <string name="quick_settings_onehanded_label" msgid="2416537930246274991">"ໂໝດມືດຽວ"</string>
     <string name="quick_settings_contrast_label" msgid="988087460210159123">"ຄອນທຣາສ"</string>
     <string name="quick_settings_contrast_standard" msgid="2538227821968061832">"ມາດຕະຖານ"</string>
@@ -408,12 +415,19 @@
     <string name="keyguard_indication_charging_time_dock" msgid="3149328898931741271">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • ກຳລັງສາກໄຟ • ຈະເຕັມໃນອີກ <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
     <string name="communal_tutorial_indicator_text" msgid="4503010353591430123">"ປັດຊ້າຍເພື່ອເລີ່ມບົດແນະນຳສ່ວນກາງ"</string>
     <string name="button_to_open_widget_editor" msgid="5599945944349057600">"ເປີດຕົວແກ້ໄຂວິດເຈັດ"</string>
-    <!-- no translation found for button_to_remove_widget (3948204829181214098) -->
+    <!-- no translation found for cta_tile_button_to_open_widget_editor (3871562362382963878) -->
     <skip />
-    <!-- no translation found for hub_mode_add_widget_button_text (4831464661209971729) -->
+    <!-- no translation found for cta_tile_button_to_dismiss (3377597875997861754) -->
     <skip />
-    <!-- no translation found for hub_mode_editing_exit_button_text (3704686734192264771) -->
+    <!-- no translation found for cta_label_to_edit_widget (6496885074209203756) -->
     <skip />
+    <!-- no translation found for cta_label_to_open_widget_picker (3874946756976360699) -->
+    <skip />
+    <!-- no translation found for popup_on_dismiss_cta_tile_text (8292501780996070019) -->
+    <skip />
+    <string name="button_to_remove_widget" msgid="3948204829181214098">"ລຶບອອກ"</string>
+    <string name="hub_mode_add_widget_button_text" msgid="4831464661209971729">"ເພີ່ມວິດເຈັດ"</string>
+    <string name="hub_mode_editing_exit_button_text" msgid="3704686734192264771">"ແລ້ວໆ"</string>
     <string name="accessibility_multi_user_switch_switcher" msgid="5330448341251092660">"ສະຫຼັບຜູ້ໃຊ້"</string>
     <string name="accessibility_multi_user_list_switcher" msgid="8574105376229857407">"ເມນູແບບດຶງລົງ"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"ແອັບຯ​ແລະ​ຂໍ້​ມູນ​ທັງ​ໝົດ​ໃນ​ເຊດ​ຊັນ​ນີ້​ຈະ​ຖືກ​ລຶບ​ອອກ."</string>
@@ -832,6 +846,8 @@
     <string name="notification_channel_setup" msgid="7660580986090760350">"ຕັ້ງຄ່າ"</string>
     <string name="notification_channel_storage" msgid="2720725707628094977">"ບ່ອນເກັບຂໍ້ມູນ"</string>
     <string name="notification_channel_hints" msgid="7703783206000346876">"ຄຳໃບ້"</string>
+    <!-- no translation found for notification_channel_accessibility (8956203986976245820) -->
+    <skip />
     <string name="instant_apps" msgid="8337185853050247304">"ອິນສະແຕນແອັບ"</string>
     <string name="instant_apps_title" msgid="8942706782103036910">"<xliff:g id="APP">%1$s</xliff:g> ກຳລັງເຮັດວຽກຢູ່"</string>
     <string name="instant_apps_message" msgid="6112428971833011754">"ເປີດແອັບໂດຍບໍ່ມີການຕິດຕັ້ງແລ້ວ."</string>
@@ -867,7 +883,6 @@
     <string name="auto_saver_title" msgid="6873691178754086596">"ແຕະເພື່ອຕັ້ງການເປີດຕົວປະຢັດແບັດເຕີຣີ"</string>
     <string name="auto_saver_text" msgid="3214960308353838764">"ເປີດໃຊ້ເມື່ອແບັດເຕີຣີໜ້າຈະໃກ້ໝົດ"</string>
     <string name="no_auto_saver_action" msgid="7467924389609773835">"ບໍ່, ຂອບໃຈ"</string>
-    <string name="heap_dump_tile_name" msgid="2464189856478823046">"Dump SysUI Heap"</string>
     <string name="ongoing_privacy_dialog_a11y_title" msgid="2205794093673327974">"ກຳລັງນຳໃຊ້ຢູ່"</string>
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"ແອັບພລິເຄຊັນກຳລັງໃຊ້ <xliff:g id="TYPES_LIST">%s</xliff:g> ຂອງທ່ານ."</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
@@ -928,6 +943,10 @@
     <string name="accessibility_floating_button_migration_tooltip" msgid="5217151214439341902">"ແຕະເພື່ອເປີດຄຸນສົມບັດການຊ່ວຍເຂົ້າເຖິງ. ປັບແຕ່ງ ຫຼື ປ່ຽນປຸ່ມນີ້ໃນການຕັ້ງຄ່າ.\n\n"<annotation id="link">"ເບິ່ງການຕັ້ງຄ່າ"</annotation></string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"ຍ້າຍປຸ່ມໄປໃສ່ຂອບເພື່ອເຊື່ອງມັນຊົ່ວຄາວ"</string>
     <string name="accessibility_floating_button_undo" msgid="511112888715708241">"ຍົກເລີກ"</string>
+    <!-- no translation found for accessibility_floating_button_hidden_notification_title (4115036997406994799) -->
+    <skip />
+    <!-- no translation found for accessibility_floating_button_hidden_notification_text (1457021647040915658) -->
+    <skip />
     <string name="accessibility_floating_button_undo_message_label_text" msgid="9017658016426242640">"ລຶບທາງລັດ <xliff:g id="FEATURE_NAME">%s</xliff:g> ອອກແລ້ວ"</string>
     <string name="accessibility_floating_button_undo_message_number_text" msgid="4909270290725226075">"{count,plural, =1{ລຶບ # ທາງລັດອອກແລ້ວ}other{ລຶບ # ທາງລັດອອກແລ້ວ}}"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"ຍ້າຍຊ້າຍເທິງ"</string>
@@ -1206,8 +1225,9 @@
     <string name="assistant_attention_content_description" msgid="4166330881435263596">"ກວດພົບຕົວຕົນຜູ້ໃຊ້"</string>
     <string name="set_default_notes_app_toast_content" msgid="2812374329662610753">"ຕັ້ງຄ່າແອັບຈົດບັນທຶກເລີ່ມຕົ້ນໃນການຕັ້ງຄ່າ"</string>
     <string name="install_app" msgid="5066668100199613936">"ຕິດຕັ້ງແອັບ"</string>
+    <string name="dismissible_keyguard_swipe" msgid="2213369651289613196">"ປັດເພື່ອສືບຕໍ່"</string>
     <string name="connected_display_dialog_start_mirroring" msgid="6237895789920854982">"ສາຍໃສ່ຈໍສະແດງຜົນພາຍນອກບໍ?"</string>
-    <string name="connected_display_dialog_dual_display_stop_warning" msgid="2917631104216376315">"ການເຄື່ອນໄຫວໃດກໍຕາມທີ່ກຳລັງດຳເນີນການຢູ່ Dual Screen ຈະຢຸດລົງ"</string>
+    <string name="connected_display_dialog_dual_display_stop_warning" msgid="4174707498892447947">"ການສະແດງຜົນທາງໃນຂອງທ່ານຈະຖືກສະທ້ອນ. ການສະແດງຜົນທາງໜ້າຂອງທ່ານຈະຖືກປິດໄວ້."</string>
     <string name="mirror_display" msgid="2515262008898122928">"ຈໍສະແດງຜົນແບບສະທ້ອນ"</string>
     <string name="dismiss_dialog" msgid="2195508495854675882">"ປິດໄວ້"</string>
     <string name="connected_display_icon_desc" msgid="6373560639989971997">"ເຊື່ອມຕໍ່ຈໍແລ້ວ"</string>

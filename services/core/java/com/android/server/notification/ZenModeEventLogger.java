@@ -18,11 +18,14 @@ package com.android.server.notification;
 
 import static android.app.NotificationManager.Policy.STATE_CHANNELS_BYPASSING_DND;
 import static android.provider.Settings.Global.ZEN_MODE_OFF;
+import static android.service.notification.NotificationServiceProto.CHANNEL_POLICY_PRIORITY;
+import static android.service.notification.NotificationServiceProto.CHANNEL_POLICY_NONE;
 import static android.service.notification.NotificationServiceProto.RULE_TYPE_AUTOMATIC;
 import static android.service.notification.NotificationServiceProto.RULE_TYPE_MANUAL;
 import static android.service.notification.NotificationServiceProto.RULE_TYPE_UNKNOWN;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.Flags;
 import android.app.NotificationManager;
 import android.content.pm.PackageManager;
@@ -256,13 +259,21 @@ class ZenModeEventLogger {
                 return true;
             }
 
+            if (Flags.modesApi() && hasActiveRuleCountDiff()) {
+                // Rules with INTERRUPTION_FILTER_ALL were always possible but before MODES_API
+                // they were completely useless; now they can apply effects, so we want to log
+                // when they become active/inactive, even though DND itself (as in "notification
+                // blocking") is off.
+                return true;
+            }
+
             // If zen mode didn't change, did the policy or number of active rules change? We only
             // care about changes that take effect while zen mode is on, so make sure the current
             // zen mode is not "OFF"
             if (mNewZenMode == ZEN_MODE_OFF) {
                 return false;
             }
-            return hasPolicyDiff() || hasRuleCountDiff();
+            return hasPolicyDiff() || hasActiveRuleCountDiff();
         }
 
         // Does the difference in zen mode go from off to on or vice versa?
@@ -292,6 +303,16 @@ class ZenModeEventLogger {
                 } else {
                     return ZenStateChangedEvent.DND_TURNED_OFF;
                 }
+            }
+
+            if (Flags.modesApi() && mNewZenMode == ZEN_MODE_OFF) {
+                // If the mode is OFF -> OFF then there cannot be any *effective* change to policy.
+                // (Note that, in theory, a policy diff is impossible since we don't merge the
+                // policies of INTERRUPTION_FILTER_ALL rules; this is a "just in case" check).
+                if (hasPolicyDiff() || hasChannelsBypassingDiff()) {
+                    Log.wtf(TAG, "Detected policy diff even though DND is OFF and not toggled");
+                }
+                return ZenStateChangedEvent.DND_ACTIVE_RULES_CHANGED;
             }
 
             // zen mode didn't change; we must be here because of a policy change or rule change
@@ -345,7 +366,7 @@ class ZenModeEventLogger {
          * Returns whether the previous config and new config have a different number of active
          * automatic or manual rules.
          */
-        private boolean hasRuleCountDiff() {
+        private boolean hasActiveRuleCountDiff() {
             return numActiveRulesInConfig(mPrevConfig) != numActiveRulesInConfig(mNewConfig);
         }
 
@@ -381,9 +402,11 @@ class ZenModeEventLogger {
 
         // Determine the number of (automatic & manual) rules active after the change takes place.
         int getNumRulesActive() {
-            // If the zen mode has turned off, that means nothing can be active.
-            if (mNewZenMode == ZEN_MODE_OFF) {
-                return 0;
+            if (!Flags.modesApi()) {
+                // If the zen mode has turned off, that means nothing can be active.
+                if (mNewZenMode == ZEN_MODE_OFF) {
+                    return 0;
+                }
             }
             return numActiveRulesInConfig(mNewConfig);
         }
@@ -478,8 +501,19 @@ class ZenModeEventLogger {
 
         /**
          * Convert the new policy to a DNDPolicyProto format for output in logs.
+         *
+         * <p>If {@code mNewZenMode} is {@code ZEN_MODE_OFF} (which can mean either no rules
+         * active, or only rules with {@code INTERRUPTION_FILTER_ALL} active) then this returns
+         * {@code null} (which will be mapped to a missing submessage in the proto). Although this
+         * is not the value of {@code NotificationManager#getConsolidatedNotificationPolicy()}, it
+         * makes sense for logging since that policy is not actually influencing anything.
          */
+        @Nullable
         byte[] getDNDPolicyProto() {
+            if (Flags.modesApi() && mNewZenMode == ZEN_MODE_OFF) {
+                return null;
+            }
+
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             ProtoOutputStream proto = new ProtoOutputStream(bytes);
 
@@ -519,8 +553,8 @@ class ZenModeEventLogger {
                 if (Flags.modesApi()) {
                     proto.write(DNDPolicyProto.ALLOW_CHANNELS,
                             mNewPolicy.allowPriorityChannels()
-                                    ? ZenPolicy.CHANNEL_TYPE_PRIORITY
-                                    : ZenPolicy.CHANNEL_TYPE_NONE);
+                                    ? CHANNEL_POLICY_PRIORITY
+                                    : CHANNEL_POLICY_NONE);
                 }
             } else {
                 Log.wtf(TAG, "attempted to write zen mode log event with null policy");

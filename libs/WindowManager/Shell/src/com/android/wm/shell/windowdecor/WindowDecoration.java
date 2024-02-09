@@ -21,6 +21,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.view.WindowInsets.Type.statusBars;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.WindowConfiguration.WindowingMode;
 import android.content.Context;
@@ -123,6 +124,7 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
     private WindowlessWindowManager mCaptionWindowManager;
     private SurfaceControlViewHost mViewHost;
     private Configuration mWindowDecorConfig;
+    TaskDragResizer mTaskDragResizer;
     private boolean mIsCaptionVisible;
 
     private final Binder mOwner = new Binder();
@@ -177,6 +179,13 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
      *                 constructor.
      */
     abstract void relayout(RunningTaskInfo taskInfo);
+
+    /**
+     * Used by the {@link DragPositioningCallback} associated with the implementing class to
+     * enforce drags ending in a valid position. A null result means no restriction.
+     */
+    @Nullable
+    abstract Rect calculateValidDragArea();
 
     void relayout(RelayoutParams params, SurfaceControl.Transaction startT,
             SurfaceControl.Transaction finishT, WindowContainerTransaction wct, T rootView,
@@ -270,9 +279,13 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
         }
 
         outResult.mCaptionHeight = loadDimensionPixelSize(resources, params.mCaptionHeightId);
-        final int captionWidth = taskBounds.width();
+        outResult.mCaptionWidth = params.mCaptionWidthId != Resources.ID_NULL
+                ? loadDimensionPixelSize(resources, params.mCaptionWidthId) : taskBounds.width();
+        outResult.mCaptionX = (outResult.mWidth - outResult.mCaptionWidth) / 2;
 
-        startT.setWindowCrop(mCaptionContainerSurface, captionWidth, outResult.mCaptionHeight)
+        startT.setWindowCrop(mCaptionContainerSurface, outResult.mCaptionWidth,
+                        outResult.mCaptionHeight)
+                .setPosition(mCaptionContainerSurface, outResult.mCaptionX, 0 /* y */)
                 .setLayer(mCaptionContainerSurface, CAPTION_LAYER_Z_ORDER)
                 .show(mCaptionContainerSurface);
 
@@ -283,7 +296,7 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
             mCaptionInsetsRect.set(taskBounds);
             if (mIsCaptionVisible) {
                 mCaptionInsetsRect.bottom =
-                        mCaptionInsetsRect.top + outResult.mCaptionHeight + params.mCaptionY;
+                        mCaptionInsetsRect.top + outResult.mCaptionHeight;
                 wct.addInsetsSource(mTaskInfo.token,
                         mOwner, 0 /* index */, WindowInsets.Type.captionBar(), mCaptionInsetsRect);
                 wct.addInsetsSource(mTaskInfo.token,
@@ -303,25 +316,21 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
         float shadowRadius;
         final Point taskPosition = mTaskInfo.positionInParent;
         if (isFullscreen) {
-            // Setting the task crop to the width/height stops input events from being sent to
-            // some regions of the app window. See b/300324920
-            // TODO(b/296921174): investigate whether crop/position needs to be set by window
-            // decorations at all when transition handlers are already taking ownership of the task
-            // surface placement/crop, especially when in fullscreen where tasks cannot be
-            // drag-resized by the window decoration.
-            startT.setWindowCrop(mTaskSurface, null);
-            finishT.setWindowCrop(mTaskSurface, null);
             // Shadow is not needed for fullscreen tasks
             shadowRadius = 0;
         } else {
-            startT.setWindowCrop(mTaskSurface, outResult.mWidth, outResult.mHeight);
-            finishT.setWindowCrop(mTaskSurface, outResult.mWidth, outResult.mHeight);
             shadowRadius = loadDimension(resources, params.mShadowRadiusId);
         }
+
+        if (params.mSetTaskPositionAndCrop) {
+            startT.setWindowCrop(mTaskSurface, outResult.mWidth, outResult.mHeight);
+            finishT.setWindowCrop(mTaskSurface, outResult.mWidth, outResult.mHeight)
+                    .setPosition(mTaskSurface, taskPosition.x, taskPosition.y);
+        }
+
         startT.setShadowRadius(mTaskSurface, shadowRadius)
                 .show(mTaskSurface);
-        finishT.setPosition(mTaskSurface, taskPosition.x, taskPosition.y)
-                .setShadowRadius(mTaskSurface, shadowRadius);
+        finishT.setShadowRadius(mTaskSurface, shadowRadius);
         if (mTaskInfo.getWindowingMode() == WINDOWING_MODE_FREEFORM) {
             if (!DesktopModeStatus.isVeiledResizeEnabled()) {
                 // When fluid resize is enabled, add a background to freeform tasks
@@ -348,7 +357,7 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
         // Caption view
         mCaptionWindowManager.setConfiguration(taskConfig);
         final WindowManager.LayoutParams lp =
-                new WindowManager.LayoutParams(captionWidth, outResult.mCaptionHeight,
+                new WindowManager.LayoutParams(outResult.mCaptionWidth, outResult.mCaptionHeight,
                         WindowManager.LayoutParams.TYPE_APPLICATION,
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSPARENT);
         lp.setTitle("Caption of Task=" + mTaskInfo.taskId);
@@ -384,6 +393,10 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
 
             return;
         }
+    }
+
+    void setTaskDragResizer(TaskDragResizer taskDragResizer) {
+        mTaskDragResizer = taskDragResizer;
     }
 
     private void setCaptionVisibility(View rootView, boolean visible) {
@@ -545,12 +558,10 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
 
         int mCornerRadius;
 
-        int mCaptionX;
-        int mCaptionY;
-
         Configuration mWindowDecorConfig;
 
         boolean mApplyStartTransactionOnDraw;
+        boolean mSetTaskPositionAndCrop;
 
         void reset() {
             mLayoutResId = Resources.ID_NULL;
@@ -560,16 +571,16 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
 
             mCornerRadius = 0;
 
-            mCaptionX = 0;
-            mCaptionY = 0;
-
             mApplyStartTransactionOnDraw = false;
+            mSetTaskPositionAndCrop = false;
             mWindowDecorConfig = null;
         }
     }
 
     static class RelayoutResult<T extends View & TaskFocusStateConsumer> {
         int mCaptionHeight;
+        int mCaptionWidth;
+        int mCaptionX;
         int mWidth;
         int mHeight;
         T mRootView;
@@ -578,6 +589,8 @@ public abstract class WindowDecoration<T extends View & TaskFocusStateConsumer>
             mWidth = 0;
             mHeight = 0;
             mCaptionHeight = 0;
+            mCaptionWidth = 0;
+            mCaptionX = 0;
             mRootView = null;
         }
     }

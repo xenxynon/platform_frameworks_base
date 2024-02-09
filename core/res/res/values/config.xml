@@ -2265,6 +2265,9 @@
     <!-- The default min volume for the alarm stream -->
     <integer name="config_audio_alarm_min_vol">1</integer>
 
+    <!-- Flag indicating if ringer mode affects alarm stream -->
+    <bool name="config_audio_ringer_mode_affects_alarm_stream">false</bool>
+
     <!-- The default value for whether head tracking for
          spatial audio is enabled for a newly connected audio device -->
     <bool name="config_spatial_audio_head_tracking_enabled_default">false</bool>
@@ -2349,6 +2352,8 @@
     <string name="config_defaultCallRedirection" translatable="false"></string>
     <!-- The name of the package that will hold the call screening role by default. -->
     <string name="config_defaultCallScreening" translatable="false"></string>
+    <!-- The name of the package that will hold the wallet role by default. -->
+    <string name="config_defaultWallet" translatable="false" />
     <!-- The name of the package that will hold the system gallery role. -->
     <string name="config_systemGallery" translatable="false">com.android.gallery3d</string>
     <!-- The names of the packages that will hold the automotive projection role. -->
@@ -4019,6 +4024,18 @@
     <!-- If true, and there is a cutout on the main built in display, the cutout will be masked
          by shrinking the display such that it does not overlap the cutout area. -->
     <bool name="config_maskMainBuiltInDisplayCutout">false</bool>
+
+    <!-- This string array provide override side of each rotation of the given insets.
+         Array of "[rotation],[side]".
+         Undefined rotation will apply the default behavior.
+         When there are cutouts on multiple edges of the display, the override won't take any
+         effect. -->
+    <string-array name="config_mainBuiltInDisplayCutoutSideOverride" translatable="false">
+        <!-- Example:
+        <item>90,top</item>
+        <item>270,bottom</item>
+        -->
+    </string-array>
 
     <!-- Ultrasound support for Mic/speaker path -->
     <!-- Whether the default microphone audio source supports near-ultrasound frequencies
@@ -6389,6 +6406,8 @@
     </string>
     <bool name="config_fillSecondaryBuiltInDisplayCutout">false</bool>
     <bool name="config_maskSecondaryBuiltInDisplayCutout">false</bool>
+    <string-array name="config_secondaryBuiltInDisplayCutoutSideOverride" translatable="false">
+    </string-array>
 
     <!-- An array contains unique ids of all built-in displays and the unique id of a display can be
          obtained from {@link Display#getUniqueId}. This array should be set for multi-display
@@ -6433,6 +6452,11 @@
         <item>@string/config_mainBuiltInDisplayCutoutRectApproximation</item>
         <item>@string/config_secondaryBuiltInDisplayCutoutRectApproximation</item>
     </string-array>
+
+    <array name="config_displayCutoutSideOverrideArray" translatable="false">
+        <item>@array/config_mainBuiltInDisplayCutoutSideOverride</item>
+        <item>@array/config_secondaryBuiltInDisplayCutoutSideOverride</item>
+    </array>
 
     <!-- The maskBuiltInDisplayCutout config for each display in a multi-display device. -->
     <array name="config_maskBuiltInDisplayCutoutArray" translatable="false">
@@ -6886,4 +6910,8 @@
 
     <!-- Whether the media player is shown on the quick settings -->
     <bool name="config_quickSettingsShowMediaPlayer">true</bool>
+
+    <!-- Defines suitability of the built-in speaker route.
+         Refer to {@link MediaRoute2Info} to see supported values.  -->
+    <integer name="config_mediaRouter_builtInSpeakerSuitability">0</integer>
 </resources>

@@ -84,6 +84,7 @@
     <uses-permission android:name="android.permission.READ_WIFI_CREDENTIAL"/>
     <uses-permission android:name="android.permission.LOCATION_HARDWARE" />
     <uses-permission android:name="android.permission.NETWORK_FACTORY" />
+    <uses-permission android:name="android.permission.SATELLITE_COMMUNICATION" />
     <!-- Physical hardware -->
     <uses-permission android:name="android.permission.MANAGE_USB" />
     <uses-permission android:name="android.permission.CONTROL_DISPLAY_BRIGHTNESS" />
@@ -256,6 +257,9 @@
     <!-- launcher apps -->
     <uses-permission android:name="android.permission.ACCESS_SHORTCUTS" />
 
+    <!-- Permission to start Launcher's widget picker activity. -->
+    <uses-permission android:name="android.permission.START_WIDGET_PICKER_ACTIVITY" />
+
     <uses-permission android:name="android.permission.MODIFY_THEME_OVERLAY" />
 
     <!-- accessibility -->
@@ -353,6 +357,8 @@
     <uses-permission android:name="android.permission.SET_UNRESTRICTED_KEEP_CLEAR_AREAS" />
 
     <uses-permission android:name="android.permission.MONITOR_KEYBOARD_BACKLIGHT" />
+
+    <uses-permission android:name="android.permission.MONITOR_STICKY_MODIFIER_STATE" />
 
     <!-- Listen to (dis-)connection of external displays and enable / disable them. -->
     <uses-permission android:name="android.permission.MANAGE_DISPLAYS" />
@@ -976,15 +982,6 @@
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboard|keyboardHidden"
             android:excludeFromRecents="true"
             android:visibleToInstantApps="true"/>
-
-        <activity android:name="com.android.systemui.communal.widgets.WidgetPickerActivity"
-            android:theme="@style/Theme.EditWidgetsActivity"
-            android:excludeFromRecents="true"
-            android:autoRemoveFromRecents="true"
-            android:showOnLockScreen="true"
-            android:launchMode="singleTop"
-            android:exported="false">
-        </activity>
 
         <activity android:name="com.android.systemui.communal.widgets.EditWidgetsActivity"
             android:theme="@style/Theme.EditWidgetsActivity"

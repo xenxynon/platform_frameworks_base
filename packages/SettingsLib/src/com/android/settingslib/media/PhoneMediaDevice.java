@@ -29,7 +29,6 @@ import static android.media.MediaRoute2Info.TYPE_WIRED_HEADSET;
 import static com.android.settingslib.media.MediaDevice.SelectionBehavior.SELECTION_BEHAVIOR_TRANSFER;
 
 import android.Manifest;
-import android.annotation.NonNull;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
@@ -40,6 +39,7 @@ import android.media.MediaRoute2Info;
 import android.media.RouteListingPreference;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.settingslib.R;
@@ -117,16 +117,15 @@ public class PhoneMediaDevice extends MediaDevice {
         return name.toString();
     }
 
-    PhoneMediaDevice(Context context, MediaRoute2Info info, String packageName) {
-        this(context, info, packageName, null);
+    PhoneMediaDevice(Context context, MediaRoute2Info info) {
+        this(context, info, null);
     }
 
     PhoneMediaDevice(
             Context context,
             MediaRoute2Info info,
-            String packageName,
             RouteListingPreference.Item item) {
-        super(context, info, packageName, item);
+        super(context, info, item);
         mDeviceIconUtil = new DeviceIconUtil(mContext);
         initDeviceRecord();
     }

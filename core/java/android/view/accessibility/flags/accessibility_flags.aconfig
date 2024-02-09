@@ -24,6 +24,13 @@ flag {
 }
 
 flag {
+    namespace: "accessibility"
+    name: "braille_display_hid"
+    description: "Enables new APIs for an AccessibilityService to communicate with a HID Braille display"
+    bug: "303522222"
+}
+
+flag {
     name: "cleanup_accessibility_warning_dialog"
     namespace: "accessibility"
     description: "Cleans up duplicated or broken logic surrounding the accessibility warning dialog."
@@ -42,6 +49,13 @@ flag {
     name: "copy_events_for_gesture_detection"
     description: "Creates copies of MotionEvents and GestureEvents in GestureMatcher"
     bug: "280130713"
+}
+
+flag {
+    namespace: "accessibility"
+    name: "fix_merged_content_change_event"
+    description: "Fixes event type and source of content change event merged in ViewRootImpl"
+    bug: "277305460"
 }
 
 flag {
@@ -91,4 +105,11 @@ flag {
     namespace: "accessibility"
     description: "Feature flag for system pinch zoom gesture detector and related opt-out apis"
     bug: "283323770"
+}
+
+flag {
+    name: "support_system_pinch_zoom_opt_out_apis"
+    namespace: "accessibility"
+    description: "Feature flag for declaring system pinch zoom opt-out apis"
+    bug: "315089687"
 }

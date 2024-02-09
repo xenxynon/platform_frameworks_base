@@ -39,12 +39,14 @@ import com.android.systemui.keyguard.ui.binder.KeyguardRootViewBinder
 import com.android.systemui.keyguard.ui.view.KeyguardIndicationArea
 import com.android.systemui.keyguard.ui.view.KeyguardRootView
 import com.android.systemui.keyguard.ui.view.layout.KeyguardBlueprintCommandListener
+import com.android.systemui.keyguard.ui.viewmodel.AodAlphaViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardBlueprintViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardIndicationAreaViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.OccludingAppDeviceEntryMessageViewModel
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
+import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.shade.NotificationShadeWindowView
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.KeyguardIndicationController
@@ -83,6 +85,7 @@ constructor(
     private val deviceEntryHapticsInteractor: DeviceEntryHapticsInteractor,
     private val vibratorHelper: VibratorHelper,
     private val falsingManager: FalsingManager,
+    private val aodAlphaViewModel: AodAlphaViewModel,
 ) : CoreStartable {
 
     private var rootViewHandle: DisposableHandle? = null
@@ -109,7 +112,9 @@ constructor(
         bindKeyguardRootView()
         initializeViews()
 
-        KeyguardBlueprintViewBinder.bind(keyguardRootView, keyguardBlueprintViewModel)
+        if (!SceneContainerFlag.isEnabled) {
+            KeyguardBlueprintViewBinder.bind(keyguardRootView, keyguardBlueprintViewModel)
+        }
         keyguardBlueprintCommandListener.start()
     }
 
@@ -126,7 +131,7 @@ constructor(
             KeyguardIndicationAreaBinder.bind(
                 notificationShadeWindowView.requireViewById(R.id.keyguard_indication_area),
                 keyguardIndicationAreaViewModel,
-                keyguardRootViewModel,
+                aodAlphaViewModel,
                 indicationController,
             )
     }
@@ -142,13 +147,16 @@ constructor(
     }
 
     private fun bindKeyguardRootView() {
+        if (SceneContainerFlag.isEnabled) {
+            return
+        }
+
         rootViewHandle?.dispose()
         rootViewHandle =
             KeyguardRootViewBinder.bind(
                 keyguardRootView,
                 keyguardRootViewModel,
                 configuration,
-                featureFlags,
                 occludingAppDeviceEntryMessageViewModel,
                 chipbarCoordinator,
                 screenOffAnimationController,

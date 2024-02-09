@@ -16,6 +16,7 @@
 
 package com.android.systemui.keyguard.ui.viewmodel
 
+import android.content.Context
 import androidx.constraintlayout.helper.widget.Layer
 import com.android.keyguard.KeyguardClockSwitch.LARGE
 import com.android.keyguard.KeyguardClockSwitch.SMALL
@@ -25,10 +26,13 @@ import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.shared.model.SettingsClockSize
 import com.android.systemui.plugins.clocks.ClockController
+import com.android.systemui.res.R
+import com.android.systemui.statusbar.policy.SplitShadeStateController
+import com.android.systemui.util.Utils
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 
@@ -36,9 +40,10 @@ import kotlinx.coroutines.flow.stateIn
 class KeyguardClockViewModel
 @Inject
 constructor(
-    val keyguardInteractor: KeyguardInteractor,
-    val keyguardClockInteractor: KeyguardClockInteractor,
+    keyguardInteractor: KeyguardInteractor,
+    private val keyguardClockInteractor: KeyguardClockInteractor,
     @Application private val applicationScope: CoroutineScope,
+    private val splitShadeStateController: SplitShadeStateController,
 ) {
     var burnInLayer: Layer? = null
     val useLargeClock: Boolean
@@ -79,10 +84,19 @@ constructor(
                         ?: false
             )
 
-    val clockShouldBeCentered: Flow<Boolean> =
+    val clockShouldBeCentered: StateFlow<Boolean> =
         keyguardInteractor.clockShouldBeCentered.stateIn(
             scope = applicationScope,
             started = SharingStarted.WhileSubscribed(),
-            initialValue = true
+            initialValue = false
         )
+
+    // Needs to use a non application context to get display cutout.
+    fun getSmallClockTopMargin(context: Context) =
+        if (splitShadeStateController.shouldUseSplitNotificationShade(context.resources)) {
+            context.resources.getDimensionPixelSize(R.dimen.keyguard_split_shade_top_margin)
+        } else {
+            context.resources.getDimensionPixelSize(R.dimen.keyguard_clock_top_margin) +
+                Utils.getStatusBarHeaderHeightKeyguard(context)
+        }
 }

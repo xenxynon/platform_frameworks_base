@@ -22,6 +22,7 @@ import static android.app.PendingIntent.FLAG_ONE_SHOT;
 import static android.companion.CompanionDeviceManager.REASON_INTERNAL_ERROR;
 import static android.companion.CompanionDeviceManager.RESULT_INTERNAL_ERROR;
 import static android.content.ComponentName.createRelative;
+import static android.content.pm.PackageManager.FEATURE_WATCH;
 
 import static com.android.server.companion.CompanionDeviceManagerService.DEBUG;
 import static com.android.server.companion.MetricUtils.logCreateAssociation;
@@ -37,6 +38,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.annotation.UserIdInt;
+import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.companion.AssociatedDevice;
 import android.companion.AssociationInfo;
@@ -168,13 +170,26 @@ class AssociationRequestsProcessor {
         enforcePermissionsForAssociation(mContext, request, packageUid);
         enforceUsesCompanionDeviceFeature(mContext, userId, packageName);
 
-        // 2. Check if association can be created without launching UI (i.e. CDM needs NEITHER
+        // 2a. Check if association can be created without launching UI (i.e. CDM needs NEITHER
         // to perform discovery NOR to collect user consent).
         if (request.isSelfManaged() && !request.isForceConfirmation()
                 && !willAddRoleHolder(request, packageName, userId)) {
-            // 2a. Create association right away.
+            // 2a.1. Create association right away.
             createAssociationAndNotifyApplication(request, packageName, userId,
                     /* macAddress */ null, callback, /* resultReceiver */ null);
+            return;
+        }
+
+        // 2a.2. Report an error if a 3p app tries to create a non-self-managed association and
+        //       launch UI on watch.
+        if (mContext.getPackageManager().hasSystemFeature(FEATURE_WATCH)) {
+            String errorMessage = "3p apps are not allowed to create associations on watch.";
+            Slog.e(TAG, errorMessage);
+            try {
+                callback.onFailure(errorMessage);
+            } catch (RemoteException e) {
+                // ignored
+            }
             return;
         }
 
@@ -283,32 +298,33 @@ class AssociationRequestsProcessor {
         final AssociationInfo association = new AssociationInfo(id, userId, packageName,
                 /* tag */ null, macAddress, displayName, deviceProfile, associatedDevice,
                 selfManaged, /* notifyOnDeviceNearby */ false, /* revoked */ false,
-                timestamp, Long.MAX_VALUE, /* systemDataSyncFlags */ 0);
+                /* pending */ false, timestamp, Long.MAX_VALUE, /* systemDataSyncFlags */ 0);
 
-        if (deviceProfile != null) {
-            // If the "Device Profile" is specified, make the companion application a holder of the
-            // corresponding role.
-            addRoleHolderForAssociation(mService.getContext(), association, success -> {
-                if (success) {
-                    addAssociationToStore(association, deviceProfile);
-
-                    sendCallbackAndFinish(association, callback, resultReceiver);
-                } else {
-                    Slog.e(TAG, "Failed to add u" + userId + "\\" + packageName
-                            + " to the list of " + deviceProfile + " holders.");
-
-                    sendCallbackAndFinish(null, callback, resultReceiver);
-                }
-            });
-        } else {
-            addAssociationToStore(association, null);
-
-            sendCallbackAndFinish(association, callback, resultReceiver);
-        }
+        // Add role holder for association (if specified) and add new association to store.
+        maybeGrantRoleAndStoreAssociation(association, callback, resultReceiver);
 
         // Don't need to update the mRevokedAssociationsPendingRoleHolderRemoval since
         // maybeRemoveRoleHolderForAssociation in PackageInactivityListener will handle the case
         // that there are other devices with the same profile, so the role holder won't be removed.
+    }
+
+    public void maybeGrantRoleAndStoreAssociation(@NonNull AssociationInfo association,
+            @Nullable IAssociationRequestCallback callback,
+            @Nullable ResultReceiver resultReceiver) {
+        // If the "Device Profile" is specified, make the companion application a holder of the
+        // corresponding role.
+        // If it is null, then the operation will succeed without granting any role.
+        addRoleHolderForAssociation(mService.getContext(), association, success -> {
+            if (success) {
+                addAssociationToStore(association);
+                sendCallbackAndFinish(association, callback, resultReceiver);
+            } else {
+                Slog.e(TAG, "Failed to add u" + association.getUserId()
+                        + "\\" + association.getPackageName()
+                        + " to the list of " + association.getDeviceProfile() + " holders.");
+                sendCallbackAndFinish(null, callback, resultReceiver);
+            }
+        });
     }
 
     public void enableSystemDataSync(int associationId, int flags) {
@@ -325,15 +341,14 @@ class AssociationRequestsProcessor {
         mAssociationStore.updateAssociation(updated);
     }
 
-    private void addAssociationToStore(@NonNull AssociationInfo association,
-            @Nullable String deviceProfile) {
+    private void addAssociationToStore(@NonNull AssociationInfo association) {
         Slog.i(TAG, "New CDM association created=" + association);
 
         mAssociationStore.addAssociation(association);
 
         mService.updateSpecialAccessPermissionForAssociatedPackage(association);
 
-        logCreateAssociation(deviceProfile);
+        logCreateAssociation(association.getDeviceProfile());
     }
 
     private void sendCallbackAndFinish(@Nullable AssociationInfo association,
@@ -398,7 +413,11 @@ class AssociationRequestsProcessor {
             pendingIntent = PendingIntent.getActivityAsUser(
                     mContext, /*requestCode */ packageUid, intent,
                     FLAG_ONE_SHOT | FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE,
-                    /* options= */ null, UserHandle.CURRENT);
+                    ActivityOptions.makeBasic()
+                            .setPendingIntentCreatorBackgroundActivityStartMode(
+                                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                            .toBundle(),
+                    UserHandle.CURRENT);
         } finally {
             Binder.restoreCallingIdentity(token);
         }

@@ -32,6 +32,8 @@ import static android.content.pm.LauncherApps.FLAG_CACHE_BUBBLE_SHORTCUTS;
 import static android.content.pm.LauncherApps.FLAG_CACHE_NOTIFICATION_SHORTCUTS;
 import static android.content.pm.LauncherApps.FLAG_CACHE_PEOPLE_TILE_SHORTCUTS;
 
+import static com.android.server.pm.PackageArchiver.isArchivingEnabled;
+
 import android.annotation.AppIdInt;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -56,7 +58,6 @@ import android.content.IntentSender;
 import android.content.LocusId;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.Flags;
 import android.content.pm.ILauncherApps;
 import android.content.pm.IOnAppsChangedListener;
 import android.content.pm.IPackageInstallerCallback;
@@ -507,7 +508,8 @@ public class LauncherAppsService extends SystemService {
             if (!canAccessProfile(userId, "cannot get shouldHideFromSuggestions")) {
                 return false;
             }
-            if (Flags.archiving() && packageName != null && isPackageArchived(packageName, user)) {
+            if (isArchivingEnabled() && packageName != null
+                    && isPackageArchived(packageName, user)) {
                 return true;
             }
             if (mPackageManagerInternal.filterAppAccess(
@@ -530,7 +532,7 @@ public class LauncherAppsService extends SystemService {
                                     .addCategory(Intent.CATEGORY_LAUNCHER)
                                     .setPackage(packageName),
                             user);
-            if (Flags.archiving()) {
+            if (isArchivingEnabled()) {
                 launcherActivities =
                         getActivitiesForArchivedApp(packageName, user, launcherActivities);
             }
@@ -701,7 +703,7 @@ public class LauncherAppsService extends SystemService {
                                 callingUid,
                                 user.getIdentifier());
                 if (activityInfo == null) {
-                    if (Flags.archiving()) {
+                    if (isArchivingEnabled()) {
                         return getMatchingArchivedAppActivityInfo(component, user);
                     }
                     return null;
@@ -984,7 +986,7 @@ public class LauncherAppsService extends SystemService {
                 long callingFlag =
                         PackageManager.MATCH_DIRECT_BOOT_AWARE
                                 | PackageManager.MATCH_DIRECT_BOOT_UNAWARE;
-                if (Flags.archiving()) {
+                if (isArchivingEnabled()) {
                     callingFlag |= PackageManager.MATCH_ARCHIVED_PACKAGES;
                 }
                 final PackageInfo info =
@@ -1457,7 +1459,7 @@ public class LauncherAppsService extends SystemService {
             if (!canAccessProfile(user.getIdentifier(), "Cannot check component")) {
                 return false;
             }
-            if (Flags.archiving() && component != null && component.getPackageName() != null) {
+            if (isArchivingEnabled() && component != null && component.getPackageName() != null) {
                 List<LauncherActivityInfoInternal> archiveActivities =
                         generateLauncherActivitiesForArchivedApp(component.getPackageName(), user);
                 if (!archiveActivities.isEmpty()) {
@@ -1610,19 +1612,115 @@ public class LauncherAppsService extends SystemService {
                     "Can't access AppMarketActivity for another user")) {
                 return null;
             }
+            final int callingUser = getCallingUserId();
             final long identity = Binder.clearCallingIdentity();
+
             try {
-                // TODO(b/316118005): Add code to launch the app installer for the packageName.
-                Intent appMarketIntent = new Intent(Intent.ACTION_MAIN);
-                appMarketIntent.addCategory(Intent.CATEGORY_APP_MARKET);
-                final PendingIntent pi = PendingIntent.getActivityAsUser(
-                        mContext, /* requestCode */ 0, appMarketIntent, PendingIntent.FLAG_ONE_SHOT
-                                | PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_CANCEL_CURRENT,
-                        /* options */ null, user);
-                return pi == null ? null : pi.getIntentSender();
+                if (packageName == null) {
+                    return buildAppMarketIntentSenderForUser(user);
+                }
+
+                String installerPackageName = getInstallerPackage(packageName, callingUser);
+                if (installerPackageName == null
+                        || mPackageManagerInternal.getPackageUid(
+                                        installerPackageName, /* flags= */ 0, user.getIdentifier())
+                                < 0) {
+                    if (DEBUG) {
+                        Log.d(
+                                TAG,
+                                "Can't find installer for "
+                                        + packageName
+                                        + " in user: "
+                                        + user.getIdentifier());
+                    }
+                    return buildAppMarketIntentSenderForUser(user);
+                }
+
+                Intent packageInfoIntent =
+                        buildMarketPackageInfoIntent(
+                                packageName, installerPackageName, callingPackage);
+                if (mPackageManagerInternal
+                        .queryIntentActivities(
+                                packageInfoIntent,
+                                packageInfoIntent.resolveTypeIfNeeded(
+                                        mContext.getContentResolver()),
+                                PackageManager.MATCH_ALL,
+                                Process.myUid(),
+                                user.getIdentifier())
+                        .isEmpty()) {
+                    if (DEBUG) {
+                        Log.d(
+                                TAG,
+                                "Can't resolve package info intent for package "
+                                        + packageName
+                                        + " and installer:  "
+                                        + installerPackageName);
+                    }
+                    return buildAppMarketIntentSenderForUser(user);
+                }
+
+                return buildIntentSenderForUser(packageInfoIntent, user);
             } finally {
                 Binder.restoreCallingIdentity(identity);
             }
+        }
+
+        @Nullable
+        private IntentSender buildAppMarketIntentSenderForUser(@NonNull UserHandle user) {
+            Intent appMarketIntent = new Intent(Intent.ACTION_MAIN);
+            appMarketIntent.addCategory(Intent.CATEGORY_APP_MARKET);
+            return buildIntentSenderForUser(appMarketIntent, user);
+        }
+
+        @Nullable
+        private IntentSender buildIntentSenderForUser(
+                @NonNull Intent intent, @NonNull UserHandle user) {
+            final PendingIntent pi =
+                    PendingIntent.getActivityAsUser(
+                            mContext,
+                            /* requestCode */ 0,
+                            intent,
+                            PendingIntent.FLAG_ONE_SHOT
+                                    | PendingIntent.FLAG_IMMUTABLE
+                                    | PendingIntent.FLAG_CANCEL_CURRENT,
+                            /* options */ null,
+                            user);
+            return pi == null ? null : pi.getIntentSender();
+        }
+
+        @Nullable
+        private String getInstallerPackage(@NonNull String packageName, int callingUserId) {
+            String installerPackageName = null;
+            try {
+                installerPackageName =
+                        mIPM.getInstallSourceInfo(packageName, callingUserId)
+                                .getInstallingPackageName();
+            } catch (RemoteException re) {
+                Slog.e(TAG, "Couldn't find installer for " + packageName, re);
+            }
+
+            return installerPackageName;
+        }
+
+        @NonNull
+        private Intent buildMarketPackageInfoIntent(
+                @NonNull String packageName,
+                @NonNull String installerPackageName,
+                @NonNull String callingPackage) {
+            return new Intent(Intent.ACTION_VIEW)
+                    .setData(
+                            new Uri.Builder()
+                                    .scheme("market")
+                                    .authority("details")
+                                    .appendQueryParameter("id", packageName)
+                                    .build())
+                    .putExtra(
+                            Intent.EXTRA_REFERRER,
+                            new Uri.Builder()
+                                    .scheme("android-app")
+                                    .authority(callingPackage)
+                                    .build())
+                    .setPackage(installerPackageName);
         }
 
         @Override
@@ -1692,7 +1790,7 @@ public class LauncherAppsService extends SystemService {
                 }
                 if (!canLaunch
                         && includeArchivedApps
-                        && Flags.archiving()
+                        && isArchivingEnabled()
                         && getMatchingArchivedAppActivityInfo(component, user) != null) {
                     launchIntent.setPackage(null);
                     launchIntent.setComponent(component);

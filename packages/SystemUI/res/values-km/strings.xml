@@ -188,10 +188,12 @@
     <string name="face_reenroll_failure_dialog_content" msgid="7073947334397236935">"មិនអាច​រៀបចំ​ការដោះសោតាមទម្រង់មុខបានទេ។ សូមចូលទៅកាន់​ការកំណត់​ ដើម្បីព្យាយាមម្ដងទៀត។"</string>
     <string name="fingerprint_dialog_touch_sensor" msgid="2817887108047658975">"ប៉ះ​ឧបករណ៍​ចាប់ស្នាម​ម្រាមដៃ"</string>
     <string name="fingerprint_dialog_authenticated_confirmation" msgid="1603899612957562862">"សូមចុចរូបដោះសោ ដើម្បីបន្ត"</string>
-    <string name="fingerprint_dialog_use_fingerprint_instead" msgid="6178228876763024452">"មិនអាចសម្គាល់មុខបានទេ។ សូមប្រើស្នាមម្រាមដៃជំនួសវិញ។"</string>
+    <!-- no translation found for fingerprint_dialog_use_fingerprint_instead (5542430577183894219) -->
+    <skip />
     <!-- no translation found for keyguard_face_failed_use_fp (7140293906176164263) -->
     <skip />
-    <string name="keyguard_face_failed" msgid="9044619102286917151">"មិនអាចសម្គាល់មុខបានទេ"</string>
+    <!-- no translation found for keyguard_face_failed (2346762871330729634) -->
+    <skip />
     <string name="keyguard_suggest_fingerprint" msgid="8742015961962702960">"ប្រើស្នាមម្រាមដៃជំនួសវិញ​"</string>
     <string name="keyguard_face_unlock_unavailable" msgid="1581949044193418736">"មិនអាចប្រើការដោះសោតាមទម្រង់មុខបានទេ"</string>
     <string name="accessibility_bluetooth_connected" msgid="4745196874551115205">"បាន​តភ្ជាប់​ប៊្លូធូស។"</string>
@@ -330,12 +332,17 @@
     <string name="quick_settings_screen_record_label" msgid="8650355346742003694">"ការថត​វីដេអូ​អេក្រង់"</string>
     <string name="quick_settings_screen_record_start" msgid="1574725369331638985">"ចាប់ផ្ដើម"</string>
     <string name="quick_settings_screen_record_stop" msgid="8087348522976412119">"ឈប់"</string>
-    <!-- no translation found for qs_record_issue_label (8166290137285529059) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_start (2979831312582567056) -->
-    <skip />
-    <!-- no translation found for qs_record_issue_stop (3531747965741982657) -->
-    <skip />
+    <string name="qs_record_issue_label" msgid="8166290137285529059">"កត់ត្រាបញ្ហា"</string>
+    <string name="qs_record_issue_start" msgid="2979831312582567056">"ចាប់ផ្ដើម"</string>
+    <string name="qs_record_issue_stop" msgid="3531747965741982657">"បញ្ឈប់"</string>
+    <string name="qs_record_issue_dropdown_header" msgid="5995983175678658329">"តើផ្នែកអ្វីនៃបទពិសោធប្រើប្រាស់ឧបករណ៍របស់អ្នកបានរងការប៉ះពាល់?"</string>
+    <string name="qs_record_issue_dropdown_prompt" msgid="2526949919167046219">"ជ្រើសរើសប្រភេទបញ្ហា"</string>
+    <string name="qs_record_issue_dropdown_screenrecord" msgid="6396141928484257626">"ការថត​វីដេអូ​អេក្រង់"</string>
+  <string-array name="qs_record_issue_types">
+    <item msgid="2947988124014085798">"ប្រតិបត្តិការ"</item>
+    <item msgid="1627504621139124393">"ផ្ទៃប៉ះ"</item>
+    <item msgid="8309220355268900335">"ថ្ម"</item>
+  </string-array>
     <string name="quick_settings_onehanded_label" msgid="2416537930246274991">"មុខងារប្រើដៃម្ខាង"</string>
     <string name="quick_settings_contrast_label" msgid="988087460210159123">"កម្រិត​រំលេចពណ៌"</string>
     <string name="quick_settings_contrast_standard" msgid="2538227821968061832">"ស្តង់ដារ"</string>
@@ -408,12 +415,19 @@
     <string name="keyguard_indication_charging_time_dock" msgid="3149328898931741271">"<xliff:g id="PERCENTAGE">%2$s</xliff:g> • កំពុងសាកថ្ម • ពេញក្នុងរយៈពេល <xliff:g id="CHARGING_TIME_LEFT">%1$s</xliff:g>"</string>
     <string name="communal_tutorial_indicator_text" msgid="4503010353591430123">"អូសទៅឆ្វេង ដើម្បីចាប់ផ្ដើមមេរៀនសហគមន៍"</string>
     <string name="button_to_open_widget_editor" msgid="5599945944349057600">"បើកកម្មវិធីកែធាតុ​ក្រាហ្វិក"</string>
-    <!-- no translation found for button_to_remove_widget (3948204829181214098) -->
+    <!-- no translation found for cta_tile_button_to_open_widget_editor (3871562362382963878) -->
     <skip />
-    <!-- no translation found for hub_mode_add_widget_button_text (4831464661209971729) -->
+    <!-- no translation found for cta_tile_button_to_dismiss (3377597875997861754) -->
     <skip />
-    <!-- no translation found for hub_mode_editing_exit_button_text (3704686734192264771) -->
+    <!-- no translation found for cta_label_to_edit_widget (6496885074209203756) -->
     <skip />
+    <!-- no translation found for cta_label_to_open_widget_picker (3874946756976360699) -->
+    <skip />
+    <!-- no translation found for popup_on_dismiss_cta_tile_text (8292501780996070019) -->
+    <skip />
+    <string name="button_to_remove_widget" msgid="3948204829181214098">"ដកចេញ"</string>
+    <string name="hub_mode_add_widget_button_text" msgid="4831464661209971729">"បញ្ចូលធាតុ​ក្រាហ្វិក"</string>
+    <string name="hub_mode_editing_exit_button_text" msgid="3704686734192264771">"រួចរាល់"</string>
     <string name="accessibility_multi_user_switch_switcher" msgid="5330448341251092660">"ប្ដូរ​អ្នក​ប្រើ"</string>
     <string name="accessibility_multi_user_list_switcher" msgid="8574105376229857407">"ម៉ឺនុយ​ទាញចុះ"</string>
     <string name="guest_exit_guest_dialog_message" msgid="8183450985628495709">"កម្មវិធី និងទិន្នន័យ​ទាំងអស់​ក្នុង​វគ្គ​នេះ​នឹង​ត្រូវ​លុប។"</string>
@@ -832,6 +846,8 @@
     <string name="notification_channel_setup" msgid="7660580986090760350">"ការរៀបចំ"</string>
     <string name="notification_channel_storage" msgid="2720725707628094977">"ទំហំផ្ទុក"</string>
     <string name="notification_channel_hints" msgid="7703783206000346876">"ការ​សម្រួល"</string>
+    <!-- no translation found for notification_channel_accessibility (8956203986976245820) -->
+    <skip />
     <string name="instant_apps" msgid="8337185853050247304">"កម្មវិធី​ប្រើ​ភ្លាមៗ"</string>
     <string name="instant_apps_title" msgid="8942706782103036910">"<xliff:g id="APP">%1$s</xliff:g> កំពុង​ដំណើរការ"</string>
     <string name="instant_apps_message" msgid="6112428971833011754">"កម្មវិធីត្រូវ​បាន​បើក​ដោយ​មិនចាំបាច់ដំឡើង។"</string>
@@ -867,7 +883,6 @@
     <string name="auto_saver_title" msgid="6873691178754086596">"ចុច​ដើម្បី​កំណត់​កាលវិភាគ​មុខងារ​សន្សំ​ថ្ម"</string>
     <string name="auto_saver_text" msgid="3214960308353838764">"បើក​នៅពេល​ថ្ម​ទំនងជា​អស់"</string>
     <string name="no_auto_saver_action" msgid="7467924389609773835">"ទេ អរគុណ"</string>
-    <string name="heap_dump_tile_name" msgid="2464189856478823046">"Dump SysUI Heap"</string>
     <string name="ongoing_privacy_dialog_a11y_title" msgid="2205794093673327974">"កំពុង​ប្រើ"</string>
     <string name="ongoing_privacy_chip_content_multiple_apps" msgid="8341216022442383954">"កម្មវិធី​កំពុងប្រើ <xliff:g id="TYPES_LIST">%s</xliff:g> របស់អ្នក។"</string>
     <string name="ongoing_privacy_dialog_separator" msgid="1866222499727706187">", "</string>
@@ -928,6 +943,10 @@
     <string name="accessibility_floating_button_migration_tooltip" msgid="5217151214439341902">"ចុចដើម្បីបើក​មុខងារ​ភាពងាយស្រួល។ ប្ដូរ ឬប្ដូរ​ប៊ូតុងនេះ​តាមបំណង​នៅក្នុង​ការកំណត់។\n\n"<annotation id="link">"មើល​ការកំណត់"</annotation></string>
     <string name="accessibility_floating_button_docking_tooltip" msgid="6814897496767461517">"ផ្លាស់ទី​ប៊ូតុង​ទៅគែម ដើម្បីលាក់វា​ជាបណ្ដោះអាសន្ន"</string>
     <string name="accessibility_floating_button_undo" msgid="511112888715708241">"ត្រឡប់វិញ"</string>
+    <!-- no translation found for accessibility_floating_button_hidden_notification_title (4115036997406994799) -->
+    <skip />
+    <!-- no translation found for accessibility_floating_button_hidden_notification_text (1457021647040915658) -->
+    <skip />
     <string name="accessibility_floating_button_undo_message_label_text" msgid="9017658016426242640">"បានដក​ផ្លូវកាត់ <xliff:g id="FEATURE_NAME">%s</xliff:g> ចេញ"</string>
     <string name="accessibility_floating_button_undo_message_number_text" msgid="4909270290725226075">"{count,plural, =1{បានដក​ផ្លូវកាត់ # ចេញ}other{បាន​ដក​ផ្លូវ​កាត់ # ចេញ}}"</string>
     <string name="accessibility_floating_button_action_move_top_left" msgid="6253520703618545705">"ផ្លាស់ទីទៅខាងលើផ្នែកខាងឆ្វេង"</string>
@@ -1206,8 +1225,9 @@
     <string name="assistant_attention_content_description" msgid="4166330881435263596">"វត្តមានអ្នកប្រើប្រាស់ត្រូវបានចាប់ដឹង"</string>
     <string name="set_default_notes_app_toast_content" msgid="2812374329662610753">"កំណត់កម្មវិធីកំណត់ចំណាំលំនាំដើមនៅក្នុងការកំណត់"</string>
     <string name="install_app" msgid="5066668100199613936">"ដំឡើង​កម្មវិធី"</string>
+    <string name="dismissible_keyguard_swipe" msgid="2213369651289613196">"សូមអូសដើម្បីបន្ត"</string>
     <string name="connected_display_dialog_start_mirroring" msgid="6237895789920854982">"បញ្ចាំងទៅ​ផ្ទាំងអេក្រង់​ខាងក្រៅឬ?"</string>
-    <string name="connected_display_dialog_dual_display_stop_warning" msgid="2917631104216376315">"បច្ចុប្បន្ន រាល់សកម្មភាពអេក្រង់ទ្វេដែលកំពុងដំណើរការនឹងត្រូវបានបញ្ឈប់"</string>
+    <string name="connected_display_dialog_dual_display_stop_warning" msgid="4174707498892447947">"អេក្រង់ខាងក្នុងរបស់អ្នកនឹងត្រូវបានធ្វើ​សមកាលកម្មទៅវិញទៅមក។ អេក្រង់មុខរបស់អ្នកនឹងត្រូវបានបិទ។"</string>
     <string name="mirror_display" msgid="2515262008898122928">"បញ្ចាំងទៅផ្ទាំងអេក្រង់"</string>
     <string name="dismiss_dialog" msgid="2195508495854675882">"ច្រានចោល"</string>
     <string name="connected_display_icon_desc" msgid="6373560639989971997">"ផ្ទាំងអេក្រង់ត្រូវបានភ្ជាប់"</string>

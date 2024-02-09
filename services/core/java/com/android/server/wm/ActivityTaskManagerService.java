@@ -118,7 +118,6 @@ import static com.android.server.wm.ActivityTaskManagerService.H.REPORT_TIME_TRA
 import static com.android.server.wm.ActivityTaskManagerService.UiHandler.DISMISS_DIALOG_UI_MSG;
 import static com.android.server.wm.ActivityTaskSupervisor.DEFER_RESUME;
 import static com.android.server.wm.ActivityTaskSupervisor.ON_TOP;
-import static com.android.server.wm.ActivityTaskSupervisor.PRESERVE_WINDOWS;
 import static com.android.server.wm.ActivityTaskSupervisor.REMOVE_FROM_RECENTS;
 import static com.android.server.wm.BackgroundActivityStartController.BalVerdict;
 import static com.android.server.wm.LockTaskController.LOCK_TASK_AUTH_DONT_LOCK;
@@ -499,16 +498,13 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
     final UpdateConfigurationResult mTmpUpdateConfigurationResult =
             new UpdateConfigurationResult();
 
+    // TODO(b/258618073): Remove this and make the related methods return whether config is changed.
     static final class UpdateConfigurationResult {
         // Configuration changes that were updated.
         int changes;
         // If the activity was relaunched to match the new configuration.
         boolean activityRelaunched;
-
-        void reset() {
-            changes = 0;
-            activityRelaunched = false;
-        }
+        boolean mIsUpdating;
     }
 
     /** Current sequencing integer of the configuration, for skipping old configurations. */
@@ -3715,19 +3711,13 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             return false;
         }
 
-        // If the app is using legacy-entry (not auto-enter), then we will get a client-request
-        // that was actually a server-request (via pause(userLeaving=true)). This happens when
-        // the app is PAUSING, so detect that case here.
-        boolean originallyFromClient = fromClient
-                && (!r.isState(PAUSING) || params.isAutoEnterEnabled());
-
-        // If PiP2 flag is on and client-request to enter PiP came via onUserLeaveHint(),
-        // we request a direct transition from Shell to TRANSIT_PIP_LEGACY to get the startWct
-        // with the right entry bounds.
-        if (isPip2ExperimentEnabled() && !originallyFromClient && !params.isAutoEnterEnabled()) {
+        // If PiP2 flag is on and client-request to enter PiP comes in,
+        // we request a direct transition from Shell to TRANSIT_PIP to get the startWct
+        // with the right entry bounds. So PiP activity isn't moved to a pinned task until after
+        // Shell calls back into Core with the entry bounds passed through.
+        if (isPip2ExperimentEnabled()) {
             final Transition legacyEnterPipTransition = new Transition(TRANSIT_PIP,
-                    0 /* flags */, getTransitionController(),
-                    mWindowManager.mSyncEngine);
+                    0 /* flags */, getTransitionController(), mWindowManager.mSyncEngine);
             legacyEnterPipTransition.setPipActivity(r);
             getTransitionController().startCollectOrQueue(legacyEnterPipTransition, (deferred) -> {
                 getTransitionController().requestStartTransition(legacyEnterPipTransition,
@@ -3735,6 +3725,12 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             });
             return true;
         }
+
+        // If the app is using legacy-entry (not auto-enter), then we will get a client-request
+        // that was actually a server-request (via pause(userLeaving=true)). This happens when
+        // the app is PAUSING, so detect that case here.
+        boolean originallyFromClient = fromClient
+                && (!r.isState(PAUSING) || params.isAutoEnterEnabled());
 
         // Create a transition only for this pip entry if it is coming from the app without the
         // system requesting that the app enter-pip. If the system requested it, that means it
@@ -3863,8 +3859,7 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
                     Settings.System.clearConfiguration(values);
                 }
                 updateConfigurationLocked(values, null, false, false /* persistent */,
-                        UserHandle.USER_NULL, false /* deferResume */,
-                        mTmpUpdateConfigurationResult);
+                        UserHandle.USER_NULL, false /* deferResume */);
                 return mTmpUpdateConfigurationResult.changes != 0;
             } finally {
                 Binder.restoreCallingIdentity(origId);
@@ -4536,12 +4531,6 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
         }
     }
 
-    private boolean updateConfigurationLocked(Configuration values, ActivityRecord starting,
-            boolean initLocale, boolean persistent, int userId, boolean deferResume) {
-        return updateConfigurationLocked(values, starting, initLocale, persistent, userId,
-                deferResume, null /* result */);
-    }
-
     /**
      * Do either or both things: (1) change the current configuration, and (2)
      * make sure the given activity is running with the (now) current
@@ -4553,8 +4542,7 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
      *               for that particular user
      */
     boolean updateConfigurationLocked(Configuration values, ActivityRecord starting,
-            boolean initLocale, boolean persistent, int userId, boolean deferResume,
-            ActivityTaskManagerService.UpdateConfigurationResult result) {
+            boolean initLocale, boolean persistent, int userId, boolean deferResume) {
         int changes = 0;
         boolean kept = true;
 
@@ -4562,19 +4550,18 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
         try {
             if (values != null) {
                 changes = updateGlobalConfigurationLocked(values, initLocale, persistent, userId);
+                mTmpUpdateConfigurationResult.changes = changes;
+                mTmpUpdateConfigurationResult.mIsUpdating = true;
             }
 
             if (!deferResume) {
                 kept = ensureConfigAndVisibilityAfterUpdate(starting, changes);
             }
         } finally {
+            mTmpUpdateConfigurationResult.mIsUpdating = false;
             continueWindowLayout();
         }
-
-        if (result != null) {
-            result.changes = changes;
-            result.activityRelaunched = !kept;
-        }
+        mTmpUpdateConfigurationResult.activityRelaunched = !kept;
         return kept;
     }
 
@@ -5354,12 +5341,10 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             }
 
             if (starting != null) {
-                kept = starting.ensureActivityConfiguration(changes,
-                        false /* preserveWindow */);
+                kept = starting.ensureActivityConfiguration();
                 // And we need to make sure at this point that all other activities
                 // are made visible with the correct configuration.
-                mRootWindowContainer.ensureActivitiesVisible(starting, changes,
-                        !PRESERVE_WINDOWS);
+                mRootWindowContainer.ensureActivitiesVisible(starting);
             }
         }
 

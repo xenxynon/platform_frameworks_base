@@ -117,6 +117,12 @@ public class BluetoothUtils {
             }
         }
 
+        if (cachedDevice.isHearingAidDevice()) {
+            return new Pair<>(getBluetoothDrawable(context,
+                    com.android.internal.R.drawable.ic_bt_hearing_aid),
+                    context.getString(R.string.bluetooth_talkback_hearing_aids));
+        }
+
         List<LocalBluetoothProfile> profiles = cachedDevice.getProfiles();
         int resId = 0;
         for (LocalBluetoothProfile profile : profiles) {
@@ -125,7 +131,8 @@ public class BluetoothUtils {
                 // The device should show hearing aid icon if it contains any hearing aid related
                 // profiles
                 if (profile instanceof HearingAidProfile || profile instanceof HapClientProfile) {
-                    return new Pair<>(getBluetoothDrawable(context, profileResId), null);
+                    return new Pair<>(getBluetoothDrawable(context, profileResId),
+                            context.getString(R.string.bluetooth_talkback_hearing_aids));
                 }
                 if (resId == 0) {
                     resId = profileResId;

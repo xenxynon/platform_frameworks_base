@@ -43,6 +43,7 @@ import static android.view.WindowManager.TransitionFlags;
 import static android.view.WindowManager.TransitionType;
 import static android.view.WindowManager.transitTypeToString;
 import static android.window.TaskFragmentAnimationParams.DEFAULT_ANIMATION_BACKGROUND_COLOR;
+import static android.window.TransitionInfo.FLAGS_IS_OCCLUDED_NO_ANIMATION;
 import static android.window.TransitionInfo.FLAG_DISPLAY_HAS_ALERT_WINDOWS;
 import static android.window.TransitionInfo.FLAG_FILLS_TASK;
 import static android.window.TransitionInfo.FLAG_IN_TASK_WITH_EMBEDDED_ACTIVITY;
@@ -1150,8 +1151,7 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
             // The transient hide tasks could be occluded now, e.g. returning to home. So trigger
             // the update to make the activities in the tasks invisible-requested, then the next
             // step can continue to commit the visibility.
-            mController.mAtm.mRootWindowContainer.ensureActivitiesVisible(null /* starting */,
-                    0 /* configChanges */, true /* preserveWindows */);
+            mController.mAtm.mRootWindowContainer.ensureActivitiesVisible();
             // Record all the now-hiding activities so that they are committed. Just use
             // mParticipants because we can avoid a new list this way.
             for (int i = 0; i < mTransientHideTasks.size(); ++i) {
@@ -1925,7 +1925,6 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
         for (int i = mParticipants.size() - 1; i >= 0; --i) {
             final WallpaperWindowToken wallpaper = mParticipants.valueAt(i).asWallpaperToken();
             if (wallpaper != null) {
-                wallpaper.waitingToShow = false;
                 if (!wallpaper.isVisible() && wallpaper.isVisibleRequested()) {
                     wallpaper.commitVisibility(showWallpaper);
                 }
@@ -1953,29 +1952,29 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
                 dc.getInputMonitor().getInputConsumer(INPUT_CONSUMER_RECENTS_ANIMATION);
         ActivityRecord recentsActivity = null;
         if (recentsAnimationInputConsumer != null) {
-            // find the top-most going-away activity and the recents activity. The top-most
+            // Find the top-most going-away task and the recents activity. The top-most
             // is used as layer reference while the recents is used for registering the consumer
             // override.
-            ActivityRecord topActivity = null;
+            Task topNonRecentsTask = null;
             for (int i = 0; i < info.getChanges().size(); ++i) {
-                final TransitionInfo.Change change = info.getChanges().get(i);
-                if (change.getTaskInfo() == null) continue;
-                final Task task = Task.fromWindowContainerToken(
-                        info.getChanges().get(i).getTaskInfo().token);
+                final ActivityManager.RunningTaskInfo taskInfo =
+                        info.getChanges().get(i).getTaskInfo();
+                if (taskInfo == null) continue;
+                final Task task = Task.fromWindowContainerToken(taskInfo.token);
                 if (task == null) continue;
-                final int activityType = change.getTaskInfo().topActivityType;
+                final int activityType = taskInfo.topActivityType;
                 final boolean isRecents = activityType == ACTIVITY_TYPE_HOME
                         || activityType == ACTIVITY_TYPE_RECENTS;
                 if (isRecents && recentsActivity == null) {
                     recentsActivity = task.getTopVisibleActivity();
-                } else if (!isRecents && topActivity == null) {
-                    topActivity = task.getTopNonFinishingActivity();
+                } else if (!isRecents && topNonRecentsTask == null) {
+                    topNonRecentsTask = task;
                 }
             }
-            if (recentsActivity != null && topActivity != null) {
+            if (recentsActivity != null && topNonRecentsTask != null) {
                 recentsAnimationInputConsumer.mWindowHandle.touchableRegion.set(
-                        topActivity.getBounds());
-                dc.getInputMonitor().setActiveRecents(recentsActivity, topActivity);
+                        topNonRecentsTask.getBounds());
+                dc.getInputMonitor().setActiveRecents(recentsActivity, topNonRecentsTask);
             }
         }
 
@@ -2040,16 +2039,17 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
         }
         mController.mNavigationBarAttachedToApp = false;
 
-        if (mRecentsDisplayId == INVALID_DISPLAY) {
-            Slog.e(TAG, "Reparented navigation bar without a valid display");
-            mRecentsDisplayId = DEFAULT_DISPLAY;
+        int recentsDisplayId = mRecentsDisplayId;
+        if (recentsDisplayId == INVALID_DISPLAY) {
+            Slog.i(TAG, "Restore parent surface of navigation bar by another transition");
+            recentsDisplayId = DEFAULT_DISPLAY;
         }
 
         final DisplayContent dc =
-                mController.mAtm.mRootWindowContainer.getDisplayContent(mRecentsDisplayId);
+                mController.mAtm.mRootWindowContainer.getDisplayContent(recentsDisplayId);
         final StatusBarManagerInternal bar = dc.getDisplayPolicy().getStatusBarManagerInternal();
         if (bar != null) {
-            bar.setNavigationBarLumaSamplingEnabled(mRecentsDisplayId, true);
+            bar.setNavigationBarLumaSamplingEnabled(recentsDisplayId, true);
         }
         final WindowState navWindow = dc.getDisplayPolicy().getNavigationBar();
         if (navWindow == null) return;
@@ -2616,6 +2616,10 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
                 change.setBackgroundColor(ColorUtils.setAlphaComponent(backgroundColor, 255));
             }
 
+            if (activityRecord != null) {
+                change.setActivityComponent(activityRecord.mActivityComponent);
+            }
+
             change.setRotation(info.mRotation, endRotation);
             if (info.mSnapshot != null) {
                 change.setSnapshot(info.mSnapshot, info.mSnapshotLuma);
@@ -2856,6 +2860,19 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
         }
     }
 
+    /** Returns {@code true} if the display should use high performance hint for this transition. */
+    boolean shouldUsePerfHint(@NonNull DisplayContent dc) {
+        if (mOverrideOptions != null
+                && mOverrideOptions.getType() == ActivityOptions.ANIM_SCENE_TRANSITION
+                && mType == TRANSIT_TO_BACK && mParticipants.size() == 1) {
+            // This should be from convertFromTranslucent that makes the occluded activity invisible
+            // without animation. So do not use perf hint (especially early-wakeup) that may disturb
+            // SurfaceFlinger scheduling around the last frame.
+            return false;
+        }
+        return mTargetDisplays.contains(dc);
+    }
+
     /**
      * Returns {@code true} if the transition and the corresponding transaction should be applied
      * on display thread. Currently, this only checks for display rotation change because the order
@@ -2881,8 +2898,7 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
      * check whether to deliver the new configuration to clients.
      */
     @Nullable
-    ArrayList<ActivityRecord> applyDisplayChangeIfNeeded() {
-        ArrayList<ActivityRecord> activitiesMayChange = null;
+    void applyDisplayChangeIfNeeded(@NonNull ArraySet<WindowContainer<?>> activitiesMayChange) {
         for (int i = mParticipants.size() - 1; i >= 0; --i) {
             final WindowContainer<?> wc = mParticipants.valueAt(i);
             final DisplayContent dc = wc.asDisplayContent();
@@ -2899,18 +2915,13 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
             // If the update is deferred, sendNewConfiguration won't deliver new configuration to
             // clients, then it is the caller's responsibility to deliver the changes.
             if (mController.mAtm.mTaskSupervisor.isRootVisibilityUpdateDeferred()) {
-                if (activitiesMayChange == null) {
-                    activitiesMayChange = new ArrayList<>();
-                }
-                final ArrayList<ActivityRecord> visibleActivities = activitiesMayChange;
                 dc.forAllActivities(r -> {
                     if (r.isVisibleRequested()) {
-                        visibleActivities.add(r);
+                        activitiesMayChange.add(r);
                     }
                 });
             }
         }
-        return activitiesMayChange;
     }
 
     boolean getLegacyIsReady() {
@@ -3085,6 +3096,10 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
                     if (topActivity.mLaunchTaskBehind) {
                         Slog.e(TAG, "Unexpected launch-task-behind operation in shell transition");
                         flags |= FLAG_TASK_LAUNCHING_BEHIND;
+                    }
+                    if ((topActivity.mTransitionChangeFlags & FLAGS_IS_OCCLUDED_NO_ANIMATION)
+                            == FLAGS_IS_OCCLUDED_NO_ANIMATION) {
+                        flags |= FLAGS_IS_OCCLUDED_NO_ANIMATION;
                     }
                 }
                 if (task.voiceSession != null) {

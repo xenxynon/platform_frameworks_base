@@ -20,8 +20,8 @@ import com.android.systemui.authentication.domain.interactor.AuthenticationInter
 import com.android.systemui.authentication.shared.model.AuthenticationMethodModel
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.deviceentry.data.repository.DeviceEntryFaceAuthRepository
 import com.android.systemui.deviceentry.data.repository.DeviceEntryRepository
-import com.android.systemui.keyguard.data.repository.DeviceEntryFaceAuthRepository
 import com.android.systemui.keyguard.data.repository.TrustRepository
 import com.android.systemui.keyguard.shared.model.BiometricUnlockSource
 import com.android.systemui.scene.domain.interactor.SceneInteractor
@@ -159,7 +159,7 @@ constructor(
     fun attemptDeviceEntry() {
         // TODO (b/307768356),
         //       1. Check if the device is already authenticated by trust agent/passive biometrics
-        //       2. show SPFS/UDFPS bouncer if it is available AlternateBouncerInteractor.show
+        //       2. Show SPFS/UDFPS bouncer if it is available AlternateBouncerInteractor.show
         //       3. For face auth only setups trigger face auth, delay transitioning to bouncer for
         //          a small amount of time.
         //       4. Transition to bouncer scene
@@ -197,8 +197,8 @@ constructor(
     init {
         if (flags.isEnabled()) {
             applicationScope.launch {
-                authenticationInteractor.authenticationChallengeResult.collectLatest { successful ->
-                    if (successful) {
+                authenticationInteractor.onAuthenticationResult.collectLatest { isSuccessful ->
+                    if (isSuccessful) {
                         repository.reportSuccessfulAuthentication()
                     }
                 }

@@ -16,7 +16,6 @@
 
 package com.android.compose.animation.scene
 
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
@@ -35,17 +34,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.intermediateLayout
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.android.compose.test.subjects.DpOffsetSubject
-import com.android.compose.test.subjects.assertThat
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -263,8 +256,11 @@ class ElementTest {
 
         rule.setContent {
             SceneTransitionLayoutForTesting(
-                currentScene = currentScene,
-                onChangeScene = { currentScene = it },
+                state =
+                    updateSceneTransitionLayoutState(
+                        currentScene = currentScene,
+                        onChangeScene = { currentScene = it }
+                    ),
                 onLayoutImpl = { nullableLayoutImpl = it },
             ) {
                 scene(TestScenes.SceneA) { /* Nothing */}
@@ -306,7 +302,7 @@ class ElementTest {
 
         assertThat(layoutImpl.elements.keys).containsExactly(key)
         val element = layoutImpl.elements.getValue(key)
-        assertThat(element.sceneValues.keys).containsExactly(TestScenes.SceneB)
+        assertThat(element.sceneStates.keys).containsExactly(TestScenes.SceneB)
 
         // Scene C, state 0: the same element is reused.
         currentScene = TestScenes.SceneC
@@ -315,7 +311,7 @@ class ElementTest {
 
         assertThat(layoutImpl.elements.keys).containsExactly(key)
         assertThat(layoutImpl.elements.getValue(key)).isSameInstanceAs(element)
-        assertThat(element.sceneValues.keys).containsExactly(TestScenes.SceneC)
+        assertThat(element.sceneStates.keys).containsExactly(TestScenes.SceneC)
 
         // Scene C, state 1: the same element is reused.
         sceneCState = 1
@@ -323,7 +319,7 @@ class ElementTest {
 
         assertThat(layoutImpl.elements.keys).containsExactly(key)
         assertThat(layoutImpl.elements.getValue(key)).isSameInstanceAs(element)
-        assertThat(element.sceneValues.keys).containsExactly(TestScenes.SceneC)
+        assertThat(element.sceneStates.keys).containsExactly(TestScenes.SceneC)
 
         // Scene D, state 0: the same element is reused.
         currentScene = TestScenes.SceneD
@@ -332,7 +328,7 @@ class ElementTest {
 
         assertThat(layoutImpl.elements.keys).containsExactly(key)
         assertThat(layoutImpl.elements.getValue(key)).isSameInstanceAs(element)
-        assertThat(element.sceneValues.keys).containsExactly(TestScenes.SceneD)
+        assertThat(element.sceneStates.keys).containsExactly(TestScenes.SceneD)
 
         // Scene D, state 1: the same element is reused.
         sceneDState = 1
@@ -340,13 +336,13 @@ class ElementTest {
 
         assertThat(layoutImpl.elements.keys).containsExactly(key)
         assertThat(layoutImpl.elements.getValue(key)).isSameInstanceAs(element)
-        assertThat(element.sceneValues.keys).containsExactly(TestScenes.SceneD)
+        assertThat(element.sceneStates.keys).containsExactly(TestScenes.SceneD)
 
         // Scene D, state 2: the element is removed from the map.
         sceneDState = 2
         rule.waitForIdle()
 
-        assertThat(element.sceneValues).isEmpty()
+        assertThat(element.sceneStates).isEmpty()
         assertThat(layoutImpl.elements).isEmpty()
     }
 
@@ -428,8 +424,11 @@ class ElementTest {
 
         rule.setContent {
             SceneTransitionLayoutForTesting(
-                currentScene = TestScenes.SceneA,
-                onChangeScene = {},
+                state =
+                    updateSceneTransitionLayoutState(
+                        currentScene = TestScenes.SceneA,
+                        onChangeScene = {}
+                    ),
                 onLayoutImpl = { nullableLayoutImpl = it },
             ) {
                 scene(TestScenes.SceneA) { Box(Modifier.element(key)) }
@@ -442,7 +441,7 @@ class ElementTest {
         // There is only Foo in the elements map.
         assertThat(layoutImpl.elements.keys).containsExactly(TestElements.Foo)
         val fooElement = layoutImpl.elements.getValue(TestElements.Foo)
-        assertThat(fooElement.sceneValues.keys).containsExactly(TestScenes.SceneA)
+        assertThat(fooElement.sceneStates.keys).containsExactly(TestScenes.SceneA)
 
         key = TestElements.Bar
 
@@ -450,8 +449,8 @@ class ElementTest {
         rule.waitForIdle()
         assertThat(layoutImpl.elements.keys).containsExactly(TestElements.Bar)
         val barElement = layoutImpl.elements.getValue(TestElements.Bar)
-        assertThat(barElement.sceneValues.keys).containsExactly(TestScenes.SceneA)
-        assertThat(fooElement.sceneValues).isEmpty()
+        assertThat(barElement.sceneStates.keys).containsExactly(TestScenes.SceneA)
+        assertThat(fooElement.sceneStates).isEmpty()
     }
 
     @Test
@@ -478,8 +477,11 @@ class ElementTest {
             scrollScope = rememberCoroutineScope()
 
             SceneTransitionLayoutForTesting(
-                currentScene = TestScenes.SceneA,
-                onChangeScene = {},
+                state =
+                    updateSceneTransitionLayoutState(
+                        currentScene = TestScenes.SceneA,
+                        onChangeScene = {}
+                    ),
                 onLayoutImpl = { nullableLayoutImpl = it },
             ) {
                 scene(TestScenes.SceneA) {
@@ -487,7 +489,7 @@ class ElementTest {
                     // page should be composed.
                     HorizontalPager(
                         pagerState,
-                        beyondBoundsPageCount = 0,
+                        outOfBoundsPageCount = 0,
                     ) { page ->
                         when (page) {
                             0 -> Box(Modifier.element(TestElements.Foo).fillMaxSize())
@@ -505,7 +507,7 @@ class ElementTest {
         // There is only Foo in the elements map.
         assertThat(layoutImpl.elements.keys).containsExactly(TestElements.Foo)
         val element = layoutImpl.elements.getValue(TestElements.Foo)
-        val sceneValues = element.sceneValues
+        val sceneValues = element.sceneStates
         assertThat(sceneValues.keys).containsExactly(TestScenes.SceneA)
 
         // Get the ElementModifier node that should be reused later on when coming back to this
@@ -528,7 +530,7 @@ class ElementTest {
 
         assertThat(layoutImpl.elements.keys).containsExactly(TestElements.Foo)
         val newElement = layoutImpl.elements.getValue(TestElements.Foo)
-        val newSceneValues = newElement.sceneValues
+        val newSceneValues = newElement.sceneStates
         assertThat(newElement).isNotEqualTo(element)
         assertThat(newSceneValues).isNotEqualTo(sceneValues)
         assertThat(newSceneValues.keys).containsExactly(TestScenes.SceneA)
@@ -563,88 +565,6 @@ class ElementTest {
             at(32) { assertThat(fooCompositions).isEqualTo(1) }
             at(48) { assertThat(fooCompositions).isEqualTo(1) }
             after { assertThat(fooCompositions).isEqualTo(1) }
-        }
-    }
-
-    @Test
-    fun sharedElementOffsetIsUpdatedEvenWhenNotPlaced() {
-        var nullableLayoutImpl: SceneTransitionLayoutImpl? = null
-        var density: Density? = null
-
-        fun layoutImpl() = nullableLayoutImpl ?: error("nullableLayoutImpl was not set")
-
-        fun density() = density ?: error("density was not set")
-
-        fun Offset.toDpOffset() = with(density()) { DpOffset(x.toDp(), y.toDp()) }
-
-        fun foo() = layoutImpl().elements[TestElements.Foo] ?: error("Foo not in elements map")
-
-        fun Element.lastSharedOffset() = lastSharedValues.offset.toDpOffset()
-
-        fun Element.lastOffsetIn(scene: SceneKey) =
-            (sceneValues[scene] ?: error("$scene not in sceneValues map"))
-                .lastValues
-                .offset
-                .toDpOffset()
-
-        rule.testTransition(
-            from = TestScenes.SceneA,
-            to = TestScenes.SceneB,
-            transitionLayout = { currentScene, onChangeScene ->
-                density = LocalDensity.current
-
-                SceneTransitionLayoutForTesting(
-                    currentScene = currentScene,
-                    onChangeScene = onChangeScene,
-                    onLayoutImpl = { nullableLayoutImpl = it },
-                    transitions =
-                        transitions {
-                            from(TestScenes.SceneA, to = TestScenes.SceneB) {
-                                spec = tween(durationMillis = 4 * 16, easing = LinearEasing)
-                            }
-                        }
-                ) {
-                    scene(TestScenes.SceneA) { Box(Modifier.element(TestElements.Foo)) }
-                    scene(TestScenes.SceneB) {
-                        Box(Modifier.offset(x = 40.dp, y = 80.dp).element(TestElements.Foo))
-                    }
-                }
-            }
-        ) {
-            val tolerance = DpOffsetSubject.DefaultTolerance
-
-            before {
-                val expected = DpOffset(0.dp, 0.dp)
-                assertThat(foo().lastSharedOffset()).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneA)).isWithin(tolerance).of(expected)
-            }
-
-            at(16) {
-                val expected = DpOffset(10.dp, 20.dp)
-                assertThat(foo().lastSharedOffset()).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneA)).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneB)).isWithin(tolerance).of(expected)
-            }
-
-            at(32) {
-                val expected = DpOffset(20.dp, 40.dp)
-                assertThat(foo().lastSharedOffset()).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneA)).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneB)).isWithin(tolerance).of(expected)
-            }
-
-            at(48) {
-                val expected = DpOffset(30.dp, 60.dp)
-                assertThat(foo().lastSharedOffset()).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneA)).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneB)).isWithin(tolerance).of(expected)
-            }
-
-            after {
-                val expected = DpOffset(40.dp, 80.dp)
-                assertThat(foo().lastSharedOffset()).isWithin(tolerance).of(expected)
-                assertThat(foo().lastOffsetIn(TestScenes.SceneB)).isWithin(tolerance).of(expected)
-            }
         }
     }
 }

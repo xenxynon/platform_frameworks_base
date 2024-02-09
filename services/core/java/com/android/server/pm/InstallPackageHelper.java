@@ -146,6 +146,7 @@ import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.EventLog;
+import android.util.ExceptionUtils;
 import android.util.Log;
 import android.util.Pair;
 import android.util.Slog;
@@ -155,6 +156,7 @@ import android.util.BoostFramework;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.content.F2fsUtils;
+import com.android.internal.pm.parsing.PackageParser2;
 import com.android.internal.pm.parsing.PackageParserException;
 import com.android.internal.pm.parsing.pkg.AndroidPackageLegacyUtils;
 import com.android.internal.pm.parsing.pkg.ParsedPackage;
@@ -174,12 +176,12 @@ import com.android.server.SystemConfig;
 import com.android.server.art.model.ArtFlags;
 import com.android.server.art.model.DexoptParams;
 import com.android.server.art.model.DexoptResult;
+import com.android.server.criticalevents.CriticalEventLog;
 import com.android.server.pm.Installer.LegacyDexoptDisabledException;
 import com.android.server.pm.dex.ArtManagerService;
 import com.android.server.pm.dex.DexManager;
 import com.android.server.pm.dex.DexoptOptions;
 import com.android.server.pm.parsing.PackageCacher;
-import com.android.server.pm.parsing.PackageParser2;
 import com.android.server.pm.parsing.pkg.AndroidPackageUtils;
 import com.android.server.pm.permission.Permission;
 import com.android.server.pm.permission.PermissionManagerServiceInternal;
@@ -673,6 +675,9 @@ final class InstallPackageHelper {
                 if (pkgSetting == null || pkgSetting.getPkg() == null) {
                     return Pair.create(PackageManager.INSTALL_FAILED_INVALID_URI, intentSender);
                 }
+                if (instantApp && (pkgSetting.isSystem() || pkgSetting.isUpdatedSystemApp())) {
+                    return Pair.create(PackageManager.INSTALL_FAILED_INVALID_URI, intentSender);
+                }
                 if (!snapshot.canViewInstantApps(callingUid, UserHandle.getUserId(callingUid))) {
                     // only allow the existing package to be used if it's installed as a full
                     // application for at least one user
@@ -694,7 +699,7 @@ final class InstallPackageHelper {
                     pkgSetting.setUninstallReason(PackageManager.UNINSTALL_REASON_UNKNOWN, userId);
                     pkgSetting.setFirstInstallTime(System.currentTimeMillis(), userId);
                     // Clear any existing archive state.
-                    pkgSetting.setArchiveState(null, userId);
+                    mPm.mInstallerService.mPackageArchiver.clearArchiveState(packageName, userId);
                     mPm.mSettings.writePackageRestrictionsLPr(userId);
                     mPm.mSettings.writeKernelMappingLPr(pkgSetting);
                     installed = true;
@@ -954,6 +959,7 @@ final class InstallPackageHelper {
         final Set<String> scannedPackages = new ArraySet<>(requests.size());
         final Map<String, Settings.VersionInfo> versionInfos = new ArrayMap<>(requests.size());
         final Map<String, Boolean> createdAppId = new ArrayMap<>(requests.size());
+        CriticalEventLog.getInstance().logInstallPackagesStarted();
         boolean success = false;
         try {
             Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER, "installPackagesLI");
@@ -1168,8 +1174,9 @@ final class InstallPackageHelper {
                         parseFlags);
                 archivedPackage = request.getPackageLite().getArchivedPackage();
             }
-        } catch (PackageManagerException | PackageParserException e) {
-            throw new PrepareFailure("Failed parse during installPackageLI", e);
+        } catch (PackageParserException e) {
+            throw new PrepareFailure(e.error,
+                    ExceptionUtils.getCompleteMessage("Failed parse during installPackageLI", e));
         } finally {
             Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
         }
@@ -2296,7 +2303,7 @@ final class InstallPackageHelper {
                                 installerPackageName);
                     }
                     // Clear any existing archive state.
-                    ps.setArchiveState(null, userId);
+                    mPm.mInstallerService.mPackageArchiver.clearArchiveState(pkgName, userId);
                 } else if (allUsers != null) {
                     // The caller explicitly specified INSTALL_ALL_USERS flag.
                     // Thus, updating the settings to install the app for all users.
@@ -2320,7 +2327,8 @@ final class InstallPackageHelper {
                                         installerPackageName);
                             }
                             // Clear any existing archive state.
-                            ps.setArchiveState(null, currentUserId);
+                            mPm.mInstallerService.mPackageArchiver.clearArchiveState(pkgName,
+                                    currentUserId);
                         } else {
                             ps.setInstalled(false, currentUserId);
                         }
@@ -2880,14 +2888,17 @@ final class InstallPackageHelper {
                 mPm.notifyPackageChanged(packageName, request.getAppId());
             }
 
-            for (int userId : firstUserIds) {
-                // Apply restricted settings on potentially dangerous packages. Needs to happen
-                // after appOpsManager is notified of the new package
-                if (request.getPackageSource() == PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE
-                        || request.getPackageSource()
-                        == PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE) {
-                    enableRestrictedSettings(packageName, request.getAppId(), userId);
-                }
+            // Apply restricted settings on potentially dangerous packages. Needs to happen
+            // after appOpsManager is notified of the new package
+            if (request.getPackageSource() == PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE
+                    || request.getPackageSource()
+                    == PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE) {
+                final int appId = request.getAppId();
+                mPm.mHandler.post(() -> {
+                    for (int userId : firstUserIds) {
+                        enableRestrictedSettings(packageName, appId, userId);
+                    }
+                });
             }
 
             // Log current value of "unknown sources" setting
@@ -3278,9 +3289,9 @@ final class InstallPackageHelper {
                 Slog.e(TAG, "updateAllSharedLibrariesLPw failed: " + e.getMessage());
             }
         }
-        mAppDataHelper.prepareAppDataAfterInstallLIF(pkg);
-
         setPackageInstalledForSystemPackage(pkg, allUserHandles, origUserHandles, writeSettings);
+
+        mAppDataHelper.prepareAppDataAfterInstallLIF(pkg);
     }
 
     private void setPackageInstalledForSystemPackage(@NonNull AndroidPackage pkg,
@@ -3702,6 +3713,8 @@ final class InstallPackageHelper {
         final ParsedPackage parsedPackage;
         try (PackageParser2 pp = mPm.mInjector.getScanningPackageParser()) {
             parsedPackage = pp.parsePackage(scanFile, parseFlags, false);
+        } catch (PackageParserException e) {
+            throw new PackageManagerException(e.error, e.getMessage(), e);
         } finally {
             Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
         }
@@ -4602,7 +4615,9 @@ final class InstallPackageHelper {
 
     private void assertPackageWithSharedUserIdIsPrivileged(AndroidPackage pkg)
             throws PackageManagerException {
-        if (!AndroidPackageLegacyUtils.isPrivileged(pkg) && (pkg.getSharedUserId() != null)) {
+        if (!AndroidPackageLegacyUtils.isPrivileged(pkg)
+                && (pkg.getSharedUserId() != null)
+                && !pkg.isLeavingSharedUser()) {
             SharedUserSetting sharedUserSetting = null;
             try {
                 synchronized (mPm.mLock) {
@@ -4642,7 +4657,8 @@ final class InstallPackageHelper {
         if (((scanFlags & SCAN_AS_PRIVILEGED) == 0)
                 && !AndroidPackageLegacyUtils.isPrivileged(pkg)
                 && (pkg.getSharedUserId() != null)
-                && !skipVendorPrivilegeScan) {
+                && !skipVendorPrivilegeScan
+                && !pkg.isLeavingSharedUser()) {
             SharedUserSetting sharedUserSetting = null;
             synchronized (mPm.mLock) {
                 try {

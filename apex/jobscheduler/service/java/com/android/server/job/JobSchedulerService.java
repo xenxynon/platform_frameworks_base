@@ -302,8 +302,6 @@ public class JobSchedulerService extends com.android.server.SystemService
     private final ConnectivityController mConnectivityController;
     /** Need directly for sending uid state changes */
     private final DeviceIdleJobsController mDeviceIdleJobsController;
-    /** Need directly for sending exempted bucket changes */
-    private final FlexibilityController mFlexibilityController;
     /** Needed to get next estimated launch time. */
     private final PrefetchController mPrefetchController;
     /** Needed to get remaining quota time. */
@@ -1837,7 +1835,12 @@ public class JobSchedulerService extends com.android.server.SystemService
                     /* system_measured_calling_download_bytes */0,
                     /* system_measured_calling_upload_bytes */ 0,
                     jobStatus.getJob().getIntervalMillis(),
-                    jobStatus.getJob().getFlexMillis());
+                    jobStatus.getJob().getFlexMillis(),
+                    jobStatus.hasFlexibilityConstraint(),
+                    /* isFlexConstraintSatisfied */ false,
+                    jobStatus.canApplyTransportAffinities(),
+                    jobStatus.getNumAppliedFlexibleConstraints(),
+                    jobStatus.getNumDroppedFlexibleConstraints());
 
             // If the job is immediately ready to run, then we can just immediately
             // put it in the pending list and try to schedule it.  This is especially
@@ -2280,7 +2283,12 @@ public class JobSchedulerService extends com.android.server.SystemService
                     /* system_measured_calling_download_bytes */0,
                     /* system_measured_calling_upload_bytes */ 0,
                     cancelled.getJob().getIntervalMillis(),
-                    cancelled.getJob().getFlexMillis());
+                    cancelled.getJob().getFlexMillis(),
+                    cancelled.hasFlexibilityConstraint(),
+                    cancelled.isConstraintSatisfied(JobStatus.CONSTRAINT_FLEXIBLE),
+                    cancelled.canApplyTransportAffinities(),
+                    cancelled.getNumAppliedFlexibleConstraints(),
+                    cancelled.getNumDroppedFlexibleConstraints());
         }
         // If this is a replacement, bring in the new version of the job
         if (incomingJob != null) {
@@ -2539,17 +2547,17 @@ public class JobSchedulerService extends com.android.server.SystemService
         mControllers = new ArrayList<StateController>();
         mPrefetchController = new PrefetchController(this);
         mControllers.add(mPrefetchController);
-        mFlexibilityController =
+        final FlexibilityController flexibilityController =
                 new FlexibilityController(this, mPrefetchController);
-        mControllers.add(mFlexibilityController);
+        mControllers.add(flexibilityController);
         mConnectivityController =
-                new ConnectivityController(this, mFlexibilityController);
+                new ConnectivityController(this, flexibilityController);
         mControllers.add(mConnectivityController);
         mControllers.add(new TimeController(this));
-        final IdleController idleController = new IdleController(this, mFlexibilityController);
+        final IdleController idleController = new IdleController(this, flexibilityController);
         mControllers.add(idleController);
         final BatteryController batteryController =
-                new BatteryController(this, mFlexibilityController);
+                new BatteryController(this, flexibilityController);
         mControllers.add(batteryController);
         mStorageController = new StorageController(this);
         mControllers.add(mStorageController);
@@ -3194,13 +3202,6 @@ public class JobSchedulerService extends com.android.server.SystemService
                     resetPendingJobReasonCache(job);
                 }
             }
-        }
-    }
-
-    @Override
-    public void onExemptedBucketChanged(@NonNull ArraySet<JobStatus> changedJobs) {
-        if (changedJobs.size() > 0) {
-            mFlexibilityController.onExemptedBucketChanged(changedJobs);
         }
     }
 

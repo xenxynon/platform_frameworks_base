@@ -141,6 +141,7 @@ applications that come with the platform
         <permission name="android.permission.CONTROL_INCALL_EXPERIENCE"/>
         <permission name="android.permission.DUMP"/>
         <permission name="android.permission.INTERACT_ACROSS_USERS"/>
+        <permission name="android.permission.LOCATION_BYPASS"/>
         <permission name="android.permission.LOCAL_MAC_ADDRESS"/>
         <permission name="android.permission.MANAGE_USERS"/>
         <permission name="android.permission.MANAGE_SUBSCRIPTION_PLANS" />
@@ -156,6 +157,7 @@ applications that come with the platform
         <permission name="android.permission.REGISTER_CALL_PROVIDER"/>
         <permission name="android.permission.REGISTER_SIM_SUBSCRIPTION"/>
         <permission name="android.permission.REGISTER_STATS_PULL_ATOM"/>
+        <permission name="android.permission.SATELLITE_COMMUNICATION"/>
         <permission name="android.permission.SEND_RESPOND_VIA_MESSAGE"/>
         <permission name="android.permission.SHUTDOWN"/>
         <permission name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"/>
@@ -431,6 +433,7 @@ applications that come with the platform
         <!-- Permissions required for CTS test - android.server.biometrics -->
         <permission name="android.permission.USE_BIOMETRIC" />
         <permission name="android.permission.TEST_BIOMETRIC" />
+        <permission name="android.permission.MANAGE_BIOMETRIC_DIALOG" />
         <!-- Permissions required for CTS test - CtsContactsProviderTestCases -->
         <permission name="android.contacts.permission.MANAGE_SIM_ACCOUNTS" />
         <!-- Permissions required for CTS test - CtsHdmiCecHostTestCases -->
@@ -516,6 +519,7 @@ applications that come with the platform
         <permission name="android.permission.READ_SAFETY_CENTER_STATUS" />
         <!-- Permission required for CTS test - CtsTelephonyTestCases -->
         <permission name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />
+        <permission name="android.permission.ACCESS_LAST_KNOWN_CELL_ID" />
         <!-- Permission required for CTS test - CtsAppTestCases -->
         <permission name="android.permission.CAPTURE_MEDIA_OUTPUT" />
         <permission name="android.permission.CAPTURE_TUNER_AUDIO_INPUT" />
@@ -546,6 +550,8 @@ applications that come with the platform
         <permission name="android.permission.GET_BINDING_UID_IMPORTANCE"/>
         <!-- Permission required for CTS test NotificationManagerZenTest -->
         <permission name="android.permission.CONTROL_DISPLAY_COLOR_TRANSFORMS" />
+        <!-- Permission required for BinaryTransparencyService shell API and host test -->
+        <permission name="android.permission.GET_BACKGROUND_INSTALLED_PACKAGES" />
     </privapp-permissions>
 
     <privapp-permissions package="com.android.statementservice">
@@ -582,6 +588,7 @@ applications that come with the platform
         <permission name="android.permission.SET_WALLPAPER_COMPONENT"/>
         <permission name="android.permission.BIND_WALLPAPER"/>
         <permission name="android.permission.CUSTOMIZE_SYSTEM_UI"/>
+        <permission name="android.permission.SET_WALLPAPER_DIM_AMOUNT"/>
     </privapp-permissions>
 
     <privapp-permissions package="com.android.dynsystem">

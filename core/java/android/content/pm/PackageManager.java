@@ -16,6 +16,8 @@
 
 package android.content.pm;
 
+import static android.media.audio.Flags.FLAG_FEATURE_SPATIAL_AUDIO_HEADTRACKING_LOW_LATENCY;
+
 import static com.android.internal.pm.pkg.parsing.ParsingPackageUtils.PARSE_COLLECT_CERTIFICATES;
 
 import android.Manifest;
@@ -128,6 +130,7 @@ import java.util.function.Function;
  * <a href="/training/basics/intents/package-visibility">manage package visibility</a>.
  * </p>
  */
+@android.ravenwood.annotation.RavenwoodKeepPartialClass
 public abstract class PackageManager {
     private static final String TAG = "PackageManager";
 
@@ -1501,6 +1504,44 @@ public abstract class PackageManager {
     public static final int ROLLBACK_DATA_POLICY_RETAIN = 2;
 
     /** @hide */
+    @IntDef(prefix = {"ROLLBACK_USER_IMPACT_"}, value = {
+            ROLLBACK_USER_IMPACT_LOW,
+            ROLLBACK_USER_IMPACT_HIGH,
+            ROLLBACK_USER_IMPACT_ONLY_MANUAL,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RollbackImpactLevel {}
+
+    /**
+     * Rollback will be performed automatically in response to native crashes on startup or
+     * persistent service crashes. More suitable for apps that do not store any user data.
+     *
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(android.content.pm.Flags.FLAG_RECOVERABILITY_DETECTION)
+    public static final int ROLLBACK_USER_IMPACT_LOW = 0;
+
+    /**
+     * Rollback will be performed automatically only when the device is found to be unrecoverable.
+     * More suitable for apps that store user data and have higher impact on user.
+     *
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(android.content.pm.Flags.FLAG_RECOVERABILITY_DETECTION)
+    public static final int ROLLBACK_USER_IMPACT_HIGH = 1;
+
+    /**
+     * Rollback will not be performed automatically. It can be triggered externally.
+     *
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(android.content.pm.Flags.FLAG_RECOVERABILITY_DETECTION)
+    public static final int ROLLBACK_USER_IMPACT_ONLY_MANUAL = 2;
+
+    /** @hide */
     @IntDef(flag = true, prefix = { "INSTALL_" }, value = {
             INSTALL_REPLACE_EXISTING,
             INSTALL_ALLOW_TEST,
@@ -2513,6 +2554,15 @@ public abstract class PackageManager {
     public static final int INSTALL_FAILED_SHARED_LIBRARY_BAD_CERTIFICATE_DIGEST = -130;
 
     /**
+     * Installation failed return code: if the system failed to install the package that
+     * {@link android.R.attr#multiArch} is true in its manifest because its packaged
+     * native code did not match all of the natively ABIs supported by the system.
+     *
+     * @hide
+     */
+    public static final int INSTALL_FAILED_MULTI_ARCH_NOT_MATCH_ALL_NATIVE_ABIS = -131;
+
+    /**
      * App minimum aspect ratio set by the user which will override app-defined aspect ratio.
      *
      * @hide
@@ -2953,6 +3003,46 @@ public abstract class PackageManager {
     @SystemApi
     public static final int INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_ALWAYS_ASK = 4;
 
+
+    /**
+     * Indicates that the app metadata does not exist or its source is unknown.
+     * @hide
+     */
+    @FlaggedApi(android.content.pm.Flags.FLAG_ASL_IN_APK_APP_METADATA_SOURCE)
+    @SystemApi
+    public static final int APP_METADATA_SOURCE_UNKNOWN = 0;
+    /**
+     * Indicates that the app metadata is provided by the APK itself.
+     * @hide
+     */
+    @FlaggedApi(android.content.pm.Flags.FLAG_ASL_IN_APK_APP_METADATA_SOURCE)
+    @SystemApi
+    public static final int APP_METADATA_SOURCE_APK = 1;
+    /**
+     * Indicates that the app metadata is provided by the installer that installed the app.
+     * @hide
+     */
+    @FlaggedApi(android.content.pm.Flags.FLAG_ASL_IN_APK_APP_METADATA_SOURCE)
+    @SystemApi
+    public static final int APP_METADATA_SOURCE_INSTALLER = 2;
+    /**
+     * Indicates that the app metadata is provided as part of the system image.
+     * @hide
+     */
+    @FlaggedApi(android.content.pm.Flags.FLAG_ASL_IN_APK_APP_METADATA_SOURCE)
+    @SystemApi
+    public static final int APP_METADATA_SOURCE_SYSTEM_IMAGE = 3;
+
+    /** @hide */
+    @IntDef(flag = true, prefix = { "APP_METADATA_SOURCE_" }, value = {
+            APP_METADATA_SOURCE_UNKNOWN,
+            APP_METADATA_SOURCE_APK,
+            APP_METADATA_SOURCE_INSTALLER,
+            APP_METADATA_SOURCE_SYSTEM_IMAGE,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface AppMetadataSource {}
+
     /**
      * Can be used as the {@code millisecondsToDelay} argument for
      * {@link PackageManager#extendVerificationTimeout}. This is the
@@ -2984,6 +3074,17 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_AUDIO_PRO = "android.hardware.audio.pro";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}
+     * which indicates whether head tracking for spatial audio operates with low-latency,
+     * as defined by the CDD criteria for the feature.
+     *
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    @FlaggedApi(FLAG_FEATURE_SPATIAL_AUDIO_HEADTRACKING_LOW_LATENCY)
+    public static final String FEATURE_AUDIO_SPATIAL_HEADTRACKING_LOW_LATENCY =
+            "android.hardware.audio.spatial.headtracking.low_latency";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
@@ -3873,7 +3974,9 @@ public abstract class PackageManager {
      * The device is capable of communicating with other devices via
      * <a href="https://www.threadgroup.org">Thread</a> networking protocol.
      */
-    @FlaggedApi("com.android.net.thread.flags.thread_enabled")
+    // TODO (b/325886480): update the flag to
+    // "com.android.net.thread.platform.flags.Flags.FLAG_THREAD_ENABLED_PLATFORM"
+    @FlaggedApi("com.android.net.thread.flags.thread_enabled_platform")
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_THREAD_NETWORK = "android.hardware.thread_network";
 
@@ -4440,6 +4543,10 @@ public abstract class PackageManager {
      * the Android Keystore backed by an isolated execution environment. The version indicates
      * which features are implemented in the isolated execution environment:
      * <ul>
+     * <li>300: Ability to include a second IMEI in the ID attestation record, see
+     * {@link android.app.admin.DevicePolicyManager#ID_TYPE_IMEI}.
+     * <li>200: Hardware support for Curve 25519 (including both Ed25519 signature generation and
+     * X25519 key agreement).
      * <li>100: Hardware support for ECDH (see {@link javax.crypto.KeyAgreement}) and support
      * for app-generated attestation keys (see {@link
      * android.security.keystore.KeyGenParameterSpec.Builder#setAttestKeyAlias(String)}).
@@ -4469,6 +4576,11 @@ public abstract class PackageManager {
      * StrongBox</a>. If this feature has a version, the version number indicates which features are
      * implemented in StrongBox:
      * <ul>
+     * <li>300: Ability to include a second IMEI in the ID attestation record, see
+     * {@link android.app.admin.DevicePolicyManager#ID_TYPE_IMEI}.
+     * <li>200: No new features for StrongBox (the Android Keystore environment backed by an
+     * isolated execution environment has gained support for Curve 25519 in this version, but
+     * the implementation backed by a dedicated secure processor is not expected to implement it).
      * <li>100: Hardware support for ECDH (see {@link javax.crypto.KeyAgreement}) and support
      * for app-generated attestation keys (see {@link
      * android.security.keystore.KeyGenParameterSpec.Builder#setAttestKeyAlias(String)}).
@@ -5454,6 +5566,7 @@ public abstract class PackageManager {
      * application info.
      * @hide
      */
+    @android.ravenwood.annotation.RavenwoodKeepWholeClass
     public static class Flags {
         final long mValue;
         protected Flags(long value) {
@@ -5468,6 +5581,7 @@ public abstract class PackageManager {
      * Specific flags used for retrieving package info. Example:
      * {@code PackageManager.getPackageInfo(packageName, PackageInfoFlags.of(0)}
      */
+    @android.ravenwood.annotation.RavenwoodKeepWholeClass
     public final static class PackageInfoFlags extends Flags {
         private PackageInfoFlags(@PackageInfoFlagsBits long value) {
             super(value);
@@ -5481,6 +5595,7 @@ public abstract class PackageManager {
     /**
      * Specific flags used for retrieving application info.
      */
+    @android.ravenwood.annotation.RavenwoodKeepWholeClass
     public final static class ApplicationInfoFlags extends Flags {
         private ApplicationInfoFlags(@ApplicationInfoFlagsBits long value) {
             super(value);
@@ -5494,6 +5609,7 @@ public abstract class PackageManager {
     /**
      * Specific flags used for retrieving component info.
      */
+    @android.ravenwood.annotation.RavenwoodKeepWholeClass
     public final static class ComponentInfoFlags extends Flags {
         private ComponentInfoFlags(@ComponentInfoFlagsBits long value) {
             super(value);
@@ -5507,6 +5623,7 @@ public abstract class PackageManager {
     /**
      * Specific flags used for retrieving resolve info.
      */
+    @android.ravenwood.annotation.RavenwoodKeepWholeClass
     public final static class ResolveInfoFlags extends Flags {
         private ResolveInfoFlags(@ResolveInfoFlagsBits long value) {
             super(value);
@@ -6254,6 +6371,29 @@ public abstract class PackageManager {
     public PersistableBundle getAppMetadata(@NonNull String packageName)
             throws NameNotFoundException {
         throw new UnsupportedOperationException("getAppMetadata not implemented in subclass");
+    }
+
+
+    /**
+     * Returns the source of the app metadata that is currently associated with the given package.
+     * The value can be {@link #APP_METADATA_SOURCE_UNKNOWN}, {@link #APP_METADATA_SOURCE_APK},
+     * {@link #APP_METADATA_SOURCE_INSTALLER} or {@link #APP_METADATA_SOURCE_SYSTEM_IMAGE}.
+     *
+     * Note: an app can have the app metadata included in the APK, but if the installer also
+     * provides an app metadata during the installation, the one provided by the installer will
+     * take precedence.
+     *
+     * @param packageName The package name for which to get the app metadata source.
+     * @throws NameNotFoundException if no such package is available to the caller.
+     * @throws SecurityException if the caller doesn't have the required permission.
+     * @hide
+     */
+    @FlaggedApi(android.content.pm.Flags.FLAG_ASL_IN_APK_APP_METADATA_SOURCE)
+    @SystemApi
+    @RequiresPermission(Manifest.permission.GET_APP_METADATA)
+    public @AppMetadataSource int getAppMetadataSource(@NonNull String packageName)
+            throws NameNotFoundException {
+        throw new UnsupportedOperationException("getAppMetadataSource not implemented in subclass");
     }
 
     /**
@@ -10323,6 +10463,8 @@ public abstract class PackageManager {
             case INSTALL_FAILED_SESSION_INVALID: return "INSTALL_FAILED_SESSION_INVALID";
             case INSTALL_FAILED_SHARED_LIBRARY_BAD_CERTIFICATE_DIGEST:
                 return "INSTALL_FAILED_SHARED_LIBRARY_BAD_CERTIFICATE_DIGEST";
+            case INSTALL_FAILED_MULTI_ARCH_NOT_MATCH_ALL_NATIVE_ABIS:
+                return "INSTALL_FAILED_MULTI_ARCH_NOT_MATCH_ALL_NATIVE_ABIS";
             default: return Integer.toString(status);
         }
     }

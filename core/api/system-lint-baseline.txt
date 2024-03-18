@@ -513,6 +513,12 @@ GenericException: android.service.autofill.augmented.FillWindow#finalize():
     Methods must not throw generic exceptions (`java.lang.Throwable`)
 
 
+InvalidNullabilityOverride: android.service.ondeviceintelligence.OnDeviceIntelligenceService#onBind(android.content.Intent) parameter #0:
+    Invalid nullability on parameter `intent` in method `onBind`. Parameters of overrides cannot be NonNull if the super parameter is unannotated.
+InvalidNullabilityOverride: android.service.ondeviceintelligence.OnDeviceTrustedInferenceService#onBind(android.content.Intent) parameter #0:
+    Invalid nullability on parameter `intent` in method `onBind`. Parameters of overrides cannot be NonNull if the super parameter is unannotated.
+InvalidNullabilityOverride: android.service.ondeviceintelligence.OnDeviceTrustedInferenceService#openFileInput(String) parameter #0:
+    Invalid nullability on parameter `filename` in method `openFileInput`. Parameters of overrides cannot be NonNull if the super parameter is unannotated.
 InvalidNullabilityOverride: android.service.textclassifier.TextClassifierService#onUnbind(android.content.Intent) parameter #0:
     Invalid nullability on parameter `intent` in method `onUnbind`. Parameters of overrides cannot be NonNull if the super parameter is unannotated.
 InvalidNullabilityOverride: android.service.voice.HotwordDetectionService#getSystemService(String) parameter #0:
@@ -529,10 +535,18 @@ KotlinKeyword: android.app.Notification#when:
     Avoid field names that are Kotlin hard keywords ("when"); see https://android.github.io/kotlin-guides/interop.html#no-hard-keywords
 
 
+KotlinOperator: android.hardware.camera2.extension.CharacteristicsMap#get(String):
+    Method can be invoked with an indexing operator from Kotlin: `get` (this is usually desirable; just make sure it makes sense for this type of object)
+
+
 ListenerLast: android.telephony.satellite.SatelliteManager#stopSatelliteTransmissionUpdates(android.telephony.satellite.SatelliteTransmissionUpdateCallback, java.util.concurrent.Executor, java.util.function.Consumer<java.lang.Integer>) parameter #1:
     Listeners should always be at end of argument list (method `stopSatelliteTransmissionUpdates`)
 ListenerLast: android.telephony.satellite.SatelliteManager#stopSatelliteTransmissionUpdates(android.telephony.satellite.SatelliteTransmissionUpdateCallback, java.util.concurrent.Executor, java.util.function.Consumer<java.lang.Integer>) parameter #2:
     Listeners should always be at end of argument list (method `stopSatelliteTransmissionUpdates`)
+
+
+MethodNameUnits: android.hardware.camera2.extension.CameraOutputSurface#getColorSpace():
+    Expected method name units to be `Bytes`, was `Space` in `getColorSpace`
 
 
 MissingGetterMatchingBuilder: android.service.voice.HotwordTrainingData.Builder#addTrainingAudio(android.service.voice.HotwordTrainingAudio):
@@ -561,6 +575,8 @@ MissingNullability: android.service.contentcapture.ContentCaptureService#dump(ja
     Missing nullability on parameter `args` in method `dump`
 MissingNullability: android.service.notification.NotificationAssistantService#attachBaseContext(android.content.Context) parameter #0:
     Missing nullability on parameter `base` in method `attachBaseContext`
+MissingNullability: android.service.ondeviceintelligence.OnDeviceTrustedInferenceService#openFileInput(String):
+    Missing nullability on method `openFileInput` return
 MissingNullability: android.telephony.NetworkService#onUnbind(android.content.Intent) parameter #0:
     Missing nullability on parameter `intent` in method `onUnbind`
 MissingNullability: android.telephony.data.DataService#onUnbind(android.content.Intent) parameter #0:
@@ -692,6 +708,8 @@ RequiresPermission: android.app.admin.DevicePolicyManager#generateKeyPair(androi
     Method 'generateKeyPair' documentation mentions permissions already declared by @RequiresPermission
 RequiresPermission: android.app.admin.DevicePolicyManager#getApplicationExemptions(String):
     Method 'getApplicationExemptions' documentation mentions permissions already declared by @RequiresPermission
+RequiresPermission: android.app.admin.DevicePolicyManager#getContentProtectionPolicy(android.content.ComponentName):
+    Method 'getContentProtectionPolicy' documentation mentions permissions already declared by @RequiresPermission
 RequiresPermission: android.app.admin.DevicePolicyManager#getCrossProfileWidgetProviders(android.content.ComponentName):
     Method 'getCrossProfileWidgetProviders' documentation mentions permissions already declared by @RequiresPermission
 RequiresPermission: android.app.admin.DevicePolicyManager#getLockTaskFeatures(android.content.ComponentName):
@@ -738,6 +756,8 @@ RequiresPermission: android.app.admin.DevicePolicyManager#setAlwaysOnVpnPackage(
     Method 'setAlwaysOnVpnPackage' documentation mentions permissions without declaring @RequiresPermission
 RequiresPermission: android.app.admin.DevicePolicyManager#setApplicationExemptions(String, java.util.Set<java.lang.Integer>):
     Method 'setApplicationExemptions' documentation mentions permissions already declared by @RequiresPermission
+RequiresPermission: android.app.admin.DevicePolicyManager#setContentProtectionPolicy(android.content.ComponentName, int):
+    Method 'setContentProtectionPolicy' documentation mentions permissions already declared by @RequiresPermission
 RequiresPermission: android.app.admin.DevicePolicyManager#setDeviceProvisioningConfigApplied():
     Method 'setDeviceProvisioningConfigApplied' documentation mentions permissions already declared by @RequiresPermission
 RequiresPermission: android.app.admin.DevicePolicyManager#setLockTaskFeatures(android.content.ComponentName, int):
@@ -1872,6 +1892,8 @@ Todo: android.Manifest.permission#READ_PEOPLE_DATA:
     Documentation mentions 'TODO'
 Todo: android.app.NotificationManager#isNotificationAssistantAccessGranted(android.content.ComponentName):
     Documentation mentions 'TODO'
+Todo: android.app.ondeviceintelligence.OnDeviceIntelligenceManager#requestFeatureDownload(android.app.ondeviceintelligence.Feature, android.app.ondeviceintelligence.CancellationSignal, java.util.concurrent.Executor, android.app.ondeviceintelligence.DownloadCallback):
+    Documentation mentions 'TODO'
 Todo: android.hardware.camera2.params.StreamConfigurationMap:
     Documentation mentions 'TODO'
 Todo: android.hardware.location.ContextHubManager#getNanoAppInstanceInfo(int):
@@ -1926,6 +1948,10 @@ UnflaggedApi: android.app.ActivityManager#getExternalHistoricalProcessStartReaso
     New API must be flagged with @FlaggedApi: method android.app.ActivityManager.getExternalHistoricalProcessStartReasons(String,int)
 UnflaggedApi: android.app.AppOpsManager#OPSTR_RECEIVE_SANDBOX_TRIGGER_AUDIO:
     New API must be flagged with @FlaggedApi: field android.app.AppOpsManager.OPSTR_RECEIVE_SANDBOX_TRIGGER_AUDIO
+UnflaggedApi: android.app.StatusBarManager.DisableInfo#CREATOR:
+    New API must be flagged with @FlaggedApi: field android.app.StatusBarManager.DisableInfo.CREATOR
+UnflaggedApi: android.app.StatusBarManager.DisableInfo#isBackDisabled():
+    New API must be flagged with @FlaggedApi: method android.app.StatusBarManager.DisableInfo.isBackDisabled()
 UnflaggedApi: android.companion.virtual.VirtualDeviceManager.VirtualDevice#getPersistentDeviceId():
     New API must be flagged with @FlaggedApi: method android.companion.virtual.VirtualDeviceManager.VirtualDevice.getPersistentDeviceId()
 UnflaggedApi: android.content.Context#THREAD_NETWORK_SERVICE:
@@ -2312,14 +2338,14 @@ UnflaggedApi: android.telephony.satellite.SatelliteManager.SatelliteException#Sa
     New API must be flagged with @FlaggedApi: constructor android.telephony.satellite.SatelliteManager.SatelliteException(int)
 UnflaggedApi: android.telephony.satellite.SatelliteManager.SatelliteException#getErrorCode():
     New API must be flagged with @FlaggedApi: method android.telephony.satellite.SatelliteManager.SatelliteException.getErrorCode()
-UnflaggedApi: android.telephony.satellite.SatelliteProvisionStateCallback:
-    New API must be flagged with @FlaggedApi: class android.telephony.satellite.SatelliteProvisionStateCallback
-UnflaggedApi: android.telephony.satellite.SatelliteProvisionStateCallback#onSatelliteProvisionStateChanged(boolean):
-    New API must be flagged with @FlaggedApi: method android.telephony.satellite.SatelliteProvisionStateCallback.onSatelliteProvisionStateChanged(boolean)
 UnflaggedApi: android.telephony.satellite.SatelliteModemStateCallback:
     New API must be flagged with @FlaggedApi: class android.telephony.satellite.SatelliteModemStateCallback
 UnflaggedApi: android.telephony.satellite.SatelliteModemStateCallback#onSatelliteModemStateChanged(int):
     New API must be flagged with @FlaggedApi: method android.telephony.satellite.SatelliteModemStateCallback.onSatelliteModemStateChanged(int)
+UnflaggedApi: android.telephony.satellite.SatelliteProvisionStateCallback:
+    New API must be flagged with @FlaggedApi: class android.telephony.satellite.SatelliteProvisionStateCallback
+UnflaggedApi: android.telephony.satellite.SatelliteProvisionStateCallback#onSatelliteProvisionStateChanged(boolean):
+    New API must be flagged with @FlaggedApi: method android.telephony.satellite.SatelliteProvisionStateCallback.onSatelliteProvisionStateChanged(boolean)
 UnflaggedApi: android.telephony.satellite.SatelliteTransmissionUpdateCallback:
     New API must be flagged with @FlaggedApi: class android.telephony.satellite.SatelliteTransmissionUpdateCallback
 UnflaggedApi: android.telephony.satellite.SatelliteTransmissionUpdateCallback#onReceiveDatagramStateChanged(int, int, int):

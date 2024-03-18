@@ -49,7 +49,6 @@ import com.android.server.wm.ActivityMetricsLaunchObserver;
 import com.android.server.wm.ActivityMetricsLaunchObserverRegistry;
 import com.android.server.wm.ActivityTaskManagerInternal;
 
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -62,7 +61,7 @@ public final class ProfcollectForwardingService extends SystemService {
     private static final boolean DEBUG = Log.isLoggable(LOG_TAG, Log.DEBUG);
     private static final String INTENT_UPLOAD_PROFILES =
             "com.android.server.profcollect.UPLOAD_PROFILES";
-    private static final long BG_PROCESS_PERIOD = TimeUnit.HOURS.toMillis(4); // every 4 hours.
+    private static final long BG_PROCESS_INTERVAL = TimeUnit.HOURS.toMillis(4); // every 4 hours.
 
     private IProfCollectd mIProfcollect;
     private static ProfcollectForwardingService sSelfService;
@@ -226,7 +225,7 @@ public final class ProfcollectForwardingService extends SystemService {
             js.schedule(new JobInfo.Builder(JOB_IDLE_PROCESS, JOB_SERVICE_NAME)
                     .setRequiresDeviceIdle(true)
                     .setRequiresCharging(true)
-                    .setPeriodic(BG_PROCESS_PERIOD)
+                    .setPeriodic(BG_PROCESS_INTERVAL)
                     .setPriority(JobInfo.PRIORITY_MIN)
                     .build());
         }
@@ -314,7 +313,7 @@ public final class ProfcollectForwardingService extends SystemService {
             Log.w(LOG_TAG, "Couldn't get ArtManagerLocal");
             return;
         }
-        aml.setBatchDexoptStartCallback(ForkJoinPool.commonPool(),
+        aml.setBatchDexoptStartCallback(Runnable::run,
                 (snapshot, reason, defaultPackages, builder, passedSignal) -> {
                     traceOnDex2oatStart();
                 });
@@ -327,7 +326,7 @@ public final class ProfcollectForwardingService extends SystemService {
         // Sample for a fraction of dex2oat runs.
         final int traceFrequency =
             DeviceConfig.getInt(DeviceConfig.NAMESPACE_PROFCOLLECT_NATIVE_BOOT,
-                "dex2oat_trace_freq", 10);
+                "dex2oat_trace_freq", 25);
         int randomNum = ThreadLocalRandom.current().nextInt(100);
         if (randomNum < traceFrequency) {
             if (DEBUG) {

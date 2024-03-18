@@ -25,6 +25,7 @@ import static com.android.internal.util.Preconditions.checkNotNull;
 import android.Manifest;
 import android.annotation.BytesLong;
 import android.annotation.CallbackExecutor;
+import android.annotation.CurrentTimeMillisLong;
 import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.LongDef;
@@ -6735,11 +6736,7 @@ public class TelephonyManager {
         }
     }
 
-    /**
-     * @hide
-     */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P)
-    private ITelephony getITelephony() {
+    private static ITelephony getITelephony() {
         // Keeps cache disabled until test fixes are checked into AOSP.
         if (!sServiceHandleCacheEnabled) {
             return ITelephony.Stub.asInterface(
@@ -6986,6 +6983,7 @@ public class TelephonyManager {
         }
     }
 
+    // TODO(b/316183370): replace all @code with @link in javadoc after feature is released
     /**
      * @return true if the current device is "voice capable".
      * <p>
@@ -6999,7 +6997,10 @@ public class TelephonyManager {
      * PackageManager.FEATURE_TELEPHONY system feature, which is available
      * on any device with a telephony radio, even if the device is
      * data-only.
-     * @deprecated Replaced by {@link #isDeviceVoiceCapable()}
+     * @deprecated Replaced by {@code #isDeviceVoiceCapable()}. Starting from Android 15, voice
+     * capability may also be overridden by carriers for a given subscription. For voice capable
+     * device (when {@code #isDeviceVoiceCapable} return {@code true}), caller should check for
+     * subscription-level voice capability as well. See {@code #isDeviceVoiceCapable} for details.
      */
     @RequiresFeature(PackageManager.FEATURE_TELEPHONY_CALLING)
     @Deprecated
@@ -7021,9 +7022,10 @@ public class TelephonyManager {
      * .FEATURE_TELEPHONY system feature, which is available on any device with a telephony
      * radio, even if the device is data-only.
      * <p>
-     * To check if a subscription is "voice capable", call method
-     * {@link SubscriptionInfo#getServiceCapabilities()} and compare  the result with
-     * bitmask {@link SubscriptionManager#SERVICE_CAPABILITY_VOICE}.
+     * Starting from Android 15, voice capability may also be overridden by carrier for a given
+     * subscription on a voice capable device. To check if a subscription is "voice capable",
+     * call method {@code SubscriptionInfo#getServiceCapabilities()} and check if
+     * {@code SubscriptionManager#SERVICE_CAPABILITY_VOICE} is included.
      *
      * @see SubscriptionInfo#getServiceCapabilities()
      */
@@ -7041,7 +7043,10 @@ public class TelephonyManager {
      * <p>
      * Note: Voicemail waiting sms, cell broadcasting sms, and MMS are
      *       disabled when device doesn't support sms.
-     * @deprecated Replaced by {@link #isDeviceSmsCapable()}
+     * @deprecated Replaced by {@code #isDeviceSmsCapable()}. Starting from Android 15, SMS
+     * capability may also be overridden by carriers for a given subscription. For SMS capable
+     * device (when {@code #isDeviceSmsCapable} return {@code true}), caller should check for
+     * subscription-level SMS capability as well. See {@code #isDeviceSmsCapable} for details.
      */
     @RequiresFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)
     public boolean isSmsCapable() {
@@ -7059,9 +7064,10 @@ public class TelephonyManager {
      * Note: Voicemail waiting SMS, cell broadcasting SMS, and MMS are
      *       disabled when device doesn't support SMS.
      * <p>
-     * To check if a subscription is "SMS capable", call method
-     * {@link SubscriptionInfo#getServiceCapabilities()} and compare result with
-     * bitmask {@link SubscriptionManager#SERVICE_CAPABILITY_SMS}.
+     * Starting from Android 15, SMS capability may also be overridden by carriers for a given
+     * subscription on an SMS capable device. To check if a subscription is "SMS capable",
+     * call method {@code SubscriptionInfo#getServiceCapabilities()} and check if
+     * {@code SubscriptionManager#SERVICE_CAPABILITY_SMS} is included.
      *
      * @see SubscriptionInfo#getServiceCapabilities()
      */
@@ -10721,20 +10727,27 @@ public class TelephonyManager {
     }
 
     /**
-     * Call composer status OFF from user setting.
+     * Call composer status <b>OFF</b> from user setting.
      */
     public static final int CALL_COMPOSER_STATUS_OFF = 0;
 
     /**
-     * Call composer status ON from user setting.
+     * Call composer status <b>ON</b> from user setting.
      */
     public static final int CALL_COMPOSER_STATUS_ON = 1;
+
+    /**
+     * Call composer status <b>Business Only</b> from user setting.
+     */
+    @FlaggedApi(com.android.server.telecom.flags.Flags.FLAG_BUSINESS_CALL_COMPOSER)
+    public static final int CALL_COMPOSER_STATUS_BUSINESS_ONLY = 2;
 
     /** @hide */
     @IntDef(prefix = {"CALL_COMPOSER_STATUS_"},
             value = {
                 CALL_COMPOSER_STATUS_ON,
                 CALL_COMPOSER_STATUS_OFF,
+                CALL_COMPOSER_STATUS_BUSINESS_ONLY
             })
     @Retention(RetentionPolicy.SOURCE)
     public @interface CallComposerStatus {}
@@ -10755,9 +10768,16 @@ public class TelephonyManager {
     @RequiresPermission(android.Manifest.permission.MODIFY_PHONE_STATE)
     @RequiresFeature(PackageManager.FEATURE_TELEPHONY_CALLING)
     public void setCallComposerStatus(@CallComposerStatus int status) {
-        if (status > CALL_COMPOSER_STATUS_ON
-                || status < CALL_COMPOSER_STATUS_OFF) {
-            throw new IllegalArgumentException("requested status is invalid");
+        if (com.android.server.telecom.flags.Flags.businessCallComposer()) {
+            if (status > CALL_COMPOSER_STATUS_BUSINESS_ONLY
+                    || status < CALL_COMPOSER_STATUS_OFF) {
+                throw new IllegalArgumentException("requested status is invalid");
+            }
+        } else {
+            if (status > CALL_COMPOSER_STATUS_ON
+                    || status < CALL_COMPOSER_STATUS_OFF) {
+                throw new IllegalArgumentException("requested status is invalid");
+            }
         }
         try {
             ITelephony telephony = getITelephony();
@@ -13237,7 +13257,7 @@ public class TelephonyManager {
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P)
     public ServiceState getServiceStateForSubscriber(int subId) {
-        return getServiceStateForSubscriber(getSubId(), false, false);
+        return getServiceStateForSubscriber(subId, false, false);
     }
 
     /**
@@ -15086,6 +15106,29 @@ public class TelephonyManager {
                 android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
                 "isEmergencyAssistanceEnabled");
         return EMERGENCY_ASSISTANCE_ENABLED;
+    }
+
+    /**
+     * Get the emergency assistance package name.
+     *
+     * @return the package name of the emergency assistance app.
+     * @throws IllegalStateException if emergency assistance is not enabled or the device is
+     * not voice capable.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
+    @FlaggedApi(android.permission.flags.Flags.FLAG_GET_EMERGENCY_ROLE_HOLDER_API_ENABLED)
+    @NonNull
+    @SystemApi
+    public String getEmergencyAssistancePackage() {
+        if (!isEmergencyAssistanceEnabled() || !isVoiceCapable()) {
+            throw new IllegalStateException("isEmergencyAssistanceEnabled() is false or device"
+                + " not voice capable.");
+        }
+        String emergencyRole = mContext.getSystemService(RoleManager.class)
+                .getEmergencyRoleHolder(mContext.getUserId());
+        return Objects.requireNonNull(emergencyRole, "Emergency role holder must not be null");
     }
 
     /**
@@ -18581,7 +18624,6 @@ public class TelephonyManager {
 
     /**
      * Get last known cell identity.
-     * Require appropriate permissions, otherwise throws SecurityException.
      *
      * If there is current registered network this value will be same as the registered cell
      * identity. If the device goes out of service the previous cell identity is cached and
@@ -18593,7 +18635,7 @@ public class TelephonyManager {
     @SystemApi
     @FlaggedApi(com.android.server.telecom.flags.Flags.FLAG_TELECOM_RESOLVE_HIDDEN_DEPENDENCIES)
     @RequiresPermission(allOf = {Manifest.permission.ACCESS_FINE_LOCATION,
-            "com.android.phone.permission.ACCESS_LAST_KNOWN_CELL_ID"})
+            Manifest.permission.ACCESS_LAST_KNOWN_CELL_ID})
     public @Nullable CellIdentity getLastKnownCellIdentity() {
         try {
             ITelephony telephony = getITelephony();
@@ -18785,11 +18827,7 @@ public class TelephonyManager {
     @SimState
     public static int getSimStateForSlotIndex(int slotIndex) {
         try {
-            ITelephony telephony = ITelephony.Stub.asInterface(
-                    TelephonyFrameworkInitializer
-                            .getTelephonyServiceManager()
-                            .getTelephonyServiceRegisterer()
-                            .get());
+            ITelephony telephony = getITelephony();
             if (telephony != null) {
                 return telephony.getSimStateForSlotIndex(slotIndex);
             }
@@ -18804,59 +18842,101 @@ public class TelephonyManager {
      * call diagnostic data
      * @hide
      */
-    public static class EmergencyCallDiagnosticParams {
+    @SystemApi
+    @FlaggedApi(com.android.server.telecom.flags.Flags.FLAG_TELECOM_RESOLVE_HIDDEN_DEPENDENCIES)
+    public static final class EmergencyCallDiagnosticData {
+        public static final class Builder {
+            private boolean mCollectTelecomDumpsys;
+            private boolean mCollectTelephonyDumpsys;
 
-       private boolean mCollectTelecomDumpSys;
-       private boolean mCollectTelephonyDumpsys;
-       private boolean mCollectLogcat;
+            // If this is set to a value other than -1L, then the logcat collection is enabled.
+            // Logcat lines with this time or greater are collected how much is collected is
+            // dependent on internal implementation. Time represented as milliseconds since boot.
+            private long mLogcatStartTimeMillis = sUnsetLogcatStartTime;
 
-        //logcat lines with this time or greater are collected
-        //how much is collected is dependent on internal implementation.
-        //Time represented as milliseconds since January 1, 1970 UTC
+            /**
+             * Allows enabling of telecom dumpsys collection.
+             * @param collectTelecomDumpsys Determines whether telecom dumpsys should be collected.
+             * @return Builder instance corresponding to the configured call diagnostic params.
+             */
+            public @NonNull Builder setTelecomDumpsysCollectionEnabled(
+                    boolean collectTelecomDumpsys) {
+                mCollectTelecomDumpsys = collectTelecomDumpsys;
+                return this;
+            }
+
+            /**
+             * Allows enabling of telephony dumpsys collection.
+             * @param collectTelephonyDumpsys Determines if telephony dumpsys should be collected.
+             * @return Builder instance corresponding to the configured call diagnostic params.
+             */
+            public @NonNull Builder setTelephonyDumpsysCollectionEnabled(
+                    boolean collectTelephonyDumpsys) {
+                mCollectTelephonyDumpsys = collectTelephonyDumpsys;
+                return this;
+            }
+
+            /**
+             * Allows enabling of logcat (system,radio) collection.
+             * @param startTimeMillis Enables logcat collection as of the indicated timestamp.
+             * @return Builder instance corresponding to the configured call diagnostic params.
+             */
+            public @NonNull Builder setLogcatCollectionStartTimeMillis(
+                    @CurrentTimeMillisLong long startTimeMillis) {
+                mLogcatStartTimeMillis = startTimeMillis;
+                return this;
+            }
+
+            /**
+             * Build the EmergencyCallDiagnosticData from the provided Builder config.
+             * @return {@link EmergencyCallDiagnosticData} instance from provided builder.
+             */
+            public @NonNull EmergencyCallDiagnosticData build() {
+                return new EmergencyCallDiagnosticData(mCollectTelecomDumpsys,
+                        mCollectTelephonyDumpsys, mLogcatStartTimeMillis);
+            }
+        }
+
+        private boolean mCollectTelecomDumpsys;
+        private boolean mCollectTelephonyDumpsys;
+        private boolean mCollectLogcat;
         private long mLogcatStartTimeMillis;
 
+        private static long sUnsetLogcatStartTime = -1L;
 
-        public boolean isTelecomDumpSysCollectionEnabled() {
-            return mCollectTelecomDumpSys;
-        }
-
-        public void setTelecomDumpSysCollection(boolean collectTelecomDumpSys) {
-            mCollectTelecomDumpSys = collectTelecomDumpSys;
-        }
-
-        public boolean isTelephonyDumpSysCollectionEnabled() {
-            return mCollectTelephonyDumpsys;
-        }
-
-        public void setTelephonyDumpSysCollection(boolean collectTelephonyDumpsys) {
+        private EmergencyCallDiagnosticData(boolean collectTelecomDumpsys,
+                boolean collectTelephonyDumpsys, long logcatStartTimeMillis) {
+            mCollectTelecomDumpsys = collectTelecomDumpsys;
             mCollectTelephonyDumpsys = collectTelephonyDumpsys;
+            mLogcatStartTimeMillis = logcatStartTimeMillis;
+            mCollectLogcat = logcatStartTimeMillis != sUnsetLogcatStartTime;
+        }
+
+        public boolean isTelecomDumpsysCollectionEnabled() {
+            return mCollectTelecomDumpsys;
+        }
+
+        public boolean isTelephonyDumpsysCollectionEnabled() {
+            return mCollectTelephonyDumpsys;
         }
 
         public boolean isLogcatCollectionEnabled() {
             return mCollectLogcat;
         }
 
-        public long getLogcatStartTime()
+        public long getLogcatCollectionStartTimeMillis()
         {
             return mLogcatStartTimeMillis;
         }
 
-        public void setLogcatCollection(boolean collectLogcat, long startTimeMillis) {
-            mCollectLogcat = collectLogcat;
-            if(mCollectLogcat)
-            {
-                mLogcatStartTimeMillis = startTimeMillis;
-            }
-        }
-
         @Override
         public String toString() {
-            return "EmergencyCallDiagnosticParams{" +
-                    "mCollectTelecomDumpSys=" + mCollectTelecomDumpSys +
-                    ", mCollectTelephonyDumpsys=" + mCollectTelephonyDumpsys +
-                    ", mCollectLogcat=" + mCollectLogcat +
-                    ", mLogcatStartTimeMillis=" + mLogcatStartTimeMillis +
-                    '}';
+            return "EmergencyCallDiagnosticData{"
+                    + "mCollectTelecomDumpsys=" + mCollectTelecomDumpsys
+                    + ", mCollectTelephonyDumpsys=" + mCollectTelephonyDumpsys
+                    + ", mCollectLogcat=" + mCollectLogcat
+                    + ", mLogcatStartTimeMillis=" + mLogcatStartTimeMillis
+                    + '}';
         }
     }
 
@@ -18864,14 +18944,15 @@ public class TelephonyManager {
      * Request telephony to persist state for debugging emergency call failures.
      *
      * @param dropboxTag Tag to use when persisting data to dropbox service.
-     *
-     * @see params Parameters controlling what is collected
+     * @param data Parameters controlling what is collected in the diagnostics.
      *
      * @hide
      */
+    @SystemApi
+    @FlaggedApi(com.android.server.telecom.flags.Flags.FLAG_TELECOM_RESOLVE_HIDDEN_DEPENDENCIES)
     @RequiresPermission(android.Manifest.permission.DUMP)
     public void persistEmergencyCallDiagnosticData(@NonNull String dropboxTag,
-            @NonNull EmergencyCallDiagnosticParams params) {
+            @NonNull EmergencyCallDiagnosticData data) {
         try {
             ITelephony telephony = ITelephony.Stub.asInterface(
                     TelephonyFrameworkInitializer
@@ -18880,10 +18961,10 @@ public class TelephonyManager {
                             .get());
             if (telephony != null) {
                 telephony.persistEmergencyCallDiagnosticData(dropboxTag,
-                        params.isLogcatCollectionEnabled(),
-                        params.getLogcatStartTime(),
-                        params.isTelecomDumpSysCollectionEnabled(),
-                        params.isTelephonyDumpSysCollectionEnabled());
+                        data.isLogcatCollectionEnabled(),
+                        data.getLogcatCollectionStartTimeMillis(),
+                        data.isTelecomDumpsysCollectionEnabled(),
+                        data.isTelephonyDumpsysCollectionEnabled());
             }
         } catch (RemoteException e) {
             Log.e(TAG, "Error while persistEmergencyCallDiagnosticData: " + e);
@@ -19016,11 +19097,11 @@ public class TelephonyManager {
     @FlaggedApi(Flags.FLAG_ENABLE_MODEM_CIPHER_TRANSPARENCY)
     @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
     @SystemApi
-    public void setEnableNullCipherNotifications(boolean enable) {
+    public void setNullCipherNotificationsEnabled(boolean enable) {
         try {
             ITelephony telephony = getITelephony();
             if (telephony != null) {
-                telephony.setEnableNullCipherNotifications(enable);
+                telephony.setNullCipherNotificationsEnabled(enable);
             } else {
                 throw new IllegalStateException("telephony service is null.");
             }
@@ -19261,13 +19342,11 @@ public class TelephonyManager {
     /**
      * Returns whether the domain selection service is supported.
      *
-     * <p>Requires Permission:
-     * {@link android.Manifest.permission#READ_PRIVILEGED_PHONE_STATE READ_PRIVILEGED_PHONE_STATE}.
-     *
      * @return {@code true} if the domain selection service is supported.
      * @hide
      */
-    @TestApi
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_USE_OEM_DOMAIN_SELECTION_SERVICE)
     @RequiresPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
     @RequiresFeature(PackageManager.FEATURE_TELEPHONY_CALLING)
     public boolean isDomainSelectionSupported() {

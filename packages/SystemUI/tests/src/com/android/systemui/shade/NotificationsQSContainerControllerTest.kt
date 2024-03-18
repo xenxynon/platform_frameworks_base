@@ -26,13 +26,10 @@ import androidx.annotation.IdRes
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.test.filters.SmallTest
-import com.android.systemui.Flags.FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR
+import com.android.systemui.Flags.FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.flags.FakeFeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.fragments.FragmentHostManager
 import com.android.systemui.fragments.FragmentService
-import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
 import com.android.systemui.navigationbar.NavigationModeController
 import com.android.systemui.navigationbar.NavigationModeController.ModeChangedListener
 import com.android.systemui.plugins.qs.QS
@@ -91,7 +88,6 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
 
     lateinit var underTest: NotificationsQSContainerController
 
-    private lateinit var featureFlags: FakeFeatureFlags
     private lateinit var navigationModeCallback: ModeChangedListener
     private lateinit var taskbarVisibilityCallback: OverviewProxyListener
     private lateinit var windowInsetsCallback: Consumer<WindowInsets>
@@ -103,8 +99,7 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
         MockitoAnnotations.initMocks(this)
         fakeSystemClock = FakeSystemClock()
         delayableExecutor = FakeExecutor(fakeSystemClock)
-        mSetFlagsRule.enableFlags(KeyguardShadeMigrationNssl.FLAG_NAME)
-        featureFlags = FakeFeatureFlags().apply { set(Flags.QS_CONTAINER_GRAPH_OPTIMIZER, true) }
+        mSetFlagsRule.enableFlags(com.android.systemui.Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
         mContext.ensureTestableResources()
         whenever(view.context).thenReturn(mContext)
         whenever(view.resources).thenReturn(mContext.resources)
@@ -122,7 +117,6 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
                 shadeInteractor,
                 fragmentService,
                 delayableExecutor,
-                featureFlags,
                 notificationStackScrollLayoutController,
                 ResourcesSplitShadeStateController(),
                 largeScreenHeaderHelperLazy = { largeScreenHeaderHelper }
@@ -168,7 +162,7 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
 
     @Test
     fun testLargeScreen_updateResources_refactorFlagOff_splitShadeHeightIsSet_basedOnResource() {
-        mSetFlagsRule.disableFlags(FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR)
+        mSetFlagsRule.disableFlags(FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX)
         val helperHeight = 30
         val resourceHeight = 20
         whenever(largeScreenHeaderHelper.getLargeScreenHeaderHeight()).thenReturn(helperHeight)
@@ -189,7 +183,7 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
 
     @Test
     fun testLargeScreen_updateResources_refactorFlagOn_splitShadeHeightIsSet_basedOnHelper() {
-        mSetFlagsRule.enableFlags(FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR)
+        mSetFlagsRule.enableFlags(FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX)
         val helperHeight = 30
         val resourceHeight = 20
         whenever(largeScreenHeaderHelper.getLargeScreenHeaderHeight()).thenReturn(helperHeight)
@@ -431,7 +425,7 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
 
     @Test
     fun testLargeScreenLayout_refactorFlagOff_qsAndNotifsTopMarginIsOfHeaderResourceHeight() {
-        mSetFlagsRule.disableFlags(FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR)
+        mSetFlagsRule.disableFlags(FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX)
         setLargeScreen()
         val largeScreenHeaderHelperHeight = 200
         val largeScreenHeaderResourceHeight = 100
@@ -451,7 +445,7 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
 
     @Test
     fun testLargeScreenLayout_refactorFlagOn_qsAndNotifsTopMarginIsOfHeaderHelperHeight() {
-        mSetFlagsRule.enableFlags(FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR)
+        mSetFlagsRule.enableFlags(FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX)
         setLargeScreen()
         val largeScreenHeaderHelperHeight = 200
         val largeScreenHeaderResourceHeight = 100
@@ -513,7 +507,6 @@ class NotificationsQSContainerControllerTest : SysuiTestCase() {
                 shadeInteractor,
                 fragmentService,
                 delayableExecutor,
-                featureFlags,
                 notificationStackScrollLayoutController,
                 ResourcesSplitShadeStateController(),
                 largeScreenHeaderHelperLazy = { largeScreenHeaderHelper }

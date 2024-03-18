@@ -20,6 +20,9 @@ import static android.app.servertransaction.TestUtils.config;
 import static android.app.servertransaction.TestUtils.mergedConfig;
 import static android.app.servertransaction.TestUtils.referrerIntentList;
 import static android.app.servertransaction.TestUtils.resultInfoList;
+import static android.platform.test.flag.junit.SetFlagsRule.DefaultInitValueType.DEVICE_DEFAULT;
+
+import static com.android.window.flags.Flags.FLAG_BUNDLE_CLIENT_TRANSACTION_FLAG;
 
 import static org.junit.Assert.assertEquals;
 
@@ -36,11 +39,13 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.PersistableBundle;
 import android.platform.test.annotations.Presubmit;
+import android.platform.test.flag.junit.SetFlagsRule;
 
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -59,6 +64,9 @@ import java.util.ArrayList;
 @SmallTest
 @Presubmit
 public class TransactionParcelTests {
+
+    @Rule
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule(DEVICE_DEFAULT);
 
     private Parcel mParcel;
     private IBinder mActivityToken;
@@ -189,6 +197,7 @@ public class TransactionParcelTests {
                 .setAssistToken(new Binder())
                 .setShareableActivityToken(new Binder())
                 .setTaskFragmentToken(new Binder())
+                .setInitialCallerInfoAccessToken(new Binder())
                 .build();
 
         writeAndPrepareForReading(item);
@@ -274,6 +283,8 @@ public class TransactionParcelTests {
 
     @Test
     public void testClientTransaction() {
+        mSetFlagsRule.enableFlags(FLAG_BUNDLE_CLIENT_TRANSACTION_FLAG);
+
         // Write to parcel
         NewIntentItem callback1 = NewIntentItem.obtain(mActivityToken, new ArrayList<>(), true);
         ActivityConfigurationChangeItem callback2 = ActivityConfigurationChangeItem.obtain(
@@ -287,10 +298,6 @@ public class TransactionParcelTests {
         transaction.addTransactionItem(callback2);
         transaction.addTransactionItem(lifecycleRequest);
 
-        transaction.addCallback(callback1);
-        transaction.addCallback(callback2);
-        transaction.setLifecycleStateRequest(lifecycleRequest);
-
         writeAndPrepareForReading(transaction);
 
         // Read from parcel and assert
@@ -298,18 +305,21 @@ public class TransactionParcelTests {
 
         assertEquals(transaction.hashCode(), result.hashCode());
         assertEquals(transaction, result);
+        assertEquals(mActivityToken, result.getActivityToken());
     }
 
     @Test
     public void testClientTransactionCallbacksOnly() {
+        mSetFlagsRule.disableFlags(FLAG_BUNDLE_CLIENT_TRANSACTION_FLAG);
+
         // Write to parcel
         NewIntentItem callback1 = NewIntentItem.obtain(mActivityToken, new ArrayList<>(), true);
         ActivityConfigurationChangeItem callback2 = ActivityConfigurationChangeItem.obtain(
                 mActivityToken, config());
 
         ClientTransaction transaction = ClientTransaction.obtain(null /* client */);
-        transaction.addCallback(callback1);
-        transaction.addCallback(callback2);
+        transaction.addTransactionItem(callback1);
+        transaction.addTransactionItem(callback2);
 
         writeAndPrepareForReading(transaction);
 
@@ -318,16 +328,19 @@ public class TransactionParcelTests {
 
         assertEquals(transaction.hashCode(), result.hashCode());
         assertEquals(transaction, result);
+        assertEquals(mActivityToken, result.getActivityToken());
     }
 
     @Test
     public void testClientTransactionLifecycleOnly() {
+        mSetFlagsRule.disableFlags(FLAG_BUNDLE_CLIENT_TRANSACTION_FLAG);
+
         // Write to parcel
         StopActivityItem lifecycleRequest = StopActivityItem.obtain(mActivityToken,
                 78 /* configChanges */);
 
         ClientTransaction transaction = ClientTransaction.obtain(null /* client */);
-        transaction.setLifecycleStateRequest(lifecycleRequest);
+        transaction.addTransactionItem(lifecycleRequest);
 
         writeAndPrepareForReading(transaction);
 
@@ -336,6 +349,7 @@ public class TransactionParcelTests {
 
         assertEquals(transaction.hashCode(), result.hashCode());
         assertEquals(transaction, result);
+        assertEquals(mActivityToken, result.getActivityToken());
     }
 
     /** Write to {@link #mParcel} and reset its position to prepare for reading from the start. */

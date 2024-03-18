@@ -18,16 +18,16 @@ package com.android.wm.shell.transition.tracing;
 
 import android.internal.perfetto.protos.PerfettoTrace;
 import android.os.SystemClock;
-import android.tracing.perfetto.DataSourceInstance;
+import android.os.Trace;
 import android.tracing.perfetto.DataSourceParams;
 import android.tracing.perfetto.InitArguments;
 import android.tracing.perfetto.Producer;
-import android.tracing.perfetto.TracingContext;
 import android.tracing.transition.TransitionDataSource;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.wm.shell.transition.Transitions;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -40,6 +40,7 @@ public class PerfettoTransitionTracer implements TransitionTracer {
             mActiveTraces::incrementAndGet,
             this::onFlush,
             mActiveTraces::decrementAndGet);
+    private final Map<String, Integer> mHandlerMapping = new HashMap<>();
 
     public PerfettoTransitionTracer() {
         Producer.init(InitArguments.DEFAULTS);
@@ -58,8 +59,17 @@ public class PerfettoTransitionTracer implements TransitionTracer {
             return;
         }
 
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "logDispatched");
+        try {
+            doLogDispatched(transitionId, handler);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+        }
+    }
+
+    private void doLogDispatched(int transitionId, Transitions.TransitionHandler handler) {
         mDataSource.trace(ctx -> {
-            final int handlerId = getHandlerId(handler, ctx);
+            final int handlerId = getHandlerId(handler);
 
             final ProtoOutputStream os = ctx.newTracePacket();
             final long token = os.start(PerfettoTrace.TracePacket.SHELL_TRANSITION);
@@ -71,17 +81,16 @@ public class PerfettoTransitionTracer implements TransitionTracer {
         });
     }
 
-    private static int getHandlerId(Transitions.TransitionHandler handler,
-            TracingContext<DataSourceInstance, TransitionDataSource.TlsState, Void> ctx) {
-        final Map<String, Integer> handlerMapping =
-                ctx.getCustomTlsState().handlerMapping;
+    private int getHandlerId(Transitions.TransitionHandler handler) {
         final int handlerId;
-        if (handlerMapping.containsKey(handler.getClass().getName())) {
-            handlerId = handlerMapping.get(handler.getClass().getName());
-        } else {
-            // + 1 to avoid 0 ids which can be confused with missing value when dumped to proto
-            handlerId = handlerMapping.size() + 1;
-            handlerMapping.put(handler.getClass().getName(), handlerId);
+        synchronized (mHandlerMapping) {
+            if (mHandlerMapping.containsKey(handler.getClass().getName())) {
+                handlerId = mHandlerMapping.get(handler.getClass().getName());
+            } else {
+                // + 1 to avoid 0 ids which can be confused with missing value when dumped to proto
+                handlerId = mHandlerMapping.size() + 1;
+                mHandlerMapping.put(handler.getClass().getName(), handlerId);
+            }
         }
         return handlerId;
     }
@@ -97,6 +106,15 @@ public class PerfettoTransitionTracer implements TransitionTracer {
             return;
         }
 
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "logMergeRequested");
+        try {
+            doLogMergeRequested(mergeRequestedTransitionId, playingTransitionId);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+        }
+    }
+
+    private void doLogMergeRequested(int mergeRequestedTransitionId, int playingTransitionId) {
         mDataSource.trace(ctx -> {
             final ProtoOutputStream os = ctx.newTracePacket();
             final long token = os.start(PerfettoTrace.TracePacket.SHELL_TRANSITION);
@@ -120,10 +138,19 @@ public class PerfettoTransitionTracer implements TransitionTracer {
             return;
         }
 
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "logMerged");
+        try {
+            doLogMerged(mergedTransitionId, playingTransitionId);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+        }
+    }
+
+    private void doLogMerged(int mergeRequestedTransitionId, int playingTransitionId) {
         mDataSource.trace(ctx -> {
             final ProtoOutputStream os = ctx.newTracePacket();
             final long token = os.start(PerfettoTrace.TracePacket.SHELL_TRANSITION);
-            os.write(PerfettoTrace.ShellTransition.ID, mergedTransitionId);
+            os.write(PerfettoTrace.ShellTransition.ID, mergeRequestedTransitionId);
             os.write(PerfettoTrace.ShellTransition.MERGE_TIME_NS,
                     SystemClock.elapsedRealtimeNanos());
             os.write(PerfettoTrace.ShellTransition.MERGE_TARGET, playingTransitionId);
@@ -142,6 +169,15 @@ public class PerfettoTransitionTracer implements TransitionTracer {
             return;
         }
 
+        Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "logAborted");
+        try {
+            doLogAborted(transitionId);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+        }
+    }
+
+    private void doLogAborted(int transitionId) {
         mDataSource.trace(ctx -> {
             final ProtoOutputStream os = ctx.newTracePacket();
             final long token = os.start(PerfettoTrace.TracePacket.SHELL_TRANSITION);
@@ -160,13 +196,18 @@ public class PerfettoTransitionTracer implements TransitionTracer {
         mDataSource.trace(ctx -> {
             final ProtoOutputStream os = ctx.newTracePacket();
 
-            final Map<String, Integer> handlerMapping = ctx.getCustomTlsState().handlerMapping;
-            for (String handler : handlerMapping.keySet()) {
-                final long token = os.start(PerfettoTrace.TracePacket.SHELL_HANDLER_MAPPINGS);
-                os.write(PerfettoTrace.ShellHandlerMapping.ID, handlerMapping.get(handler));
+            final long mappingsToken = os.start(PerfettoTrace.TracePacket.SHELL_HANDLER_MAPPINGS);
+            for (Map.Entry<String, Integer> entry : mHandlerMapping.entrySet()) {
+                final String handler = entry.getKey();
+                final int handlerId = entry.getValue();
+
+                final long mappingEntryToken = os.start(PerfettoTrace.ShellHandlerMappings.MAPPING);
+                os.write(PerfettoTrace.ShellHandlerMapping.ID, handlerId);
                 os.write(PerfettoTrace.ShellHandlerMapping.NAME, handler);
-                os.end(token);
+                os.end(mappingEntryToken);
+
             }
+            os.end(mappingsToken);
 
             ctx.flush();
         });

@@ -17,10 +17,13 @@
 package com.android.systemui.biometrics.ui.viewmodel
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.hardware.biometrics.BiometricPrompt
+import android.hardware.biometrics.Flags.customBiometricPrompt
 import android.hardware.biometrics.PromptContentView
 import android.util.Log
 import android.view.HapticFeedbackConstants
@@ -80,10 +83,22 @@ constructor(
     val faceIconHeight: Int =
         context.resources.getDimensionPixelSize(R.dimen.biometric_dialog_face_icon_size)
 
+    val fingerprintSensorDiameter: Int =
+        (udfpsOverlayInteractor.udfpsOverlayParams.value.sensorBounds.width() *
+                udfpsOverlayInteractor.udfpsOverlayParams.value.scaleFactor)
+            .toInt()
+    val fingerprintAffordanceSize: Pair<Int, Int>? =
+        if (fingerprintSensorDiameter != 0)
+            Pair(fingerprintSensorDiameter, fingerprintSensorDiameter)
+        else null
+
     private val _accessibilityHint = MutableSharedFlow<String>()
 
     /** Hint for talkback directional guidance */
     val accessibilityHint: Flow<String> = _accessibilityHint.asSharedFlow()
+
+    val promptMargin: Int =
+        context.resources.getDimensionPixelSize(R.dimen.biometric_dialog_border_padding)
 
     private val _isAuthenticating: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
@@ -133,6 +148,22 @@ constructor(
 
     /** Event fired to the view indicating a [HapticFeedbackConstants] to be played */
     val hapticsToPlay = _hapticsToPlay.asStateFlow()
+
+    /** The current position of the prompt */
+    val position: Flow<PromptPosition> =
+        combine(_forceLargeSize, modalities, displayStateInteractor.currentRotation) {
+                forceLarge,
+                modalities,
+                rotation ->
+                when {
+                    forceLarge || !modalities.hasUdfps -> PromptPosition.Bottom
+                    rotation == DisplayRotation.ROTATION_90 -> PromptPosition.Right
+                    rotation == DisplayRotation.ROTATION_270 -> PromptPosition.Left
+                    rotation == DisplayRotation.ROTATION_180 -> PromptPosition.Top
+                    else -> PromptPosition.Bottom
+                }
+            }
+            .distinctUntilChanged()
 
     /** The size of the prompt. */
     val size: Flow<PromptSize> =
@@ -194,7 +225,12 @@ constructor(
             .distinctUntilChanged()
 
     val iconViewModel: PromptIconViewModel =
-        PromptIconViewModel(this, displayStateInteractor, promptSelectorInteractor)
+        PromptIconViewModel(
+            this,
+            displayStateInteractor,
+            promptSelectorInteractor,
+            udfpsOverlayInteractor
+        )
 
     private val _isIconViewLoaded = MutableStateFlow(false)
 
@@ -240,10 +276,36 @@ constructor(
         promptSelectorInteractor.prompt
             .map {
                 when {
-                    it == null -> null
+                    !customBiometricPrompt() || it == null -> null
                     it.logoRes != -1 -> context.resources.getDrawable(it.logoRes, context.theme)
                     it.logoBitmap != null -> BitmapDrawable(context.resources, it.logoBitmap)
-                    else -> context.packageManager.getApplicationIcon(it.opPackageName)
+                    else ->
+                        try {
+                            val info = context.getApplicationInfo(it.opPackageName)
+                            context.packageManager.getApplicationIcon(info)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Cannot find icon for package " + it.opPackageName, e)
+                            null
+                        }
+                }
+            }
+            .distinctUntilChanged()
+
+    /** Logo description for the prompt. */
+    val logoDescription: Flow<String> =
+        promptSelectorInteractor.prompt
+            .map {
+                when {
+                    !customBiometricPrompt() || it == null -> ""
+                    it.logoDescription != null -> it.logoDescription
+                    else ->
+                        try {
+                            val info = context.getApplicationInfo(it.opPackageName)
+                            context.packageManager.getApplicationLabel(info).toString()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Cannot find name for package " + it.opPackageName, e)
+                            ""
+                        }
                 }
             }
             .distinctUntilChanged()
@@ -258,7 +320,9 @@ constructor(
 
     /** Custom content view for the prompt. */
     val contentView: Flow<PromptContentView?> =
-        promptSelectorInteractor.prompt.map { it?.contentView }.distinctUntilChanged()
+        promptSelectorInteractor.prompt
+            .map { if (customBiometricPrompt()) it?.contentView else null }
+            .distinctUntilChanged()
 
     private val originalDescription =
         promptSelectorInteractor.prompt.map { it?.description ?: "" }.distinctUntilChanged()
@@ -638,6 +702,12 @@ constructor(
         private const val TAG = "PromptViewModel"
     }
 }
+
+private fun Context.getApplicationInfo(packageName: String): ApplicationInfo =
+    packageManager.getApplicationInfo(
+        packageName,
+        PackageManager.MATCH_DISABLED_COMPONENTS or PackageManager.MATCH_ANY_USER
+    )
 
 /** How the fingerprint sensor was started for the prompt. */
 enum class FingerprintStartMode {

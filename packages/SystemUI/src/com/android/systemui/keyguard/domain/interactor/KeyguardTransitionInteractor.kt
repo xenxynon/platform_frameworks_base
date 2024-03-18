@@ -56,10 +56,10 @@ class KeyguardTransitionInteractor
 constructor(
     @Application val scope: CoroutineScope,
     private val repository: KeyguardTransitionRepository,
-    private val keyguardInteractor: dagger.Lazy<KeyguardInteractor>,
     private val fromLockscreenTransitionInteractor: dagger.Lazy<FromLockscreenTransitionInteractor>,
     private val fromPrimaryBouncerTransitionInteractor:
         dagger.Lazy<FromPrimaryBouncerTransitionInteractor>,
+    private val fromAodTransitionInteractor: dagger.Lazy<FromAodTransitionInteractor>,
 ) {
     private val TAG = this::class.simpleName
 
@@ -346,6 +346,7 @@ constructor(
         when (val startedState = startedKeyguardState.replayCache.last()) {
             LOCKSCREEN -> fromLockscreenTransitionInteractor.get().dismissKeyguard()
             PRIMARY_BOUNCER -> fromPrimaryBouncerTransitionInteractor.get().dismissPrimaryBouncer()
+            AOD -> fromAodTransitionInteractor.get().dismissAod()
             else ->
                 Log.e(
                     "KeyguardTransitionInteractor",

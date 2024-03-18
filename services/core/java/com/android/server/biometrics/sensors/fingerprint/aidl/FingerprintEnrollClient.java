@@ -29,6 +29,7 @@ import android.hardware.biometrics.common.ICancellationSignal;
 import android.hardware.biometrics.common.OperationState;
 import android.hardware.biometrics.fingerprint.PointerContext;
 import android.hardware.fingerprint.Fingerprint;
+import android.hardware.fingerprint.FingerprintEnrollOptions;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.fingerprint.FingerprintSensorPropertiesInternal;
 import android.hardware.fingerprint.ISidefpsController;
@@ -39,6 +40,7 @@ import android.os.RemoteException;
 import android.util.Slog;
 import android.view.accessibility.AccessibilityManager;
 
+import com.android.server.biometrics.Flags;
 import com.android.server.biometrics.HardwareAuthTokenUtils;
 import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.log.BiometricLogger;
@@ -97,11 +99,13 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
             // TODO(b/288175061): remove with Flags.FLAG_SIDEFPS_CONTROLLER_REFACTOR
             @Nullable ISidefpsController sidefpsController,
             @NonNull AuthenticationStateListeners authenticationStateListeners,
-            int maxTemplatesPerUser, @FingerprintManager.EnrollReason int enrollReason) {
+            int maxTemplatesPerUser, @FingerprintManager.EnrollReason int enrollReason,
+            @NonNull FingerprintEnrollOptions options) {
         // UDFPS haptics occur when an image is acquired (instead of when the result is known)
         super(context, lazyDaemon, token, listener, userId, hardwareAuthToken, owner, utils,
                 0 /* timeoutSec */, sensorId, shouldVibrateFor(context, sensorProps),
-                logger, biometricContext);
+                logger, biometricContext,
+                BiometricFingerprintConstants.reasonToMetric(options.getEnrollReason()));
         setRequestId(requestId);
         mSensorProps = sensorProps;
         if (sidefpsControllerRefactor()) {
@@ -119,6 +123,8 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
         if (enrollReason == FingerprintManager.ENROLL_FIND_SENSOR) {
             getLogger().disableMetrics();
         }
+        Slog.w(TAG, "EnrollOptions "
+                + FingerprintEnrollOptions.enrollReasonToString(options.getEnrollReason()));
     }
 
     @Override
@@ -143,6 +149,7 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
                 controller -> controller.onEnrollmentProgress(getSensorId(), remaining));
 
         if (remaining == 0) {
+            resetIgnoreDisplayTouches();
             mSensorOverlays.hide(getSensorId());
             if (sidefpsControllerRefactor()) {
                 mAuthenticationStateListeners.onAuthenticationStopped();
@@ -177,6 +184,7 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
     @Override
     public void onError(int errorCode, int vendorCode) {
         super.onError(errorCode, vendorCode);
+        resetIgnoreDisplayTouches();
         mSensorOverlays.hide(getSensorId());
         if (sidefpsControllerRefactor()) {
             mAuthenticationStateListeners.onAuthenticationStopped();
@@ -191,6 +199,7 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
 
     @Override
     protected void startHalOperation() {
+        resetIgnoreDisplayTouches();
         mSensorOverlays.show(getSensorId(), getRequestReasonFromEnrollReason(mEnrollReason),
                 this);
         if (sidefpsControllerRefactor()) {
@@ -200,7 +209,11 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
 
         BiometricNotificationUtils.cancelBadCalibrationNotification(getContext());
         try {
-            mCancellationSignal = doEnroll();
+            if (Flags.deHidl()) {
+                startEnroll();
+            } else {
+                mCancellationSignal = doEnroll();
+            }
         } catch (RemoteException e) {
             Slog.e(TAG, "Remote exception when requesting enroll", e);
             onError(BiometricFingerprintConstants.FINGERPRINT_ERROR_UNABLE_TO_PROCESS,
@@ -237,8 +250,38 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
         }
     }
 
+    private void startEnroll() throws RemoteException {
+        final AidlSession session = getFreshDaemon();
+        final HardwareAuthToken hat =
+                HardwareAuthTokenUtils.toHardwareAuthToken(mHardwareAuthToken);
+
+        if (session.hasContextMethods()) {
+            final OperationContextExt opContext = getOperationContext();
+            getBiometricContext().subscribe(opContext, ctx -> {
+                try {
+                    mCancellationSignal = session.getSession().enrollWithContext(
+                            hat, ctx);
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "Remote exception when requesting enroll", e);
+                    onError(BiometricFingerprintConstants.FINGERPRINT_ERROR_UNABLE_TO_PROCESS,
+                            0 /* vendorCode */);
+                    mCallback.onClientFinished(this, false /* success */);
+                }
+            }, ctx -> {
+                try {
+                    session.getSession().onContextChanged(ctx);
+                } catch (RemoteException e) {
+                    Slog.e(TAG, "Unable to notify context changed", e);
+                }
+            }, null /* options */);
+        } else {
+            mCancellationSignal = session.getSession().enroll(hat);
+        }
+    }
+
     @Override
     protected void stopHalOperation() {
+        resetIgnoreDisplayTouches();
         mSensorOverlays.hide(getSensorId());
         if (sidefpsControllerRefactor()) {
             mAuthenticationStateListeners.onAuthenticationStopped();
@@ -271,9 +314,7 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
                         pc.major);
             }
 
-            if (getListener() != null) {
-                getListener().onUdfpsPointerDown(getSensorId());
-            }
+            getListener().onUdfpsPointerDown(getSensorId());
         } catch (RemoteException e) {
             Slog.e(TAG, "Unable to send pointer down", e);
         }
@@ -291,9 +332,7 @@ public class FingerprintEnrollClient extends EnrollClient<AidlSession> implement
                 session.getSession().onPointerUp(pc.pointerId);
             }
 
-            if (getListener() != null) {
-                getListener().onUdfpsPointerUp(getSensorId());
-            }
+            getListener().onUdfpsPointerUp(getSensorId());
         } catch (RemoteException e) {
             Slog.e(TAG, "Unable to send pointer up", e);
         }

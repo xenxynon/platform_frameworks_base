@@ -23,9 +23,8 @@ import com.android.systemui.kosmos.applicationCoroutineScope
 import com.android.systemui.kosmos.testDispatcher
 import com.android.systemui.power.domain.interactor.powerInteractor
 import com.android.systemui.shade.data.repository.shadeRepository
-import dagger.Lazy
 
-val Kosmos.fromLockscreenTransitionInteractor by
+var Kosmos.fromLockscreenTransitionInteractor by
     Kosmos.Fixture {
         FromLockscreenTransitionInteractor(
             transitionRepository = keyguardTransitionRepository,
@@ -38,7 +37,6 @@ val Kosmos.fromLockscreenTransitionInteractor by
             shadeRepository = shadeRepository,
             powerInteractor = powerInteractor,
             glanceableHubTransitions = glanceableHubTransitions,
-            inWindowLauncherUnlockAnimationInteractor =
-                Lazy { inWindowLauncherUnlockAnimationInteractor },
+            swipeToDismissInteractor = swipeToDismissInteractor,
         )
     }

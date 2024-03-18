@@ -47,7 +47,6 @@ import com.android.systemui.flags.FeatureFlagsClassic;
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController;
 import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
-import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl;
 import com.android.systemui.keyguard.ui.view.InWindowLauncherUnlockAnimationManager;
 import com.android.systemui.log.LogBuffer;
 import com.android.systemui.log.core.LogLevel;
@@ -246,8 +245,11 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
     protected void onInit() {
         mKeyguardSliceViewController.init();
 
-        mSmallClockFrame = mView.findViewById(R.id.lockscreen_clock_view);
-        mLargeClockFrame = mView.findViewById(R.id.lockscreen_clock_view_large);
+        if (!migrateClocksToBlueprint()) {
+            mSmallClockFrame = mView.findViewById(R.id.lockscreen_clock_view);
+            mLargeClockFrame = mView.findViewById(R.id.lockscreen_clock_view_large);
+        }
+
 
         if (!mOnlyClock) {
             mDumpManager.unregisterDumpable(getClass().getSimpleName()); // unregister previous
@@ -346,7 +348,7 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
     }
 
     int getNotificationIconAreaHeight() {
-        if (KeyguardShadeMigrationNssl.isEnabled()) {
+        if (migrateClocksToBlueprint()) {
             return 0;
         } else if (NotificationIconContainerRefactor.isEnabled()) {
             return mAodIconContainer != null ? mAodIconContainer.getHeight() : 0;
@@ -526,13 +528,15 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
      */
     void updatePosition(int x, float scale, AnimationProperties props, boolean animate) {
         x = getCurrentLayoutDirection() == View.LAYOUT_DIRECTION_RTL ? -x : x;
+        if (!migrateClocksToBlueprint()) {
+            PropertyAnimator.setProperty(mSmallClockFrame, AnimatableProperty.TRANSLATION_X,
+                    x, props, animate);
+            PropertyAnimator.setProperty(mLargeClockFrame, AnimatableProperty.SCALE_X,
+                    scale, props, animate);
+            PropertyAnimator.setProperty(mLargeClockFrame, AnimatableProperty.SCALE_Y,
+                    scale, props, animate);
 
-        PropertyAnimator.setProperty(mSmallClockFrame, AnimatableProperty.TRANSLATION_X,
-                x, props, animate);
-        PropertyAnimator.setProperty(mLargeClockFrame, AnimatableProperty.SCALE_X,
-                scale, props, animate);
-        PropertyAnimator.setProperty(mLargeClockFrame, AnimatableProperty.SCALE_Y,
-                scale, props, animate);
+        }
 
         if (mStatusArea != null) {
             PropertyAnimator.setProperty(mStatusArea, KeyguardStatusAreaView.TRANSLATE_X_AOD,
@@ -547,6 +551,10 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
     int getClockBottom(int statusBarHeaderHeight) {
         ClockController clock = getClock();
         if (clock == null) {
+            return 0;
+        }
+
+        if (migrateClocksToBlueprint()) {
             return 0;
         }
 
@@ -581,11 +589,14 @@ public class KeyguardClockSwitchController extends ViewController<KeyguardClockS
     }
 
     boolean isClockTopAligned() {
+        if (migrateClocksToBlueprint()) {
+            return mKeyguardClockInteractor.getClockSize().getValue() == LARGE;
+        }
         return mLargeClockFrame.getVisibility() != View.VISIBLE;
     }
 
     private void updateAodIcons() {
-        if (!KeyguardShadeMigrationNssl.isEnabled()) {
+        if (!migrateClocksToBlueprint()) {
             NotificationIconContainer nic = (NotificationIconContainer)
                     mView.findViewById(
                             com.android.systemui.res.R.id.left_aligned_notification_icon_container);

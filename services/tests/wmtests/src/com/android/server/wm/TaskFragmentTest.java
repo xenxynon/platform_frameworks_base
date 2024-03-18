@@ -16,6 +16,8 @@
 
 package com.android.server.wm;
 
+import static android.Manifest.permission.EMBED_ANY_APP_IN_UNTRUSTED_MODE;
+import static android.Manifest.permission.MANAGE_ACTIVITY_TASKS;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
@@ -24,14 +26,18 @@ import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSET;
 import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.any;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doNothing;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.eq;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.mockitoSession;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.never;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
+import static com.android.dx.mockito.inline.extended.ExtendedMockito.when;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.TaskFragment.EMBEDDED_DIM_AREA_PARENT_TASK;
 import static com.android.server.wm.TaskFragment.EMBEDDED_DIM_AREA_TASK_FRAGMENT;
@@ -46,7 +52,9 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.mock;
 
+import android.content.pm.SigningDetails;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -61,17 +69,24 @@ import android.window.TaskFragmentOrganizer;
 
 import androidx.test.filters.MediumTest;
 
+import com.android.server.pm.pkg.AndroidPackage;
+import com.android.window.flags.Flags;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.MockitoSession;
+
+import java.util.Collections;
+import java.util.Set;
 
 /**
  * Test class for {@link TaskFragment}.
  *
  * Build/Install/Run:
- *  atest WmTests:TaskFragmentTest
+ * atest WmTests:TaskFragmentTest
  */
 @MediumTest
 @Presubmit
@@ -436,6 +451,10 @@ public class TaskFragmentTest extends WindowTestsBase {
         // Not ready if the task is still visible when the TaskFragment becomes empty.
         doReturn(true).when(task).isVisibleRequested();
         assertFalse(taskFragment.isReadyToTransit());
+
+        // Ready if the mAllowTransitionWhenEmpty flag is true.
+        taskFragment.setAllowTransitionWhenEmpty(true);
+        assertTrue(taskFragment.isReadyToTransit());
     }
 
     @Test
@@ -534,6 +553,113 @@ public class TaskFragmentTest extends WindowTestsBase {
         doReturn(true).when(taskFragment).smallerThanMinDimension(any());
         assertEquals(EMBEDDING_DISALLOWED_MIN_DIMENSION_VIOLATION,
                 taskFragment.isAllowedToEmbedActivity(activity));
+    }
+
+    @Test
+    public void testIsAllowedToEmbedActivityInTrustedModeByHostPackage() {
+        final TaskFragment taskFragment = new TaskFragmentBuilder(mAtm)
+                .setCreateParentTask()
+                .createActivityCount(1)
+                .build();
+        final ActivityRecord activity = taskFragment.getTopMostActivity();
+
+        final String mockCert = "MOCKCERT";
+        final AndroidPackage hostPackage = mock(AndroidPackage.class);
+        final SigningDetails signingDetails = mock(SigningDetails.class);
+        when(signingDetails.hasAncestorOrSelfWithDigest(any()))
+                .thenAnswer(invocation -> ((Set) invocation.getArgument(0)).contains(mockCert));
+        doReturn(signingDetails).when(hostPackage).getSigningDetails();
+
+        // Should return false when no certs are specified
+        assertFalse(taskFragment.isAllowedToEmbedActivityInTrustedModeByHostPackage(
+                activity, hostPackage));
+
+        // Should return true when the cert is specified in <activity>
+        activity.info.setKnownActivityEmbeddingCerts(Set.of(mockCert));
+        assertTrue(taskFragment.isAllowedToEmbedActivityInTrustedModeByHostPackage(
+                activity, hostPackage));
+
+        // Should return false when the certs specified in <activity> doesn't match
+        activity.info.setKnownActivityEmbeddingCerts(Set.of("WRONGCERT"));
+        assertFalse(taskFragment.isAllowedToEmbedActivityInTrustedModeByHostPackage(
+                activity, hostPackage));
+
+        // Should return true when the certs is specified in <application>
+        activity.info.setKnownActivityEmbeddingCerts(Collections.emptySet());
+        activity.info.applicationInfo.setKnownActivityEmbeddingCerts(Set.of(mockCert));
+        assertTrue(taskFragment.isAllowedToEmbedActivityInTrustedModeByHostPackage(
+                activity, hostPackage));
+
+        // When the certs is specified in both <activity> and <application>, <activity> takes
+        // precedence
+        activity.info.setKnownActivityEmbeddingCerts(Set.of("WRONGCERT"));
+        activity.info.applicationInfo.setKnownActivityEmbeddingCerts(Set.of(mockCert));
+        assertFalse(taskFragment.isAllowedToEmbedActivityInTrustedModeByHostPackage(
+                activity, hostPackage));
+    }
+
+    @Test
+    public void testIsAllowedToBeEmbeddedInTrustedMode_withManageActivityTasksPermission() {
+        final TaskFragment taskFragment = new TaskFragmentBuilder(mAtm)
+                .setCreateParentTask()
+                .createActivityCount(1)
+                .build();
+        final ActivityRecord activity = taskFragment.getTopMostActivity();
+
+        // Not allow embedding activity if not a trusted host.
+        assertEquals(EMBEDDING_DISALLOWED_UNTRUSTED_HOST,
+                taskFragment.isAllowedToEmbedActivity(activity));
+
+        MockitoSession session =
+                mockitoSession().spyStatic(ActivityTaskManagerService.class).startMocking();
+        try {
+            doReturn(PERMISSION_GRANTED).when(() -> {
+                return ActivityTaskManagerService.checkPermission(
+                        eq(MANAGE_ACTIVITY_TASKS), anyInt(), anyInt());
+            });
+            // With the MANAGE_ACTIVITY_TASKS permission, trusted embedding is always allowed.
+            assertTrue(taskFragment.isAllowedToBeEmbeddedInTrustedMode());
+        } finally {
+            session.finishMocking();
+        }
+    }
+
+    @Test
+    public void testIsAllowedToEmbedActivityInUntrustedMode_withUntrustedEmbeddingAnyAppPermission(
+    ) {
+        final TaskFragment taskFragment = new TaskFragmentBuilder(mAtm)
+                .setCreateParentTask()
+                .createActivityCount(1)
+                .build();
+        final ActivityRecord activity = taskFragment.getTopMostActivity();
+
+        // Not allow embedding activity if not a trusted host.
+        assertEquals(EMBEDDING_DISALLOWED_UNTRUSTED_HOST,
+                taskFragment.isAllowedToEmbedActivity(activity));
+
+        MockitoSession session =
+                mockitoSession()
+                        .spyStatic(ActivityTaskManagerService.class)
+                        .spyStatic(Flags.class)
+                        .startMocking();
+        try {
+            doReturn(PERMISSION_GRANTED).when(() -> {
+                return ActivityTaskManagerService.checkPermission(
+                        eq(EMBED_ANY_APP_IN_UNTRUSTED_MODE), anyInt(), anyInt());
+            });
+            // With the EMBED_ANY_APP_IN_UNTRUSTED_MODE permission, untrusted embedding is always
+            // allowed, but it doesn't always allow trusted embedding.
+            doReturn(true).when(() -> Flags.untrustedEmbeddingAnyAppPermission());
+            assertTrue(taskFragment.isAllowedToEmbedActivityInUntrustedMode(activity));
+            assertFalse(taskFragment.isAllowedToEmbedActivityInTrustedMode(activity));
+
+            // If the flag is disabled, the permission doesn't have effect.
+            doReturn(false).when(() -> Flags.untrustedEmbeddingAnyAppPermission());
+            assertFalse(taskFragment.isAllowedToEmbedActivityInUntrustedMode(activity));
+            assertFalse(taskFragment.isAllowedToEmbedActivityInTrustedMode(activity));
+        } finally {
+            session.finishMocking();
+        }
     }
 
     @Test
@@ -741,24 +867,36 @@ public class TaskFragmentTest extends WindowTestsBase {
         assertEquals(winLeftTop, mDisplayContent.mCurrentFocus);
 
         // Send request from a non-focused window with valid direction.
-        assertFalse(mWm.moveFocusToAdjacentWindow(null, winLeftBottom.mClient, View.FOCUS_RIGHT));
+        assertFalse(mWm.moveFocusToAdjacentWindow(winLeftBottom, View.FOCUS_RIGHT));
         // The focus should remain the same.
         assertEquals(winLeftTop, mDisplayContent.mCurrentFocus);
 
         // Send request from the focused window with valid direction.
-        assertTrue(mWm.moveFocusToAdjacentWindow(null, winLeftTop.mClient, View.FOCUS_RIGHT));
+        assertTrue(mWm.moveFocusToAdjacentWindow(winLeftTop, View.FOCUS_RIGHT));
         // The focus should change.
         assertEquals(winRightTop, mDisplayContent.mCurrentFocus);
 
         // Send request from the focused window with invalid direction.
-        assertFalse(mWm.moveFocusToAdjacentWindow(null, winRightTop.mClient, View.FOCUS_UP));
+        assertFalse(mWm.moveFocusToAdjacentWindow(winRightTop, View.FOCUS_UP));
         // The focus should remain the same.
         assertEquals(winRightTop, mDisplayContent.mCurrentFocus);
 
         // Send request from the focused window with valid direction.
-        assertTrue(mWm.moveFocusToAdjacentWindow(null, winRightTop.mClient, View.FOCUS_BACKWARD));
+        assertTrue(mWm.moveFocusToAdjacentWindow(winRightTop, View.FOCUS_BACKWARD));
         // The focus should change.
         assertEquals(winLeftTop, mDisplayContent.mCurrentFocus);
+
+        if (Flags.embeddedActivityBackNavFlag()) {
+            // Send request to move the focus to top window from the left window.
+            assertTrue(mWm.moveFocusToTopEmbeddedWindow(winLeftTop));
+            // The focus should change.
+            assertEquals(winRightTop, mDisplayContent.mCurrentFocus);
+
+            // Send request to move the focus to top window from the right window.
+            assertFalse(mWm.moveFocusToTopEmbeddedWindow(winRightTop));
+            // The focus should NOT change.
+            assertEquals(winRightTop, mDisplayContent.mCurrentFocus);
+        }
     }
 
     private WindowState createAppWindow(ActivityRecord app, String name) {

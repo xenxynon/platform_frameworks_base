@@ -343,7 +343,9 @@ public:
                   const std::vector<SurfaceControlStats>& /*stats*/) {
         JNIEnv* env = getenv();
         // Adding a strong reference for java SyncFence
-        presentFence->incStrong(0);
+        if (presentFence) {
+            presentFence->incStrong(0);
+        }
 
         jobject stats =
                 env->NewObject(gTransactionStatsClassInfo.clazz, gTransactionStatsClassInfo.ctor,
@@ -712,6 +714,13 @@ static void nativeSetExtendedRangeBrightness(JNIEnv* env, jclass clazz, jlong tr
     auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
     SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
     transaction->setExtendedRangeBrightness(ctrl, currentBufferRatio, desiredRatio);
+}
+
+static void nativeSetDesiredHdrHeadroom(JNIEnv* env, jclass clazz, jlong transactionObj,
+                                        jlong nativeObject, float desiredRatio) {
+    auto transaction = reinterpret_cast<SurfaceComposerClient::Transaction*>(transactionObj);
+    SurfaceControl* const ctrl = reinterpret_cast<SurfaceControl*>(nativeObject);
+    transaction->setDesiredHdrHeadroom(ctrl, desiredRatio);
 }
 
 static void nativeSetCachingHint(JNIEnv* env, jclass clazz, jlong transactionObj,
@@ -2338,7 +2347,9 @@ static const JNINativeMethod sSurfaceControlMethods[] = {
             (void*)nativeSetDataSpace },
     {"nativeSetExtendedRangeBrightness", "(JJFF)V",
             (void*)nativeSetExtendedRangeBrightness },
-            {"nativeSetCachingHint", "(JJI)V",
+    {"nativeSetDesiredHdrHeadroom", "(JJF)V",
+            (void*)nativeSetDesiredHdrHeadroom },
+    {"nativeSetCachingHint", "(JJI)V",
             (void*)nativeSetCachingHint },
     {"nativeAddWindowInfosReportedListener", "(JLjava/lang/Runnable;)V",
             (void*)nativeAddWindowInfosReportedListener },

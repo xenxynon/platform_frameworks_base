@@ -151,6 +151,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -421,7 +422,9 @@ public final class BatteryStatsService extends IBatteryStats.Stub
         mStats.setExternalStatsSyncLocked(mWorker);
         mStats.setRadioScanningTimeoutLocked(mContext.getResources().getInteger(
                 com.android.internal.R.integer.config_radioScanningTimeout) * 1000L);
-        mStats.startTrackingSystemServerCpuTime();
+        if (!Flags.disableSystemServicePowerAttr()) {
+            mStats.startTrackingSystemServerCpuTime();
+        }
 
         mAggregatedPowerStatsConfig = createAggregatedPowerStatsConfig();
         mPowerStatsStore = new PowerStatsStore(systemDir, mHandler, mAggregatedPowerStatsConfig);
@@ -653,7 +656,7 @@ public final class BatteryStatsService extends IBatteryStats.Stub
             try {
                 future.get();
                 return;
-            } catch (ExecutionException e) {
+            } catch (ExecutionException | CancellationException e) {
                 return;
             } catch (InterruptedException e) {
                 // Keep looping

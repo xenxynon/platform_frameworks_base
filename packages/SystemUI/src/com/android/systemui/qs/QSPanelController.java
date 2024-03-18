@@ -27,9 +27,9 @@ import android.view.View;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.media.controls.ui.MediaHierarchyManager;
-import com.android.systemui.media.controls.ui.MediaHost;
-import com.android.systemui.media.controls.ui.MediaHostState;
+import com.android.systemui.media.controls.ui.controller.MediaHierarchyManager;
+import com.android.systemui.media.controls.ui.view.MediaHost;
+import com.android.systemui.media.controls.ui.view.MediaHostState;
 import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.qs.customize.QSCustomizerController;
 import com.android.systemui.qs.dagger.QSScope;
@@ -277,6 +277,10 @@ public class QSPanelController extends QSPanelControllerBase<QSPanel> {
 
     public int getPaddingBottom() {
         return mView.getPaddingBottom();
+    }
+
+    int getViewBottom() {
+        return mView.getBottom();
     }
 }
 

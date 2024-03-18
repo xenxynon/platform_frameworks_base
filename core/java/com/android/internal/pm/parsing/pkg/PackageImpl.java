@@ -227,6 +227,9 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
     private String requiredAccountType;
     @Nullable
     @DataClass.ParcelWith(ForInternedString.class)
+    private String mEmergencyInstaller;
+    @Nullable
+    @DataClass.ParcelWith(ForInternedString.class)
     private String overlayTarget;
     @Nullable
     @DataClass.ParcelWith(ForInternedString.class)
@@ -405,6 +408,7 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
     // Derived fields
     private long mLongVersionCode;
     private int mLocaleConfigRes;
+    private boolean mAllowCrossUidActivitySwitchFromBelow;
 
     private List<AndroidPackageSplit> mSplits;
 
@@ -1275,6 +1279,12 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
         return restrictedAccountType;
     }
 
+    @Nullable
+    @Override
+    public String getEmergencyInstaller() {
+        return mEmergencyInstaller;
+    }
+
     @Override
     public int getRoundIconResourceId() {
         return roundIconRes;
@@ -1530,6 +1540,11 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
     @Override
     public String getZygotePreloadName() {
         return zygotePreloadName;
+    }
+
+    @Override
+    public boolean isAllowCrossUidActivitySwitchFromBelow() {
+        return mAllowCrossUidActivitySwitchFromBelow;
     }
 
     @Override
@@ -2190,6 +2205,12 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
     }
 
     @Override
+    public ParsingPackage setAllowCrossUidActivitySwitchFromBelow(boolean value) {
+        mAllowCrossUidActivitySwitchFromBelow = value;
+        return this;
+    }
+
+    @Override
     public PackageImpl setResourceOverlay(boolean value) {
         return setBoolean(Booleans.OVERLAY, value);
     }
@@ -2332,6 +2353,12 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
     @Override
     public PackageImpl setRestrictedAccountType(@Nullable String restrictedAccountType) {
         this.restrictedAccountType = restrictedAccountType;
+        return this;
+    }
+
+    @Override
+    public PackageImpl setEmergencyInstaller(@Nullable String emergencyInstaller) {
+        this.mEmergencyInstaller = emergencyInstaller;
         return this;
     }
 
@@ -2641,6 +2668,7 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
         if (!mKnownActivityEmbeddingCerts.isEmpty()) {
             appInfo.setKnownActivityEmbeddingCerts(mKnownActivityEmbeddingCerts);
         }
+        appInfo.allowCrossUidActivitySwitchFromBelow = mAllowCrossUidActivitySwitchFromBelow;
 
         return appInfo;
     }
@@ -3105,6 +3133,7 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
         dest.writeString(this.mBaseApkPath);
         dest.writeString(this.restrictedAccountType);
         dest.writeString(this.requiredAccountType);
+        dest.writeString(this.mEmergencyInstaller);
         sForInternedString.parcel(this.overlayTarget, dest, flags);
         dest.writeString(this.overlayTargetOverlayableName);
         dest.writeString(this.overlayCategory);
@@ -3234,6 +3263,7 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
         dest.writeInt(this.uid);
         dest.writeLong(this.mBooleans);
         dest.writeLong(this.mBooleans2);
+        dest.writeBoolean(this.mAllowCrossUidActivitySwitchFromBelow);
     }
 
     public PackageImpl(Parcel in) {
@@ -3255,6 +3285,7 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
         this.mBaseApkPath = in.readString();
         this.restrictedAccountType = in.readString();
         this.requiredAccountType = in.readString();
+        this.mEmergencyInstaller = in.readString();
         this.overlayTarget = sForInternedString.unparcel(in);
         this.overlayTargetOverlayableName = in.readString();
         this.overlayCategory = in.readString();
@@ -3394,6 +3425,7 @@ public class PackageImpl implements ParsedPackage, AndroidPackageInternal,
         this.uid = in.readInt();
         this.mBooleans = in.readLong();
         this.mBooleans2 = in.readLong();
+        this.mAllowCrossUidActivitySwitchFromBelow = in.readBoolean();
 
         assignDerivedFields();
         assignDerivedFields2();

@@ -27,6 +27,7 @@ import android.nfc.TechListParcel;
 import android.nfc.IAppCallback;
 import android.nfc.INfcAdapterExtras;
 import android.nfc.INfcControllerAlwaysOnListener;
+import android.nfc.INfcVendorNciCallback;
 import android.nfc.INfcTag;
 import android.nfc.INfcCardEmulation;
 import android.nfc.INfcFCardEmulation;
@@ -35,8 +36,8 @@ import android.nfc.ITagRemovedCallback;
 import android.nfc.INfcDta;
 import android.nfc.INfcWlcStateListener;
 import android.nfc.NfcAntennaInfo;
+import android.nfc.WlcListenerDeviceInfo;
 import android.os.Bundle;
-import android.nfc.WlcLDeviceInfo;
 import android.os.IBinder;
 
 /**
@@ -93,17 +94,21 @@ interface INfcAdapter
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)")
     boolean enableReaderOption(boolean enable);
     boolean isObserveModeSupported();
+    boolean isObserveModeEnabled();
     boolean setObserveMode(boolean enabled);
 
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)")
-    boolean enableWlc(boolean enable);
+    boolean setWlcEnabled(boolean enable);
     boolean isWlcEnabled();
     void registerWlcStateListener(in INfcWlcStateListener listener);
     void unregisterWlcStateListener(in INfcWlcStateListener listener);
-    WlcLDeviceInfo getWlcLDeviceInfo();
+    WlcListenerDeviceInfo getWlcListenerDeviceInfo();
 
     void updateDiscoveryTechnology(IBinder b, int pollFlags, int listenFlags);
 
     void notifyPollingLoop(in Bundle frame);
     void notifyHceDeactivated();
+    int sendVendorNciMessage(int mt, int gid, int oid, in byte[] payload);
+    void registerVendorExtensionCallback(in INfcVendorNciCallback callbacks);
+    void unregisterVendorExtensionCallback(in INfcVendorNciCallback callbacks);
 }

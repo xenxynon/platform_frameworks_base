@@ -32,7 +32,6 @@ import com.android.systemui.kosmos.testScope
 import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.scene.shared.flag.fakeSceneContainerFlags
 import com.android.systemui.scene.shared.model.SceneKey
-import com.android.systemui.scene.shared.model.SceneModel
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -49,10 +48,10 @@ class DeviceEntryInteractorTest : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
-    private val faceAuthRepository = kosmos.fakeDeviceEntryFaceAuthRepository
-    private val trustRepository = kosmos.fakeTrustRepository
-    private val sceneInteractor = kosmos.sceneInteractor
-    private val authenticationInteractor = kosmos.authenticationInteractor
+    private val faceAuthRepository by lazy { kosmos.fakeDeviceEntryFaceAuthRepository }
+    private val trustRepository by lazy { kosmos.fakeTrustRepository }
+    private val sceneInteractor by lazy { kosmos.sceneInteractor }
+    private val authenticationInteractor by lazy { kosmos.authenticationInteractor }
     private lateinit var underTest: DeviceEntryInteractor
 
     @Before
@@ -311,9 +310,9 @@ class DeviceEntryInteractorTest : SysuiTestCase() {
     @Test
     fun showOrUnlockDevice_notLocked_switchesToGoneScene() =
         testScope.runTest {
-            val currentScene by collectLastValue(sceneInteractor.desiredScene)
+            val currentScene by collectLastValue(sceneInteractor.currentScene)
             switchToScene(SceneKey.Lockscreen)
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Lockscreen))
+            assertThat(currentScene).isEqualTo(SceneKey.Lockscreen)
 
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.Pin
@@ -323,40 +322,42 @@ class DeviceEntryInteractorTest : SysuiTestCase() {
 
             underTest.attemptDeviceEntry()
 
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Gone))
+            assertThat(currentScene).isEqualTo(SceneKey.Gone)
         }
 
     @Test
     fun showOrUnlockDevice_authMethodNotSecure_switchesToGoneScene() =
         testScope.runTest {
-            val currentScene by collectLastValue(sceneInteractor.desiredScene)
+            val currentScene by collectLastValue(sceneInteractor.currentScene)
             switchToScene(SceneKey.Lockscreen)
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Lockscreen))
+            assertThat(currentScene).isEqualTo(SceneKey.Lockscreen)
 
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.None
             )
+            runCurrent()
 
             underTest.attemptDeviceEntry()
 
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Gone))
+            assertThat(currentScene).isEqualTo(SceneKey.Gone)
         }
 
     @Test
     fun showOrUnlockDevice_authMethodSwipe_switchesToGoneScene() =
         testScope.runTest {
-            val currentScene by collectLastValue(sceneInteractor.desiredScene)
+            val currentScene by collectLastValue(sceneInteractor.currentScene)
             switchToScene(SceneKey.Lockscreen)
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Lockscreen))
+            assertThat(currentScene).isEqualTo(SceneKey.Lockscreen)
 
             kosmos.fakeDeviceEntryRepository.setLockscreenEnabled(true)
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.None
             )
+            runCurrent()
 
             underTest.attemptDeviceEntry()
 
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Gone))
+            assertThat(currentScene).isEqualTo(SceneKey.Gone)
         }
 
     @Test
@@ -382,6 +383,6 @@ class DeviceEntryInteractorTest : SysuiTestCase() {
         }
 
     private fun switchToScene(sceneKey: SceneKey) {
-        sceneInteractor.changeScene(SceneModel(sceneKey), "reason")
+        sceneInteractor.changeScene(sceneKey, "reason")
     }
 }

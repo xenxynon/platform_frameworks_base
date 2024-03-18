@@ -31,6 +31,7 @@ import android.content.res.Configuration;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
+import android.platform.test.ravenwood.RavenwoodRule;
 import android.testing.TestableLooper.RunWithLooper;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -39,7 +40,7 @@ import androidx.test.filters.SmallTest;
 import com.android.systemui.Dependency;
 import com.android.systemui.Flags;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.animation.DialogLaunchAnimator;
+import com.android.systemui.animation.DialogTransitionAnimator;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.model.SysUiState;
 
@@ -66,8 +67,11 @@ public class SystemUIDialogTest extends SysuiTestCase {
     @Mock
     private SystemUIDialog.Delegate mDelegate;
 
+    // TODO(b/292141694): build out Ravenwood support for DeviceFlagsValueProvider
+    // Ravenwood already has solid support for SetFlagsRule, but CheckFlagsRule will be added soon
     @Rule
-    public final CheckFlagsRule mCheckFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule();
+    public final CheckFlagsRule mCheckFlagsRule = RavenwoodRule.isOnRavenwood() ? null
+            : DeviceFlagsValueProvider.createCheckFlagsRule();
 
     @Before
     public void setup() {
@@ -175,7 +179,7 @@ public class SystemUIDialogTest extends SysuiTestCase {
                 Dependency.get(SystemUIDialogManager.class),
                 Dependency.get(SysUiState.class),
                 Dependency.get(BroadcastDispatcher.class),
-                Dependency.get(DialogLaunchAnimator.class)
+                Dependency.get(DialogTransitionAnimator.class)
         );
         return factory.create(mDelegate);
     }

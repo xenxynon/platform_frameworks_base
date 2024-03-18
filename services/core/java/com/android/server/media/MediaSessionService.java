@@ -34,6 +34,8 @@ import android.app.ForegroundServiceDelegationOptions;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.usage.UsageStatsManager;
+import android.app.usage.UsageStatsManagerInternal;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -68,6 +70,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Message;
+import android.os.PersistableBundle;
 import android.os.PowerExemptionManager;
 import android.os.PowerManager;
 import android.os.Process;
@@ -100,7 +103,9 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * System implementation of MediaSessionManager
@@ -145,6 +150,10 @@ public class MediaSessionService extends SystemService implements Monitor {
     private AudioManager mAudioManager;
     private boolean mHasFeatureLeanback;
     private ActivityManagerInternal mActivityManagerInternal;
+    private UsageStatsManagerInternal mUsageStatsManagerInternal;
+
+    /* Maps uid with all user engaging session tokens associated to it */
+    private final SparseArray<Set<MediaSession.Token>> mUserEngagingSessions = new SparseArray<>();
 
     // The FullUserRecord of the current users. (i.e. The foreground user that isn't a profile)
     // It's always not null after the MediaSessionService is started.
@@ -164,12 +173,27 @@ public class MediaSessionService extends SystemService implements Monitor {
     private final MediaCommunicationManager.SessionCallback mSession2TokenCallback =
             new MediaCommunicationManager.SessionCallback() {
                 @Override
+                // TODO (b/324266224): Deprecate this method once other overload is published.
                 public void onSession2TokenCreated(Session2Token token) {
+                    addSession(token, Process.INVALID_PID);
+                }
+
+                @Override
+                public void onSession2TokenCreated(Session2Token token, int pid) {
+                    addSession(token, pid);
+                }
+
+                private void addSession(Session2Token token, int pid) {
                     if (DEBUG) {
                         Log.d(TAG, "Session2 is created " + token);
                     }
-                    MediaSession2Record record = new MediaSession2Record(token,
-                            MediaSessionService.this, mRecordThread.getLooper(), 0);
+                    MediaSession2Record record =
+                            new MediaSession2Record(
+                                    token,
+                                    MediaSessionService.this,
+                                    mRecordThread.getLooper(),
+                                    pid,
+                                    /* policies= */ 0);
                     synchronized (mLock) {
                         FullUserRecord user = getFullUserRecordLocked(record.getUserId());
                         if (user != null) {
@@ -230,6 +254,7 @@ public class MediaSessionService extends SystemService implements Monitor {
         mContext.registerReceiver(mNotificationListenerEnabledChangedReceiver, filter);
 
         mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
+        mUsageStatsManagerInternal = LocalServices.getService(UsageStatsManagerInternal.class);
     }
 
     @Override
@@ -287,12 +312,25 @@ public class MediaSessionService extends SystemService implements Monitor {
                 }
                 user.mPriorityStack.onSessionActiveStateChanged(record);
             }
-            setForegroundServiceAllowance(
-                    record,
-                    /* allowRunningInForeground= */ record.isActive()
-                            && (playbackState == null || playbackState.isActive()));
+            boolean isUserEngaged = isUserEngaged(record, playbackState);
+
+            Log.d(TAG, "onSessionActiveStateChanged: "
+                    + "record=" + record
+                    + "playbackState=" + playbackState
+                    + "allowRunningInForeground=" + isUserEngaged);
+            setForegroundServiceAllowance(record, /* allowRunningInForeground= */ isUserEngaged);
+            reportMediaInteractionEvent(record, isUserEngaged);
             mHandler.postSessionsChanged(record);
         }
+    }
+
+    private boolean isUserEngaged(MediaSessionRecordImpl record,
+            @Nullable PlaybackState playbackState) {
+        if (playbackState == null) {
+            // MediaSession2 case
+            return record.checkPlaybackActiveState(/* expected= */ true);
+        }
+        return playbackState.isActive() && record.isActive();
     }
 
     // Currently only media1 can become global priority session.
@@ -387,12 +425,13 @@ public class MediaSessionService extends SystemService implements Monitor {
                 return;
             }
             user.mPriorityStack.onPlaybackStateChanged(record, shouldUpdatePriority);
-            if (playbackState != null) {
-                setForegroundServiceAllowance(
-                        record,
-                        /* allowRunningInForeground= */ playbackState.isActive()
-                                && record.isActive());
-            }
+            boolean isUserEngaged = isUserEngaged(record, playbackState);
+            Log.d(TAG, "onSessionPlaybackStateChanged: "
+                    + "record=" + record
+                    + "playbackState=" + playbackState
+                    + "allowRunningInForeground=" + isUserEngaged);
+            setForegroundServiceAllowance(record, /* allowRunningInForeground= */ isUserEngaged);
+            reportMediaInteractionEvent(record, isUserEngaged);
         }
     }
 
@@ -556,7 +595,10 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
 
         session.close();
+
+        Log.d(TAG, "destroySessionLocked: record=" + session);
         setForegroundServiceAllowance(session, /* allowRunningInForeground= */ false);
+        reportMediaInteractionEvent(session, /* userEngaged= */ false);
         mHandler.postSessionsChanged(session);
     }
 
@@ -567,7 +609,8 @@ public class MediaSessionService extends SystemService implements Monitor {
         }
         ForegroundServiceDelegationOptions foregroundServiceDelegationOptions =
                 record.getForegroundServiceDelegationOptions();
-        if (foregroundServiceDelegationOptions == null) {
+        if (foregroundServiceDelegationOptions == null
+                || foregroundServiceDelegationOptions.mClientPid == Process.INVALID_PID) {
             // This record doesn't support FGS delegation. In practice, this is MediaSession2.
             return;
         }
@@ -578,6 +621,37 @@ public class MediaSessionService extends SystemService implements Monitor {
             mActivityManagerInternal.stopForegroundServiceDelegate(
                     foregroundServiceDelegationOptions);
         }
+    }
+
+    private void reportMediaInteractionEvent(MediaSessionRecordImpl record, boolean userEngaged) {
+        if (!android.app.usage.Flags.userInteractionTypeApi()
+                || !(record instanceof MediaSessionRecord)) {
+            return;
+        }
+
+        String packageName = record.getPackageName();
+        int sessionUid = record.getUid();
+        MediaSession.Token token = ((MediaSessionRecord) record).getSessionToken();
+        if (userEngaged) {
+            if (!mUserEngagingSessions.contains(sessionUid)) {
+                mUserEngagingSessions.put(sessionUid, new HashSet<>());
+                reportUserInteractionEvent(/* action= */ "start", record.getUserId(), packageName);
+            }
+            mUserEngagingSessions.get(sessionUid).add(token);
+        } else if (mUserEngagingSessions.contains(sessionUid)) {
+            mUserEngagingSessions.get(sessionUid).remove(token);
+            if (mUserEngagingSessions.get(sessionUid).isEmpty()) {
+                reportUserInteractionEvent(/* action= */ "stop", record.getUserId(), packageName);
+                mUserEngagingSessions.remove(sessionUid);
+            }
+        }
+    }
+
+    private void reportUserInteractionEvent(String action, int userId, String packageName) {
+        PersistableBundle extras = new PersistableBundle();
+        extras.putString(UsageStatsManager.EXTRA_EVENT_CATEGORY, "android.media");
+        extras.putString(UsageStatsManager.EXTRA_EVENT_ACTION, action);
+        mUsageStatsManagerInternal.reportUserInteractionEvent(packageName, userId, extras);
     }
 
     void tempAllowlistTargetPkgIfPossible(int targetUid, String targetPackage,

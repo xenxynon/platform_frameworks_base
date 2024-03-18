@@ -952,6 +952,8 @@ public class ParsingPackageUtils {
 
         final boolean updatableSystem = parser.getAttributeBooleanValue(null /*namespace*/,
                 "updatableSystem", true);
+        final String emergencyInstaller = parser.getAttributeValue(null /*namespace*/,
+                "emergencyInstaller");
 
         pkg.setInstallLocation(anInteger(PARSE_DEFAULT_INSTALL_LOCATION,
                         R.styleable.AndroidManifest_installLocation, sa))
@@ -959,7 +961,8 @@ public class ParsingPackageUtils {
                         R.styleable.AndroidManifest_targetSandboxVersion, sa))
                 /* Set the global "on SD card" flag */
                 .setExternalStorage((flags & PARSE_EXTERNAL_STORAGE) != 0)
-                .setUpdatableSystem(updatableSystem);
+                .setUpdatableSystem(updatableSystem)
+                .setEmergencyInstaller(emergencyInstaller);
 
         boolean foundApp = false;
         final int depth = parser.getDepth();
@@ -2371,8 +2374,10 @@ public class ParsingPackageUtils {
                 .setRestrictedAccountType(string(R.styleable.AndroidManifestApplication_restrictedAccountType, sa))
                 .setZygotePreloadName(string(R.styleable.AndroidManifestApplication_zygotePreloadName, sa))
                 // Non-Config String
-                .setPermission(nonConfigString(0, R.styleable.AndroidManifestApplication_permission, sa));
-        // CHECKSTYLE:on
+                .setPermission(nonConfigString(0, R.styleable.AndroidManifestApplication_permission, sa))
+                .setAllowCrossUidActivitySwitchFromBelow(bool(true, R.styleable.AndroidManifestApplication_allowCrossUidActivitySwitchFromBelow, sa));
+
+       // CHECKSTYLE:on
         //@formatter:on
     }
 

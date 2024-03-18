@@ -16,9 +16,10 @@
 
 package android.text;
 
+import static com.android.graphics.hwui.flags.Flags.highContrastTextLuminance;
 import static com.android.text.flags.Flags.FLAG_FIX_LINE_HEIGHT_FOR_LOCALE;
 import static com.android.text.flags.Flags.FLAG_USE_BOUNDS_FOR_WIDTH;
-import static com.android.text.flags.Flags.FLAG_INTER_CHARACTER_JUSTIFICATION;
+import static com.android.text.flags.Flags.FLAG_LETTER_SPACING_JUSTIFICATION;
 
 import android.annotation.FlaggedApi;
 import android.annotation.FloatRange;
@@ -28,7 +29,9 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.graphics.BlendMode;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
@@ -44,8 +47,11 @@ import android.text.style.LineBackgroundSpan;
 import android.text.style.ParagraphStyle;
 import android.text.style.ReplacementSpan;
 import android.text.style.TabStopSpan;
+import android.widget.TextView;
 
+import com.android.graphics.hwui.flags.Flags;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.graphics.ColorUtils;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.GrowingArrayUtils;
 
@@ -152,7 +158,8 @@ public abstract class Layout {
     /** @hide */
     @IntDef(prefix = { "JUSTIFICATION_MODE_" }, value = {
             LineBreaker.JUSTIFICATION_MODE_NONE,
-            LineBreaker.JUSTIFICATION_MODE_INTER_WORD
+            LineBreaker.JUSTIFICATION_MODE_INTER_WORD,
+            LineBreaker.JUSTIFICATION_MODE_INTER_CHARACTER,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface JustificationMode {}
@@ -167,6 +174,13 @@ public abstract class Layout {
      */
     public static final int JUSTIFICATION_MODE_INTER_WORD =
             LineBreaker.JUSTIFICATION_MODE_INTER_WORD;
+
+    /**
+     * Value for justification mode indicating the text is justified by stretching letter spacing.
+     */
+    @FlaggedApi(FLAG_LETTER_SPACING_JUSTIFICATION)
+    public static final int JUSTIFICATION_MODE_INTER_CHARACTER =
+            LineBreaker.JUSTIFICATION_MODE_INTER_CHARACTER;
 
     /*
      * Line spacing multiplier for default line spacing.
@@ -291,7 +305,7 @@ public abstract class Layout {
         this(text, paint, width, align, TextDirectionHeuristics.FIRSTSTRONG_LTR,
                 spacingMult, spacingAdd, false, false, 0, null, Integer.MAX_VALUE,
                 BREAK_STRATEGY_SIMPLE, HYPHENATION_FREQUENCY_NONE, null, null,
-                JUSTIFICATION_MODE_NONE, LineBreakConfig.NONE, false, null);
+                JUSTIFICATION_MODE_NONE, LineBreakConfig.NONE, false, false, null);
     }
 
     /**
@@ -341,6 +355,7 @@ public abstract class Layout {
             int justificationMode,
             LineBreakConfig lineBreakConfig,
             boolean useBoundsForWidth,
+            boolean shiftDrawingOffsetForStartOverhang,
             Paint.FontMetrics minimumFontMetrics
     ) {
 
@@ -376,6 +391,7 @@ public abstract class Layout {
         mJustificationMode = justificationMode;
         mLineBreakConfig = lineBreakConfig;
         mUseBoundsForWidth = useBoundsForWidth;
+        mShiftDrawingOffsetForStartOverhang = shiftDrawingOffsetForStartOverhang;
         mMinimumFontMetrics = minimumFontMetrics;
     }
 
@@ -456,11 +472,12 @@ public abstract class Layout {
             @Nullable Path selectionPath,
             @Nullable Paint selectionPaint,
             int cursorOffsetVertical) {
-        if (mUseBoundsForWidth) {
-            canvas.save();
+        float leftShift = 0;
+        if (mUseBoundsForWidth && mShiftDrawingOffsetForStartOverhang) {
             RectF drawingRect = computeDrawingBoundingBox();
             if (drawingRect.left < 0) {
-                canvas.translate(-drawingRect.left, 0);
+                leftShift = -drawingRect.left;
+                canvas.translate(leftShift, 0);
             }
         }
         final long lineRange = getLineRangeForDraw(canvas);
@@ -468,12 +485,41 @@ public abstract class Layout {
         int lastLine = TextUtils.unpackRangeEndFromLong(lineRange);
         if (lastLine < 0) return;
 
-        drawWithoutText(canvas, highlightPaths, highlightPaints, selectionPath, selectionPaint,
-                cursorOffsetVertical, firstLine, lastLine);
-        drawText(canvas, firstLine, lastLine);
-        if (mUseBoundsForWidth) {
-            canvas.restore();
+        if (shouldDrawHighlightsOnTop(canvas)) {
+            drawBackground(canvas, firstLine, lastLine);
+        } else {
+            drawWithoutText(canvas, highlightPaths, highlightPaints, selectionPath, selectionPaint,
+                    cursorOffsetVertical, firstLine, lastLine);
         }
+
+        drawText(canvas, firstLine, lastLine);
+
+        // Since high contrast text draws a solid rectangle background behind the text, it covers up
+        // the highlights and selections. In this case we draw over the top of the text with a
+        // blend mode that ensures the text stays high-contrast.
+        if (shouldDrawHighlightsOnTop(canvas)) {
+            drawHighlights(canvas, highlightPaths, highlightPaints, selectionPath, selectionPaint,
+                    cursorOffsetVertical, firstLine, lastLine);
+        }
+
+        if (leftShift != 0) {
+            // Manually translate back to the original position because of b/324498002, using
+            // save/restore disappears the toggle switch drawables.
+            canvas.translate(-leftShift, 0);
+        }
+    }
+
+    private static boolean shouldDrawHighlightsOnTop(Canvas canvas) {
+        return Flags.highContrastTextSmallTextRect() && canvas.isHighContrastTextEnabled();
+    }
+
+    private static Paint setToHighlightPaint(Paint p, BlendMode blendMode, Paint outPaint) {
+        if (p == null) return null;
+        outPaint.set(p);
+        outPaint.setBlendMode(blendMode);
+        // Yellow for maximum contrast
+        outPaint.setColor(Color.YELLOW);
+        return outPaint;
     }
 
     /**
@@ -528,11 +574,28 @@ public abstract class Layout {
             int firstLine,
             int lastLine) {
         drawBackground(canvas, firstLine, lastLine);
+        drawHighlights(canvas, highlightPaths, highlightPaints, selectionPath, selectionPaint,
+                cursorOffsetVertical, firstLine, lastLine);
+    }
+
+    /**
+     * @hide public for Editor.java
+     */
+    public void drawHighlights(
+            @NonNull Canvas canvas,
+            @Nullable List<Path> highlightPaths,
+            @Nullable List<Paint> highlightPaints,
+            @Nullable Path selectionPath,
+            @Nullable Paint selectionPaint,
+            int cursorOffsetVertical,
+            int firstLine,
+            int lastLine) {
         if (highlightPaths == null && highlightPaints == null) {
             return;
         }
         if (cursorOffsetVertical != 0) canvas.translate(0, cursorOffsetVertical);
         try {
+            BlendMode blendMode = determineHighContrastHighlightBlendMode(canvas);
             if (highlightPaths != null) {
                 if (highlightPaints == null) {
                     throw new IllegalArgumentException(
@@ -545,7 +608,12 @@ public abstract class Layout {
                 }
                 for (int i = 0; i < highlightPaths.size(); ++i) {
                     final Path highlight = highlightPaths.get(i);
-                    final Paint highlightPaint = highlightPaints.get(i);
+                    Paint highlightPaint = highlightPaints.get(i);
+                    if (shouldDrawHighlightsOnTop(canvas)) {
+                        highlightPaint = setToHighlightPaint(highlightPaint, blendMode,
+                                mWorkPlainPaint);
+                    }
+
                     if (highlight != null) {
                         canvas.drawPath(highlight, highlightPaint);
                     }
@@ -553,10 +621,39 @@ public abstract class Layout {
             }
 
             if (selectionPath != null) {
+                if (shouldDrawHighlightsOnTop(canvas)) {
+                    selectionPaint = setToHighlightPaint(selectionPaint, blendMode,
+                            mWorkPlainPaint);
+                }
                 canvas.drawPath(selectionPath, selectionPaint);
             }
         } finally {
             if (cursorOffsetVertical != 0) canvas.translate(0, -cursorOffsetVertical);
+        }
+    }
+
+    @Nullable
+    private BlendMode determineHighContrastHighlightBlendMode(Canvas canvas) {
+        if (!shouldDrawHighlightsOnTop(canvas)) {
+            return null;
+        }
+
+        return isHighContrastTextDark() ? BlendMode.MULTIPLY : BlendMode.DIFFERENCE;
+    }
+
+    private boolean isHighContrastTextDark() {
+        // High-contrast text mode
+        // Determine if the text is black-on-white or white-on-black, so we know what blendmode will
+        // give the highest contrast and most realistic text color.
+        // This equation should match the one in libs/hwui/hwui/DrawTextFunctor.h
+        if (highContrastTextLuminance()) {
+            var lab = new double[3];
+            ColorUtils.colorToLAB(mPaint.getColor(), lab);
+            return lab[0] < 0.5;
+        } else {
+            var color = mPaint.getColor();
+            int channelSum = Color.red(color) + Color.green(color) + Color.blue(color);
+            return channelSum < (128 * 3);
         }
     }
 
@@ -809,7 +906,7 @@ public abstract class Layout {
                         getEllipsisStart(lineNum) + getEllipsisCount(lineNum),
                         isFallbackLineSpacingEnabled());
                 if (justify) {
-                    tl.justify(right - left - indentWidth);
+                    tl.justify(mJustificationMode, right - left - indentWidth);
                 }
                 tl.draw(canvas, x, ltop, lbaseline, lbottom);
             }
@@ -1058,7 +1155,7 @@ public abstract class Layout {
                     getEllipsisStart(line), getEllipsisStart(line) + getEllipsisCount(line),
                     isFallbackLineSpacingEnabled());
             if (isJustificationRequired(line)) {
-                tl.justify(getJustifyWidth(line));
+                tl.justify(mJustificationMode, getJustifyWidth(line));
             }
             tl.metrics(null, rectF, false, null);
 
@@ -1794,7 +1891,7 @@ public abstract class Layout {
                 getEllipsisStart(line), getEllipsisStart(line) + getEllipsisCount(line),
                 isFallbackLineSpacingEnabled());
         if (isJustificationRequired(line)) {
-            tl.justify(getJustifyWidth(line));
+            tl.justify(mJustificationMode, getJustifyWidth(line));
         }
         final float width = tl.metrics(null, null, mUseBoundsForWidth, null);
         TextLine.recycle(tl);
@@ -1823,7 +1920,7 @@ public abstract class Layout {
      * @return the number of cluster count in the line.
      */
     @IntRange(from = 0)
-    @FlaggedApi(FLAG_INTER_CHARACTER_JUSTIFICATION)
+    @FlaggedApi(FLAG_LETTER_SPACING_JUSTIFICATION)
     public int getLineLetterSpacingUnitCount(@IntRange(from = 0) int line,
             boolean includeTrailingWhitespace) {
         final int start = getLineStart(line);
@@ -1882,7 +1979,7 @@ public abstract class Layout {
                 getEllipsisStart(line), getEllipsisStart(line) + getEllipsisCount(line),
                 isFallbackLineSpacingEnabled());
         if (isJustificationRequired(line)) {
-            tl.justify(getJustifyWidth(line));
+            tl.justify(mJustificationMode, getJustifyWidth(line));
         }
         final float width = tl.metrics(null, null, mUseBoundsForWidth, null);
         TextLine.recycle(tl);
@@ -3382,7 +3479,8 @@ public abstract class Layout {
     private CharSequence mText;
     @UnsupportedAppUsage
     private TextPaint mPaint;
-    private TextPaint mWorkPaint = new TextPaint();
+    private final TextPaint mWorkPaint = new TextPaint();
+    private final Paint mWorkPlainPaint = new Paint();
     private int mWidth;
     private Alignment mAlignment = Alignment.ALIGN_NORMAL;
     private float mSpacingMult;
@@ -3403,6 +3501,7 @@ public abstract class Layout {
     private int mJustificationMode;
     private LineBreakConfig mLineBreakConfig;
     private boolean mUseBoundsForWidth;
+    private boolean mShiftDrawingOffsetForStartOverhang;
     private @Nullable Paint.FontMetrics mMinimumFontMetrics;
 
     private TextLine.LineInfo mLineInfo = null;
@@ -3862,6 +3961,35 @@ public abstract class Layout {
         }
 
         /**
+         * Set true for shifting the drawing x offset for showing overhang at the start position.
+         *
+         * This flag is ignored if the {@link #getUseBoundsForWidth()} is false.
+         *
+         * If this value is false, the Layout draws text from the zero even if there is a glyph
+         * stroke in a region where the x coordinate is negative.
+         *
+         * If this value is true, the Layout draws text with shifting the x coordinate of the
+         * drawing bounding box.
+         *
+         * This value is false by default.
+         *
+         * @param shiftDrawingOffsetForStartOverhang true for shifting the drawing offset for
+         *                                          showing the stroke that is in the region where
+         *                                          the x coordinate is negative.
+         * @see #setUseBoundsForWidth(boolean)
+         * @see #getUseBoundsForWidth()
+         */
+        @NonNull
+        // The corresponding getter is getShiftDrawingOffsetForStartOverhang()
+        @SuppressLint("MissingGetterMatchingBuilder")
+        @FlaggedApi(FLAG_USE_BOUNDS_FOR_WIDTH)
+        public Builder setShiftDrawingOffsetForStartOverhang(
+                boolean shiftDrawingOffsetForStartOverhang) {
+            mShiftDrawingOffsetForStartOverhang = shiftDrawingOffsetForStartOverhang;
+            return this;
+        }
+
+        /**
          * Set the minimum font metrics used for line spacing.
          *
          * <p>
@@ -3937,6 +4065,7 @@ public abstract class Layout {
                         .setJustificationMode(mJustificationMode)
                         .setLineBreakConfig(mLineBreakConfig)
                         .setUseBoundsForWidth(mUseBoundsForWidth)
+                        .setShiftDrawingOffsetForStartOverhang(mShiftDrawingOffsetForStartOverhang)
                         .build();
             } else {
                 return new BoringLayout(
@@ -3944,7 +4073,7 @@ public abstract class Layout {
                         mIncludePad, mFallbackLineSpacing, mEllipsizedWidth, mEllipsize, mMaxLines,
                         mBreakStrategy, mHyphenationFrequency, mLeftIndents, mRightIndents,
                         mJustificationMode, mLineBreakConfig, metrics, mUseBoundsForWidth,
-                        mMinimumFontMetrics);
+                        mShiftDrawingOffsetForStartOverhang, mMinimumFontMetrics);
             }
         }
 
@@ -3969,6 +4098,7 @@ public abstract class Layout {
         private int mJustificationMode = JUSTIFICATION_MODE_NONE;
         private LineBreakConfig mLineBreakConfig = LineBreakConfig.NONE;
         private boolean mUseBoundsForWidth;
+        private boolean mShiftDrawingOffsetForStartOverhang;
         private Paint.FontMetrics mMinimumFontMetrics;
     }
 
@@ -4280,6 +4410,20 @@ public abstract class Layout {
     @FlaggedApi(FLAG_USE_BOUNDS_FOR_WIDTH)
     public boolean getUseBoundsForWidth() {
         return mUseBoundsForWidth;
+    }
+
+    /**
+     * Returns true if shifting drawing offset for start overhang.
+     *
+     * @return True if shifting drawing offset for start overhang.
+     * @see android.widget.TextView#setShiftDrawingOffsetForStartOverhang(boolean)
+     * @see TextView#getShiftDrawingOffsetForStartOverhang()
+     * @see StaticLayout.Builder#setShiftDrawingOffsetForStartOverhang(boolean)
+     * @see DynamicLayout.Builder#setShiftDrawingOffsetForStartOverhang(boolean)
+     */
+    @FlaggedApi(FLAG_USE_BOUNDS_FOR_WIDTH)
+    public boolean getShiftDrawingOffsetForStartOverhang() {
+        return mShiftDrawingOffsetForStartOverhang;
     }
 
     /**

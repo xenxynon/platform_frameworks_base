@@ -16,6 +16,7 @@
 
 package android.nfc.cardemulation;
 
+import android.Manifest;
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -23,6 +24,7 @@ import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SystemApi;
+import android.annotation.UserHandleAware;
 import android.annotation.UserIdInt;
 import android.app.Activity;
 import android.content.ComponentName;
@@ -336,17 +338,20 @@ public final class CardEmulation {
         }
     }
     /**
-     * Sets whether the system should default to observe mode or not when
-     * the service is in the foreground or the default payment service.
+     * Sets whether when this service becomes the preferred service, if the NFC stack
+     * should enable observe mode or disable observe mode. The default is to not enable observe
+     * mode when a service either the foreground default service or the default payment service so
+     * not calling this method will preserve that behavior.
      *
      * @param service The component name of the service
-     * @param enable Whether the servic should default to observe mode or not
+     * @param enable Whether the service should default to observe mode or not
      * @return whether the change was successful.
      */
     @FlaggedApi(Flags.FLAG_NFC_OBSERVE_MODE)
-    public boolean setServiceObserveModeDefault(@NonNull ComponentName service, boolean enable) {
+    public boolean setDefaultToObserveModeForService(@NonNull ComponentName service,
+            boolean enable) {
         try {
-            return sService.setServiceObserveModeDefault(mContext.getUser().getIdentifier(),
+            return sService.setDefaultToObserveModeForService(mContext.getUser().getIdentifier(),
                     service, enable);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to reach CardEmulationService.");
@@ -355,9 +360,14 @@ public final class CardEmulation {
     }
 
     /**
-     * Register a polling loop filter for a HostApduService.
-     * @param service The HostApduService to register the filter for.
-     * @param pollingLoopFilter The filter to register.
+     * Register a polling loop filter (PLF) for a HostApduService. The PLF can be sequence of an
+     * even number of hexadecimal numbers (0-9, A-F or a-f). When non-standard polling loop frame
+     * matches this sequence exactly, it may be delivered to
+     * {@link HostApduService#processPollingFrames(List)}  if this service is currently
+     * preferred or there are no other services registered for this filter.
+     * @param service The HostApduService to register the filter for
+     * @param pollingLoopFilter The filter to register
+     * @return true if the filter was registered, false otherwise
      */
     @FlaggedApi(Flags.FLAG_NFC_READ_POLLING_LOOP)
     public boolean registerPollingLoopFilterForService(@NonNull ComponentName service,
@@ -1138,31 +1148,28 @@ public final class CardEmulation {
     }
 
     /**
-     * Returns the {@link Settings.Secure#NFC_PAYMENT_DEFAULT_COMPONENT} for the given user.
+     * Returns the value of {@link Settings.Secure#NFC_PAYMENT_DEFAULT_COMPONENT}.
+     *
+     * @param context A context
+     * @return A ComponentName for the setting value, or null.
      *
      * @hide
      */
     @SystemApi
+    @UserHandleAware
     @RequiresPermission(android.Manifest.permission.NFC_PREFERRED_PAYMENT_INFO)
+    @SuppressWarnings("AndroidFrameworkClientSidePermissionCheck")
     @FlaggedApi(android.permission.flags.Flags.FLAG_WALLET_ROLE_ENABLED)
     @Nullable
-    public ApduServiceInfo getPreferredPaymentService() {
-        try {
-            return sService.getPreferredPaymentService(mContext.getUser().getIdentifier());
-        } catch (RemoteException e) {
-            // Try one more time
-            recoverService();
-            if (sService == null) {
-                Log.e(TAG, "Failed to recover CardEmulationService.");
-                return null;
-            }
-            try {
-                return sService.getPreferredPaymentService(mContext.getUser().getIdentifier());
-            } catch (RemoteException ee) {
-                Log.e(TAG, "Failed to reach CardEmulationService.");
-                return null;
-            }
-        }
-    }
+    public static ComponentName getPreferredPaymentService(@NonNull Context context) {
+        context.checkCallingOrSelfPermission(Manifest.permission.NFC_PREFERRED_PAYMENT_INFO);
+        String defaultPaymentComponent = Settings.Secure.getString(context.getContentResolver(),
+                Constants.SETTINGS_SECURE_NFC_PAYMENT_DEFAULT_COMPONENT);
 
+        if (defaultPaymentComponent == null) {
+            return null;
+        }
+
+        return ComponentName.unflattenFromString(defaultPaymentComponent);
+    }
 }

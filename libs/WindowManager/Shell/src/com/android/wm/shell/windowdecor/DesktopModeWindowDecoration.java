@@ -36,7 +36,6 @@ import android.graphics.Rect;
 import android.graphics.Region;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
-import android.util.Log;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.SurfaceControl;
@@ -300,12 +299,34 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
             ActivityManager.RunningTaskInfo taskInfo,
             boolean applyStartTransactionOnDraw,
             boolean shouldSetTaskPositionAndCrop) {
+        final int captionLayoutId = getDesktopModeWindowDecorLayoutId(taskInfo.getWindowingMode());
         relayoutParams.reset();
         relayoutParams.mRunningTaskInfo = taskInfo;
-        relayoutParams.mLayoutResId =
-            getDesktopModeWindowDecorLayoutId(taskInfo.getWindowingMode());
+        relayoutParams.mLayoutResId = captionLayoutId;
         relayoutParams.mCaptionHeightId = getCaptionHeightIdStatic(taskInfo.getWindowingMode());
         relayoutParams.mCaptionWidthId = getCaptionWidthId(relayoutParams.mLayoutResId);
+
+        // The "app controls" type caption bar should report the occluding elements as bounding
+        // rects to the insets system so that apps can draw in the empty space left in the center.
+        if (captionLayoutId == R.layout.desktop_mode_app_controls_window_decor) {
+            // The "app chip" section of the caption bar, it's aligned to the left and its width
+            // varies depending on the length of the app name, but we'll report its max width for
+            // now.
+            // TODO(b/316387515): consider reporting the true width after it's been laid out.
+            final RelayoutParams.OccludingCaptionElement appChipElement =
+                    new RelayoutParams.OccludingCaptionElement();
+            appChipElement.mWidthResId = R.dimen.desktop_mode_app_details_max_width;
+            appChipElement.mAlignment = RelayoutParams.OccludingCaptionElement.Alignment.START;
+            relayoutParams.mOccludingCaptionElements.add(appChipElement);
+            // The "controls" section of the caption bar (maximize, close btns). These are aligned
+            // to the right of the caption bar and have a fixed width.
+            // TODO(b/316387515): add additional padding for an exclusive drag-move region.
+            final RelayoutParams.OccludingCaptionElement controlsElement =
+                    new RelayoutParams.OccludingCaptionElement();
+            controlsElement.mWidthResId = R.dimen.desktop_mode_right_edge_buttons_width;
+            controlsElement.mAlignment = RelayoutParams.OccludingCaptionElement.Alignment.END;
+            relayoutParams.mOccludingCaptionElements.add(controlsElement);
+        }
         if (DesktopModeStatus.useWindowShadow(/* isFocusedWindow= */ taskInfo.isFocused)) {
             relayoutParams.mShadowRadiusId = taskInfo.isFocused
                     ? R.dimen.freeform_decor_shadow_focused_thickness
@@ -388,27 +409,20 @@ public class DesktopModeWindowDecoration extends WindowDecoration<WindowDecorLin
     }
 
     boolean isHandlingDragResize() {
-        return mDragResizeListener.isHandlingDragResize();
+        return mDragResizeListener != null && mDragResizeListener.isHandlingDragResize();
     }
 
     private void loadAppInfo() {
-        String packageName = mTaskInfo.realActivity.getPackageName();
         PackageManager pm = mContext.getApplicationContext().getPackageManager();
-        try {
-            final IconProvider provider = new IconProvider(mContext);
-            mAppIconDrawable = provider.getIcon(pm.getActivityInfo(mTaskInfo.baseActivity,
-                    PackageManager.ComponentInfoFlags.of(0)));
-            final Resources resources = mContext.getResources();
-            final BaseIconFactory factory = new BaseIconFactory(mContext,
-                    resources.getDisplayMetrics().densityDpi,
-                    resources.getDimensionPixelSize(R.dimen.desktop_mode_caption_icon_radius));
-            mAppIconBitmap = factory.createScaledBitmap(mAppIconDrawable, MODE_DEFAULT);
-            final ApplicationInfo applicationInfo = pm.getApplicationInfo(packageName,
-                    PackageManager.ApplicationInfoFlags.of(0));
-            mAppName = pm.getApplicationLabel(applicationInfo);
-        } catch (PackageManager.NameNotFoundException e) {
-            Log.w(TAG, "Package not found: " + packageName, e);
-        }
+        final IconProvider provider = new IconProvider(mContext);
+        mAppIconDrawable = provider.getIcon(mTaskInfo.topActivityInfo);
+        final Resources resources = mContext.getResources();
+        final BaseIconFactory factory = new BaseIconFactory(mContext,
+                resources.getDisplayMetrics().densityDpi,
+                resources.getDimensionPixelSize(R.dimen.desktop_mode_caption_icon_radius));
+        mAppIconBitmap = factory.createScaledBitmap(mAppIconDrawable, MODE_DEFAULT);
+        final ApplicationInfo applicationInfo = mTaskInfo.topActivityInfo.applicationInfo;
+        mAppName = pm.getApplicationLabel(applicationInfo);
     }
 
     private void closeDragResizeListener() {

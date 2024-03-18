@@ -246,7 +246,10 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
                                     .ImeOnBackInvokedCallback
                                 ? ((ImeOnBackInvokedDispatcher.ImeOnBackInvokedCallback)
                                         callback).getIOnBackInvokedCallback()
-                                : new OnBackInvokedCallbackWrapper(callback, this);
+                                : new OnBackInvokedCallbackWrapper(
+                                        callback,
+                                        mProgressAnimator,
+                                        this);
                 callbackInfo = new OnBackInvokedCallbackInfo(
                         iCallback,
                         priority,
@@ -272,7 +275,7 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
     }
 
     @NonNull
-    private static final BackProgressAnimator mProgressAnimator = new BackProgressAnimator();
+    private final BackProgressAnimator mProgressAnimator = new BackProgressAnimator();
     private boolean mIsDispatching = false;
 
     /**
@@ -339,18 +342,24 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
          * forwarded and registered on the app's {@link WindowOnBackInvokedDispatcher}. */
         @Nullable
         private final WindowOnBackInvokedDispatcher mDispatcher;
+        @NonNull
+        private final BackProgressAnimator mProgressAnimator;
 
         OnBackInvokedCallbackWrapper(
                 @NonNull OnBackInvokedCallback callback,
+                @NonNull BackProgressAnimator progressAnimator,
                 WindowOnBackInvokedDispatcher dispatcher) {
             mCallbackRef = new CallbackRef(callback, true /* useWeakRef */);
+            mProgressAnimator = progressAnimator;
             mDispatcher = dispatcher;
         }
 
         OnBackInvokedCallbackWrapper(
                 @NonNull OnBackInvokedCallback callback,
+                @NonNull BackProgressAnimator progressAnimator,
                 boolean useWeakRef) {
             mCallbackRef = new CallbackRef(callback, useWeakRef);
+            mProgressAnimator = progressAnimator;
             mDispatcher = null;
         }
 
@@ -362,11 +371,11 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
                 }
                 final OnBackAnimationCallback callback = getBackAnimationCallback();
                 if (callback != null) {
-                    mProgressAnimator.onBackStarted(backEvent, event ->
-                            callback.onBackProgressed(event));
+                    mProgressAnimator.reset();
                     callback.onBackStarted(new BackEvent(
                             backEvent.getTouchX(), backEvent.getTouchY(),
                             backEvent.getProgress(), backEvent.getSwipeEdge()));
+                    mProgressAnimator.onBackStarted(backEvent, callback::onBackProgressed);
                 }
             });
         }
@@ -442,8 +451,7 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
 
         return WindowOnBackInvokedDispatcher
                 .isOnBackInvokedCallbackEnabled(activityInfo, applicationInfo,
-                        () -> originalContext.obtainStyledAttributes(
-                                new int[] {android.R.attr.windowSwipeToDismiss}), true);
+                        () -> originalContext);
     }
 
     @Override
@@ -501,7 +509,7 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
      */
     public static boolean isOnBackInvokedCallbackEnabled(@Nullable ActivityInfo activityInfo,
             @NonNull ApplicationInfo applicationInfo,
-            @NonNull Supplier<TypedArray> windowAttrSupplier, boolean recycleTypedArray) {
+            @NonNull Supplier<Context> contextSupplier) {
         // new back is enabled if the feature flag is enabled AND the app does not explicitly
         // request legacy back.
         if (!ENABLE_PREDICTIVE_BACK) {
@@ -547,15 +555,15 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
             //    setTrigger(true)
             // Use the original context to resolve the styled attribute so that they stay
             // true to the window.
-            TypedArray windowAttr = windowAttrSupplier.get();
+            final Context context = contextSupplier.get();
             boolean windowSwipeToDismiss = true;
-            if (windowAttr != null) {
-                if (windowAttr.getIndexCount() > 0) {
-                    windowSwipeToDismiss = windowAttr.getBoolean(0, true);
+            if (context != null) {
+                final TypedArray array = context.obtainStyledAttributes(
+                            new int[]{android.R.attr.windowSwipeToDismiss});
+                if (array.getIndexCount() > 0) {
+                    windowSwipeToDismiss = array.getBoolean(0, true);
                 }
-                if (recycleTypedArray) {
-                    windowAttr.recycle();
-                }
+                array.recycle();
             }
 
             if (DEBUG) {

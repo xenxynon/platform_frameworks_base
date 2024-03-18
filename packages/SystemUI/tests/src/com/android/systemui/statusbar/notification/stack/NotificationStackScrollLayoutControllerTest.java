@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.notification.stack;
 
+import static com.android.server.notification.Flags.FLAG_SCREENSHARE_NOTIFICATION_HIDING;
 import static com.android.systemui.log.LogBufferHelperKt.logcatLogBuffer;
 import static com.android.systemui.statusbar.StatusBarState.KEYGUARD;
 import static com.android.systemui.statusbar.StatusBarState.SHADE;
@@ -32,6 +33,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 import static kotlinx.coroutines.flow.FlowKt.emptyFlow;
@@ -39,6 +41,7 @@ import static kotlinx.coroutines.test.TestCoroutineDispatchersKt.StandardTestDis
 
 import android.metrics.LogMaker;
 import android.platform.test.annotations.DisableFlags;
+import android.platform.test.annotations.EnableFlags;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 import android.view.View;
@@ -60,7 +63,7 @@ import com.android.systemui.flags.Flags;
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository;
 import com.android.systemui.keyguard.shared.model.KeyguardState;
 import com.android.systemui.keyguard.shared.model.TransitionStep;
-import com.android.systemui.media.controls.ui.KeyguardMediaController;
+import com.android.systemui.media.controls.ui.controller.KeyguardMediaController;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.statusbar.NotificationMenuRowPlugin;
 import com.android.systemui.plugins.statusbar.NotificationMenuRowPlugin.OnMenuEventListener;
@@ -75,6 +78,7 @@ import com.android.systemui.statusbar.NotificationLockscreenUserManager.UserChan
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.RemoteInputController;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
+import com.android.systemui.statusbar.notification.ColorUpdateLogger;
 import com.android.systemui.statusbar.notification.DynamicPrivacyController;
 import com.android.systemui.statusbar.notification.collection.NotifCollection;
 import com.android.systemui.statusbar.notification.collection.NotifPipeline;
@@ -101,6 +105,7 @@ import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.HeadsUpManager;
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController;
+import com.android.systemui.statusbar.policy.SensitiveNotificationProtectionController;
 import com.android.systemui.statusbar.policy.ZenModeController;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.util.settings.SecureSettings;
@@ -144,6 +149,7 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock private PrimaryBouncerInteractor mPrimaryBouncerInteractor;
     @Mock private NotificationLockscreenUserManager mNotificationLockscreenUserManager;
     @Mock private MetricsLogger mMetricsLogger;
+    @Mock private ColorUpdateLogger mColorUpdateLogger;
     @Mock private DumpManager mDumpManager;
     @Mock(answer = Answers.RETURNS_SELF)
     private NotificationSwipeHelper.Builder mNotificationSwipeHelperBuilder;
@@ -172,9 +178,15 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     @Mock private ActivityStarter mActivityStarter;
     @Mock private KeyguardTransitionRepository mKeyguardTransitionRepo;
     @Mock private NotificationListViewBinder mViewBinder;
+    @Mock
+    private SensitiveNotificationProtectionController mSensitiveNotificationProtectionController;
+
+    @Captor
+    private ArgumentCaptor<Runnable> mSensitiveStateListenerArgumentCaptor;
 
     @Captor
     private ArgumentCaptor<StatusBarStateController.StateListener> mStateListenerArgumentCaptor;
+
 
     private final ActiveNotificationListRepository mActiveNotificationsRepository =
             new ActiveNotificationListRepository();
@@ -386,6 +398,23 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     }
 
     @Test
+    public void testOnUserChange_verifyNotSensitive() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        initController(/* viewIsAttached= */ true);
+
+        ArgumentCaptor<UserChangedListener> userChangedCaptor = ArgumentCaptor
+                .forClass(UserChangedListener.class);
+
+        verify(mNotificationLockscreenUserManager)
+                .addUserChangedListener(userChangedCaptor.capture());
+        reset(mNotificationStackScrollLayout);
+
+        UserChangedListener changedListener = userChangedCaptor.getValue();
+        changedListener.onUserChanged(0);
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, false);
+    }
+
+    @Test
     public void testOnUserChange_verifySensitiveProfile() {
         when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
         initController(/* viewIsAttached= */ true);
@@ -403,6 +432,80 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     }
 
     @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnUserChange_verifyNotSensitive_screenshareNotificationHidingEnabled() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+
+        ArgumentCaptor<UserChangedListener> userChangedCaptor = ArgumentCaptor
+                .forClass(UserChangedListener.class);
+
+        verify(mNotificationLockscreenUserManager)
+                .addUserChangedListener(userChangedCaptor.capture());
+        reset(mNotificationStackScrollLayout);
+
+        UserChangedListener changedListener = userChangedCaptor.getValue();
+        changedListener.onUserChanged(0);
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, false);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnUserChange_verifySensitiveProfile_screenshareNotificationHidingEnabled() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+
+        ArgumentCaptor<UserChangedListener> userChangedCaptor = ArgumentCaptor
+                .forClass(UserChangedListener.class);
+
+        verify(mNotificationLockscreenUserManager)
+                .addUserChangedListener(userChangedCaptor.capture());
+        reset(mNotificationStackScrollLayout);
+
+        UserChangedListener changedListener = userChangedCaptor.getValue();
+        changedListener.onUserChanged(0);
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnUserChange_verifySensitiveActive_screenshareNotificationHidingEnabled() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(true);
+        initController(/* viewIsAttached= */ true);
+
+        ArgumentCaptor<UserChangedListener> userChangedCaptor = ArgumentCaptor
+                .forClass(UserChangedListener.class);
+
+        verify(mNotificationLockscreenUserManager)
+                .addUserChangedListener(userChangedCaptor.capture());
+        reset(mNotificationStackScrollLayout);
+
+        UserChangedListener changedListener = userChangedCaptor.getValue();
+        changedListener.onUserChanged(0);
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    public void testOnStatePostChange_verifyNotSensitive() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, false);
+    }
+
+    @Test
     public void testOnStatePostChange_verifyIfProfileIsPublic() {
         when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
 
@@ -414,6 +517,194 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 mStateListenerArgumentCaptor.getValue();
 
         stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnStatePostChange_verifyNotSensitive_screenshareNotificationHidingEnabled() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, false);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnStatePostChange_verifyIfProfileIsPublic_screenshareNotificationHidingEnabled(
+    ) {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnStatePostChange_verifyIfSensitiveActive_screenshareNotificationHidingEnabled(
+    ) {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(true);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    public void testOnStatePostChange_goingFullShade_verifyNotSensitive() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSysuiStatusBarStateController.goingToFullShade()).thenReturn(true);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(true, false);
+    }
+
+    @Test
+    public void testOnStatePostChange_goingFullShade_verifyIfProfileIsPublic() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
+        when(mSysuiStatusBarStateController.goingToFullShade()).thenReturn(true);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(true, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnStatePostChange_goingFullShade_verifyNotSensitive_screenshareHideEnabled(
+    ) {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSysuiStatusBarStateController.goingToFullShade()).thenReturn(true);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(true, false);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnStatePostChange_goingFullShade_verifyProfileIsPublic_screenshareHideEnabled(
+    ) {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
+        when(mSysuiStatusBarStateController.goingToFullShade()).thenReturn(true);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(true, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnStatePostChange_goingFullShade_verifySensitiveActive_screenshareHideEnabled(
+    ) {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSysuiStatusBarStateController.goingToFullShade()).thenReturn(true);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(true);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSysuiStatusBarStateController).addCallback(
+                mStateListenerArgumentCaptor.capture(), anyInt());
+
+        StatusBarStateController.StateListener stateListener =
+                mStateListenerArgumentCaptor.getValue();
+
+        stateListener.onStatePostChange();
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnProjectionStateChanged_verifyNotSensitive() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive())
+                .thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSensitiveNotificationProtectionController)
+                .registerSensitiveStateListener(mSensitiveStateListenerArgumentCaptor.capture());
+
+        mSensitiveStateListenerArgumentCaptor.getValue().run();
+
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, false);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnProjectionStateChanged_verifyIfProfileIsPublic() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(true);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(false);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSensitiveNotificationProtectionController)
+                .registerSensitiveStateListener(mSensitiveStateListenerArgumentCaptor.capture());
+
+        mSensitiveStateListenerArgumentCaptor.getValue().run();
+
+        verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void testOnProjectionStateChanged_verifyIfSensitiveActive() {
+        when(mNotificationLockscreenUserManager.isAnyProfilePublicMode()).thenReturn(false);
+        when(mSensitiveNotificationProtectionController.isSensitiveStateActive()).thenReturn(true);
+
+        initController(/* viewIsAttached= */ true);
+        verify(mSensitiveNotificationProtectionController)
+                .registerSensitiveStateListener(mSensitiveStateListenerArgumentCaptor.capture());
+
+        mSensitiveStateListenerArgumentCaptor.getValue().run();
+
         verify(mNotificationStackScrollLayout).updateSensitiveness(false, true);
     }
 
@@ -508,6 +799,7 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
     }
 
     @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
     public void testUpdateFooter_remoteInput() {
         ArgumentCaptor<RemoteInputController.Callback> callbackCaptor =
                 ArgumentCaptor.forClass(RemoteInputController.Callback.class);
@@ -571,9 +863,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
         when(mNotificationStackScrollLayout.onKeyguard()).thenReturn(true);
         mController.getNotifStackController().setNotifStats(NotifStats.getEmpty());
 
-        // WHEN: call updateImportantForAccessibility
-        mController.updateImportantForAccessibility();
-
         // THEN: mNotificationStackScrollLayout should not be important for A11y
         verify(mNotificationStackScrollLayout)
                 .setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -594,9 +883,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                         /* hasNonClearableSilentNotifs = */ false,
                         /* hasClearableSilentNotifs = */ false)
         );
-
-        // WHEN: call updateImportantForAccessibility
-        mController.updateImportantForAccessibility();
 
         // THEN: mNotificationStackScrollLayout should be important for A11y
         verify(mNotificationStackScrollLayout)
@@ -619,9 +905,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                         /* hasClearableSilentNotifs = */ false)
         );
 
-        // WHEN: call updateImportantForAccessibility
-        mController.updateImportantForAccessibility();
-
         // THEN: mNotificationStackScrollLayout should be important for A11y
         verify(mNotificationStackScrollLayout)
                 .setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
@@ -635,9 +918,6 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
         initController(/* viewIsAttached= */ true);
         when(mNotificationStackScrollLayout.onKeyguard()).thenReturn(false);
         mController.getNotifStackController().setNotifStats(NotifStats.getEmpty());
-
-        // WHEN: call updateImportantForAccessibility
-        mController.updateImportantForAccessibility();
 
         // THEN: mNotificationStackScrollLayout should be important for A11y
         verify(mNotificationStackScrollLayout)
@@ -664,6 +944,20 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                         /* from= */ KeyguardState.OCCLUDED,
                         /* to= */ KeyguardState.AOD));
         verify(mNotificationStackScrollLayout).updateEmptyShadeView(eq(false), anyBoolean());
+    }
+
+    @Test
+    @DisableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void sensitiveNotificationProtectionControllerListenerNotRegistered() {
+        initController(/* viewIsAttached= */ true);
+        verifyZeroInteractions(mSensitiveNotificationProtectionController);
+    }
+
+    @Test
+    @EnableFlags(FLAG_SCREENSHARE_NOTIFICATION_HIDING)
+    public void sensitiveNotificationProtectionControllerListenerRegistered() {
+        initController(/* viewIsAttached= */ true);
+        verify(mSensitiveNotificationProtectionController).registerSensitiveStateListener(any());
     }
 
     private LogMaker logMatcher(int category, int type) {
@@ -715,6 +1009,7 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 mZenModeController,
                 mNotificationLockscreenUserManager,
                 mMetricsLogger,
+                mColorUpdateLogger,
                 mDumpManager,
                 new FalsingCollectorFake(),
                 new FalsingManagerFake(),
@@ -744,7 +1039,8 @@ public class NotificationStackScrollLayoutControllerTest extends SysuiTestCase {
                 mSecureSettings,
                 mock(NotificationDismissibilityProvider.class),
                 mActivityStarter,
-                new ResourcesSplitShadeStateController());
+                new ResourcesSplitShadeStateController(),
+                mSensitiveNotificationProtectionController);
     }
 
     static class LogMatcher implements ArgumentMatcher<LogMaker> {

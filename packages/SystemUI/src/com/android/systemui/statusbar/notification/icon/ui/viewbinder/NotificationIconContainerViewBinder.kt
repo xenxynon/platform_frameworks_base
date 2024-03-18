@@ -72,11 +72,12 @@ object NotificationIconContainerViewBinder {
             val iconColors: StateFlow<NotificationIconColors> =
                 viewModel.iconColors.mapNotNull { it.iconColors(view.viewBounds) }.stateIn(this)
             viewModel.icons.bindIcons(
-                view,
-                configuration,
-                systemBarUtilsState,
+                logTag = "statusbar",
+                view = view,
+                configuration = configuration,
+                systemBarUtilsState = systemBarUtilsState,
                 notifyBindingFailures = { failureTracker.statusBarFailures = it },
-                viewStore,
+                viewStore = viewStore,
             ) { _, sbiv ->
                 StatusBarIconViewBinder.bindIconColors(
                     sbiv,
@@ -124,11 +125,12 @@ object NotificationIconContainerViewBinder {
             val tintAlpha = viewModel.tintAlpha.stateIn(this)
             val animsEnabled = viewModel.areIconAnimationsEnabled.stateIn(this)
             viewModel.icons.bindIcons(
-                view,
-                configuration,
-                systemBarUtilsState,
+                logTag = "aod",
+                view = view,
+                configuration = configuration,
+                systemBarUtilsState = systemBarUtilsState,
                 notifyBindingFailures = { failureTracker.aodFailures = it },
-                viewStore,
+                viewStore = viewStore,
             ) { _, sbiv ->
                 coroutineScope {
                     launch { StatusBarIconViewBinder.bindColor(sbiv, color) }
@@ -142,7 +144,7 @@ object NotificationIconContainerViewBinder {
 
     /** Binds to [NotificationIconContainer.setAnimationsEnabled] */
     private suspend fun Flow<Boolean>.bindAnimationsEnabled(view: NotificationIconContainer) {
-        collect(view::setAnimationsEnabled)
+        collectTracingEach("NIC#bindAnimationsEnabled", view::setAnimationsEnabled)
     }
 
     private suspend fun NotificationIconContainerStatusBarViewModel.bindIsolatedIcon(
@@ -151,12 +153,12 @@ object NotificationIconContainerViewBinder {
     ) {
         coroutineScope {
             launch {
-                isolatedIconLocation.collect { location ->
+                isolatedIconLocation.collectTracingEach("NIC#isolatedIconLocation") { location ->
                     view.setIsolatedIconLocation(location, true)
                 }
             }
             launch {
-                isolatedIcon.collect { iconInfo ->
+                isolatedIcon.collectTracingEach("NIC#showIconIsolated") { iconInfo ->
                     val iconView = iconInfo.value?.let { viewStore.iconView(it.notifKey) }
                     if (iconInfo.isAnimating) {
                         view.showIconIsolatedAnimated(iconView, iconInfo::stopAnimating)
@@ -176,6 +178,7 @@ object NotificationIconContainerViewBinder {
      * view is to be unbound.
      */
     suspend fun Flow<NotificationIconsViewData>.bindIcons(
+        logTag: String,
         view: NotificationIconContainer,
         configuration: ConfigurationState,
         systemBarUtilsState: SystemBarUtilsState,
@@ -187,7 +190,7 @@ object NotificationIconContainerViewBinder {
             configuration.getDimensionPixelSize(RInternal.dimen.status_bar_icon_size_sp)
         val iconHorizontalPaddingFlow: Flow<Int> =
             configuration.getDimensionPixelSize(R.dimen.status_bar_icon_horizontal_margin)
-        val layoutParams: Flow<FrameLayout.LayoutParams> =
+        val layoutParams: StateFlow<FrameLayout.LayoutParams> =
             combine(iconSizeFlow, iconHorizontalPaddingFlow, systemBarUtilsState.statusBarHeight) {
                     iconSize,
                     iconHPadding,
@@ -197,7 +200,7 @@ object NotificationIconContainerViewBinder {
                 }
                 .stateIn(this)
         try {
-            bindIcons(view, layoutParams, notifyBindingFailures, viewStore, bindIcon)
+            bindIcons(logTag, view, layoutParams, notifyBindingFailures, viewStore, bindIcon)
         } finally {
             // Detach everything so that child SBIVs don't hold onto a reference to the container.
             view.detachAllIcons()
@@ -205,8 +208,9 @@ object NotificationIconContainerViewBinder {
     }
 
     private suspend fun Flow<NotificationIconsViewData>.bindIcons(
+        logTag: String,
         view: NotificationIconContainer,
-        layoutParams: Flow<FrameLayout.LayoutParams>,
+        layoutParams: StateFlow<FrameLayout.LayoutParams>,
         notifyBindingFailures: (Collection<String>) -> Unit,
         viewStore: IconViewStore,
         bindIcon: suspend (iconKey: String, view: StatusBarIconView) -> Unit,
@@ -214,7 +218,7 @@ object NotificationIconContainerViewBinder {
         val failedBindings = mutableSetOf<String>()
         val boundViewsByNotifKey = ArrayMap<String, Pair<StatusBarIconView, Job>>()
         var prevIcons = NotificationIconsViewData()
-        collectTracingEach("NotifIconContainer#bindIcons") { iconsData: NotificationIconsViewData ->
+        collectTracingEach({ "NIC($logTag)#bindIcons" }) { iconsData: NotificationIconsViewData ->
             val iconsDiff = NotificationIconsViewData.computeDifference(iconsData, prevIcons)
             prevIcons = iconsData
 
@@ -249,7 +253,7 @@ object NotificationIconContainerViewBinder {
                             if (this !== view) {
                                 Log.wtf(
                                     TAG,
-                                    "StatusBarIconView($notifKey) has an unexpected parent",
+                                    "[$logTag] SBIV($notifKey) has an unexpected parent",
                                 )
                             }
                             // If the container was re-inflated and re-bound, then SBIVs might still
@@ -259,13 +263,21 @@ object NotificationIconContainerViewBinder {
                             // added again.
                             removeTransientView(sbiv)
                         }
-                        view.addView(sbiv)
+                        view.addView(sbiv, layoutParams.value)
                         boundViewsByNotifKey.remove(notifKey)?.second?.cancel()
                         boundViewsByNotifKey[notifKey] =
                             Pair(
                                 sbiv,
                                 launch {
-                                    launch { layoutParams.collect { sbiv.layoutParams = it } }
+                                    launch {
+                                        layoutParams.collectTracingEach(
+                                            tag = { "[$logTag] SBIV#bindLayoutParams" },
+                                        ) {
+                                            if (it != sbiv.layoutParams) {
+                                                sbiv.layoutParams = it
+                                            }
+                                        }
+                                    }
                                     bindIcon(notifKey, sbiv)
                                 },
                             )
@@ -299,14 +311,23 @@ object NotificationIconContainerViewBinder {
                                 boundViewsByNotifKey[it.notifKey]?.first
                             }
                         val childCount = view.childCount
+                        val toRemove = mutableListOf<View>()
                         for (i in 0 until childCount) {
                             val actual = view.getChildAt(i)
-                            val expected = expectedChildren[i]
+                            val expected = expectedChildren.getOrNull(i)
+                            if (expected == null) {
+                                Log.wtf(TAG, "[$logTag] Unexpected child $actual")
+                                toRemove.add(actual)
+                                continue
+                            }
                             if (actual === expected) {
                                 continue
                             }
                             view.removeView(expected)
                             view.addView(expected, i)
+                        }
+                        for (child in toRemove) {
+                            view.removeView(child)
                         }
                     }
                 }
@@ -369,6 +390,15 @@ private val View.viewBounds: Rect
         )
     }
 
-private suspend fun <T> Flow<T>.collectTracingEach(tag: String, collector: (T) -> Unit) {
-    collect { traceSection(tag) { collector(it) } }
+private suspend inline fun <T> Flow<T>.collectTracingEach(
+    tag: String,
+    crossinline collector: (T) -> Unit,
+) = collect { traceSection(tag) { collector(it) } }
+
+private suspend inline fun <T> Flow<T>.collectTracingEach(
+    noinline tag: () -> String,
+    crossinline collector: (T) -> Unit,
+) {
+    val lazyTag = lazy(mode = LazyThreadSafetyMode.PUBLICATION, tag)
+    collect { traceSection({ lazyTag.value }) { collector(it) } }
 }

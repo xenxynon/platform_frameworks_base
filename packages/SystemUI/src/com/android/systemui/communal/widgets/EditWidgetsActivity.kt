@@ -16,7 +16,7 @@
 
 package com.android.systemui.communal.widgets
 
-import android.content.ComponentName
+import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -27,15 +27,17 @@ import android.view.WindowInsets
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import com.android.internal.logging.UiEventLogger
 import com.android.systemui.communal.shared.log.CommunalUiEvent
+import com.android.systemui.communal.shared.model.CommunalSceneKey
 import com.android.systemui.communal.ui.viewmodel.CommunalEditModeViewModel
+import com.android.systemui.communal.util.WidgetPickerIntentUtils.getWidgetExtraFromIntent
 import com.android.systemui.compose.ComposeFacade.setCommunalEditWidgetActivityContent
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.Logger
+import com.android.systemui.log.dagger.CommunalLog
+import com.android.systemui.res.R
 import javax.inject.Inject
-import kotlinx.coroutines.launch
 
 /** An Activity for editing the widgets that appear in hub mode. */
 class EditWidgetsActivity
@@ -44,14 +46,21 @@ constructor(
     private val communalViewModel: CommunalEditModeViewModel,
     private var windowManagerService: IWindowManager? = null,
     private val uiEventLogger: UiEventLogger,
+    private val widgetConfiguratorFactory: WidgetConfigurationController.Factory,
+    @CommunalLog logBuffer: LogBuffer,
 ) : ComponentActivity() {
     companion object {
         private const val EXTRA_IS_PENDING_WIDGET_DRAG = "is_pending_widget_drag"
-        private const val EXTRA_FILTER_STRATEGY = "filter_strategy"
-        private const val FILTER_STRATEGY_GLANCEABLE_HUB = 1
-        private const val REQUEST_CODE_CONFIGURE_WIDGET = 1
+        private const val EXTRA_DESIRED_WIDGET_WIDTH = "desired_widget_width"
+        private const val EXTRA_DESIRED_WIDGET_HEIGHT = "desired_widget_height"
+
         private const val TAG = "EditWidgetsActivity"
+        const val EXTRA_PRESELECTED_KEY = "preselected_key"
     }
+
+    private val logger = Logger(logBuffer, "EditWidgetsActivity")
+
+    private val widgetConfigurator by lazy { widgetConfiguratorFactory.create(this) }
 
     private val addWidgetActivityLauncher: ActivityResultLauncher<Intent> =
         registerForActivityResult(StartActivityForResult()) { result ->
@@ -66,13 +75,17 @@ constructor(
                         // target in the communal grid will receive the widget to be added (if
                         // the user drops it over).
                         if (!isPendingWidgetDrag) {
-                            intent
-                                .getParcelableExtra(
-                                    Intent.EXTRA_COMPONENT_NAME,
-                                    ComponentName::class.java
+                            val (componentName, user) = getWidgetExtraFromIntent(intent)
+                            if (componentName != null && user != null) {
+                                communalViewModel.onAddWidget(
+                                    componentName,
+                                    user,
+                                    0,
+                                    widgetConfigurator
                                 )
-                                ?.let { communalViewModel.onAddWidget(it, 0) }
-                                ?: run { Log.w(TAG, "No AppWidgetProviderInfo found in result.") }
+                            } else {
+                                run { Log.w(TAG, "No AppWidgetProviderInfo found in result.") }
+                            }
                         }
                     }
                         ?: run { Log.w(TAG, "No data in result.") }
@@ -88,26 +101,19 @@ constructor(
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        communalViewModel.setEditModeOpen(true)
+
         val windowInsetsController = window.decorView.windowInsetsController
         windowInsetsController?.hide(WindowInsets.Type.systemBars())
         window.setDecorFitsSystemWindows(false)
 
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                // Start the configuration activity when new widgets are added.
-                communalViewModel.widgetsToConfigure.collect { widgetId ->
-                    communalViewModel.startConfigurationActivity(
-                        activity = this@EditWidgetsActivity,
-                        widgetId = widgetId,
-                        requestCode = REQUEST_CODE_CONFIGURE_WIDGET
-                    )
-                }
-            }
-        }
+        val preselectedKey = intent.getStringExtra(EXTRA_PRESELECTED_KEY)
+        communalViewModel.setSelectedKey(preselectedKey)
 
         setCommunalEditWidgetActivityContent(
             activity = this,
             viewModel = communalViewModel,
+            widgetConfigurator = widgetConfigurator,
             onOpenWidgetPicker = {
                 val intent =
                     Intent(Intent.ACTION_MAIN).also { it.addCategory(Intent.CATEGORY_HOME) }
@@ -118,11 +124,23 @@ constructor(
                     ?.let { packageName ->
                         try {
                             addWidgetActivityLauncher.launch(
-                                Intent(Intent.ACTION_PICK).also {
-                                    it.setPackage(packageName)
-                                    it.putExtra(
-                                        EXTRA_FILTER_STRATEGY,
-                                        FILTER_STRATEGY_GLANCEABLE_HUB
+                                Intent(Intent.ACTION_PICK).apply {
+                                    setPackage(packageName)
+                                    putExtra(
+                                        EXTRA_DESIRED_WIDGET_WIDTH,
+                                        resources.getDimensionPixelSize(
+                                            R.dimen.communal_widget_picker_desired_width
+                                        )
+                                    )
+                                    putExtra(
+                                        EXTRA_DESIRED_WIDGET_HEIGHT,
+                                        resources.getDimensionPixelSize(
+                                            R.dimen.communal_widget_picker_desired_height
+                                        )
+                                    )
+                                    putExtra(
+                                        AppWidgetManager.EXTRA_CATEGORY_FILTER,
+                                        communalViewModel.getCommunalWidgetCategories
                                     )
                                 }
                             )
@@ -134,6 +152,7 @@ constructor(
             },
             onEditDone = {
                 try {
+                    communalViewModel.onSceneChanged(CommunalSceneKey.Communal)
                     checkNotNull(windowManagerService).lockNow(/* options */ null)
                     finish()
                 } catch (e: RemoteException) {
@@ -145,20 +164,27 @@ constructor(
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_CODE_CONFIGURE_WIDGET) {
-            communalViewModel.setConfigurationResult(resultCode)
+        if (requestCode == WidgetConfigurationController.REQUEST_CODE) {
+            widgetConfigurator.setConfigurationResult(resultCode)
         }
     }
 
     override fun onStart() {
         super.onStart()
 
+        logger.i("Starting the communal widget editor activity")
         uiEventLogger.log(CommunalUiEvent.COMMUNAL_HUB_EDIT_MODE_SHOWN)
     }
 
     override fun onStop() {
         super.onStop()
 
+        logger.i("Stopping the communal widget editor activity")
         uiEventLogger.log(CommunalUiEvent.COMMUNAL_HUB_EDIT_MODE_GONE)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        communalViewModel.setEditModeOpen(false)
     }
 }

@@ -1003,7 +1003,13 @@ public class DisplayContentTests extends WindowTestsBase {
         dc.computeScreenConfiguration(config, ROTATION_0);
         dc.onRequestedOverrideConfigurationChanged(config);
         assertEquals(Configuration.ORIENTATION_LANDSCAPE, config.orientation);
-        assertEquals(Configuration.ORIENTATION_LANDSCAPE, dc.getNaturalOrientation());
+        assertEquals(Configuration.ORIENTATION_LANDSCAPE, dc.getNaturalConfigurationOrientation());
+        window.setOverrideOrientation(SCREEN_ORIENTATION_NOSENSOR);
+        assertEquals(Configuration.ORIENTATION_LANDSCAPE,
+                window.getRequestedConfigurationOrientation());
+        // Note that getNaturalOrientation is based on logical display size. So it is portrait if
+        // the display width equals to height.
+        assertEquals(Configuration.ORIENTATION_PORTRAIT, dc.getNaturalOrientation());
     }
 
     @Test
@@ -2131,8 +2137,8 @@ public class DisplayContentTests extends WindowTestsBase {
         // Once transition starts, rotation is applied and transition shows DC rotating.
         testPlayer.startTransition();
         waitUntilHandlersIdle();
-        verify(activity1).ensureActivityConfiguration(anyBoolean(), anyBoolean());
-        verify(activity2).ensureActivityConfiguration(anyBoolean(), anyBoolean());
+        verify(activity1).ensureActivityConfiguration(anyBoolean());
+        verify(activity2).ensureActivityConfiguration(anyBoolean());
         assertNotEquals(origRot, dc.getConfiguration().windowConfiguration.getRotation());
         assertNotNull(testPlayer.mLastReady);
         assertTrue(testPlayer.mController.isPlaying());

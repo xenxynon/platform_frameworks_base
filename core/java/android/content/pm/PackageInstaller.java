@@ -61,6 +61,7 @@ import android.content.pm.parsing.ApkLiteParseUtils;
 import android.content.pm.parsing.PackageLite;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
+import android.content.pm.verify.domain.DomainSet;
 import android.graphics.Bitmap;
 import android.icu.util.ULocale;
 import android.net.Uri;
@@ -738,7 +739,7 @@ public class PackageInstaller {
 
     /**
      * The set of error types that can be set for
-     * {@link #reportUnarchivalStatus(int, int, PendingIntent)}.
+     * {@link #reportUnarchivalState}.
      *
      * @hide
      */
@@ -2296,6 +2297,66 @@ public class PackageInstaller {
                 throw e.rethrowFromSystemServer();
             }
         }
+
+        /**
+         * Sets the pre-verified domains for the app to be installed. By setting pre-verified
+         * domains, the installer allows the app to be opened by the app links of these domains
+         * immediately after it is installed.
+         *
+         * <p>The specified pre-verified domains should be a subset of the hostnames declared with
+         * {@code android:host} and {@code android:autoVerify=true} in the intent filters of the
+         * AndroidManifest.xml of the app. If some of the specified domains are not declared in
+         * the manifest, they will be ignored.</p>
+         * <p>If this API is called multiple times on the same {@link #Session}, the last call
+         * overrides the previous ones.</p>
+         * <p>The instant app installer is the only entity that may call this API.
+         * </p>
+         *
+         * @param preVerifiedDomains domains that are already pre-verified by the installer.
+         *
+         * @throws IllegalArgumentException if the number or the total size of the pre-verified
+         *                                  domains exceeds the maximum allowed, or if the domain
+         *                                  names contain invalid characters.
+         * @throws SecurityException if called from an installer that is not the instant app
+         *                           installer of the device, or if called after the session has
+         *                           been committed or abandoned.
+         *
+         * @hide
+         */
+        @SystemApi
+        @FlaggedApi(Flags.FLAG_SET_PRE_VERIFIED_DOMAINS)
+        @RequiresPermission(Manifest.permission.ACCESS_INSTANT_APPS)
+        public void setPreVerifiedDomains(@NonNull Set<String> preVerifiedDomains) {
+            Preconditions.checkArgument(preVerifiedDomains != null && !preVerifiedDomains.isEmpty(),
+                    "Provided pre-verified domains cannot be null or empty.");
+            try {
+                mSession.setPreVerifiedDomains(new DomainSet(preVerifiedDomains));
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+
+        /**
+         * Retrieve the pre-verified domains set in a session.
+         * See {@link #setPreVerifiedDomains(Set)} for the definition of pre-verified domains.
+         *
+         * @throws SecurityException if called from an installer that is not the owner of the
+         *                           session, or if called after the session has been committed or
+         *                           abandoned.
+         * @hide
+         */
+        @SystemApi
+        @FlaggedApi(Flags.FLAG_SET_PRE_VERIFIED_DOMAINS)
+        @RequiresPermission(Manifest.permission.ACCESS_INSTANT_APPS)
+        @NonNull
+        public Set<String> getPreVerifiedDomains() {
+            try {
+                DomainSet domainSet = mSession.getPreVerifiedDomains();
+                return domainSet != null ? domainSet.getDomains() : Collections.emptySet();
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
     }
 
     /**
@@ -2362,8 +2423,8 @@ public class PackageInstaller {
     public void requestArchive(@NonNull String packageName, @NonNull IntentSender statusReceiver)
             throws PackageManager.NameNotFoundException {
         try {
-            mInstaller.requestArchive(packageName, mInstallerPackageName, statusReceiver,
-                    new UserHandle(mUserId));
+            mInstaller.requestArchive(packageName, mInstallerPackageName, /*flags=*/ 0,
+                    statusReceiver, new UserHandle(mUserId));
         } catch (ParcelableException e) {
             e.maybeRethrow(PackageManager.NameNotFoundException.class);
         } catch (RemoteException e) {
@@ -2421,6 +2482,7 @@ public class PackageInstaller {
      *                             facilitate the unarchival flow (e.g. user needs to log in).
      * @throws PackageManager.NameNotFoundException if no unarchival with {@code unarchiveId} exists
      */
+    // TODO(b/314960798) Remove old API once it's unused
     @RequiresPermission(anyOf = {
             Manifest.permission.INSTALL_PACKAGES,
             Manifest.permission.REQUEST_INSTALL_PACKAGES})
@@ -2431,6 +2493,30 @@ public class PackageInstaller {
         try {
             mInstaller.reportUnarchivalStatus(unarchiveId, status, requiredStorageBytes,
                     userActionIntent, new UserHandle(mUserId));
+        } catch (ParcelableException e) {
+            e.maybeRethrow(PackageManager.NameNotFoundException.class);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Reports the state of an unarchival to the system.
+     *
+     * @see UnarchivalState for the different state options.
+     * @throws PackageManager.NameNotFoundException if no unarchival with {@code unarchiveId} exists
+     */
+    @RequiresPermission(anyOf = {
+            Manifest.permission.INSTALL_PACKAGES,
+            Manifest.permission.REQUEST_INSTALL_PACKAGES})
+    @FlaggedApi(Flags.FLAG_ARCHIVING)
+    public void reportUnarchivalState(@NonNull UnarchivalState unarchivalState)
+            throws PackageManager.NameNotFoundException {
+        Objects.requireNonNull(unarchivalState);
+        try {
+            mInstaller.reportUnarchivalStatus(unarchivalState.getUnarchiveId(),
+                    unarchivalState.getStatus(), unarchivalState.getRequiredStorageBytes(),
+                    unarchivalState.getUserActionIntent(), new UserHandle(mUserId));
         } catch (ParcelableException e) {
             e.maybeRethrow(PackageManager.NameNotFoundException.class);
         } catch (RemoteException e) {
@@ -2693,6 +2779,8 @@ public class PackageInstaller {
         /** @hide */
         public long rollbackLifetimeMillis = 0;
         /** {@hide} */
+        public int rollbackImpactLevel = PackageManager.ROLLBACK_USER_IMPACT_LOW;
+        /** {@hide} */
         public boolean forceQueryableOverride;
         /** {@hide} */
         public int requireUserAction = USER_ACTION_UNSPECIFIED;
@@ -2749,6 +2837,7 @@ public class PackageInstaller {
             }
             rollbackDataPolicy = source.readInt();
             rollbackLifetimeMillis = source.readLong();
+            rollbackImpactLevel = source.readInt();
             requireUserAction = source.readInt();
             packageSource = source.readInt();
             applicationEnabledSettingPersistent = source.readBoolean();
@@ -2783,6 +2872,7 @@ public class PackageInstaller {
             ret.dataLoaderParams = dataLoaderParams;
             ret.rollbackDataPolicy = rollbackDataPolicy;
             ret.rollbackLifetimeMillis = rollbackLifetimeMillis;
+            ret.rollbackImpactLevel = rollbackImpactLevel;
             ret.requireUserAction = requireUserAction;
             ret.packageSource = packageSource;
             ret.applicationEnabledSettingPersistent = applicationEnabledSettingPersistent;
@@ -3095,13 +3185,14 @@ public class PackageInstaller {
         }
 
         /**
-         * If rollback enabled for this session (via {@link #setEnableRollback}, set time
-         * after which rollback will no longer be possible
+         * If rollback enabled for this session (via {@link #setEnableRollback}, set period
+         * after which rollback files will be deleted due to expiration
+         * {@link RollbackManagerServiceImpl#deleteRollback}.
          *
          * <p>For multi-package installs, this value must be set on the parent session.
          * Child session rollback lifetime will be ignored.
          *
-         * @param lifetimeMillis time after which rollback expires
+         * @param lifetimeMillis period after which rollback expires
          * @throws IllegalArgumentException if lifetimeMillis is negative or rollback is not
          * enabled via setEnableRollback.
          * @hide
@@ -3118,6 +3209,28 @@ public class PackageInstaller {
                         "Can't set rollbackLifetimeMillis when rollback is not enabled");
             }
             rollbackLifetimeMillis = lifetimeMillis;
+        }
+
+        /**
+         * rollbackImpactLevel is a measure of impact a rollback has on the user. This can take one
+         * of 3 values:
+         * <ul>
+         *     <li>{@link PackageManager#ROLLBACK_USER_IMPACT_LOW} (default)</li>
+         *     <li>{@link PackageManager#ROLLBACK_USER_IMPACT_HIGH} (1)</li>
+         *     <li>{@link PackageManager#ROLLBACK_USER_IMPACT_ONLY_MANUAL} (2)</li>
+         * </ul>
+         *
+         * @hide
+         */
+        @SystemApi
+        @RequiresPermission(android.Manifest.permission.MANAGE_ROLLBACKS)
+        @FlaggedApi(Flags.FLAG_RECOVERABILITY_DETECTION)
+        public void setRollbackImpactLevel(@PackageManager.RollbackImpactLevel int impactLevel) {
+            if ((installFlags & PackageManager.INSTALL_ENABLE_ROLLBACK) == 0) {
+                throw new IllegalArgumentException(
+                        "Can't set rollbackImpactLevel when rollback is not enabled");
+            }
+            rollbackImpactLevel = impactLevel;
         }
 
         /**
@@ -3493,6 +3606,7 @@ public class PackageInstaller {
             pw.printPair("dataLoaderParams", dataLoaderParams);
             pw.printPair("rollbackDataPolicy", rollbackDataPolicy);
             pw.printPair("rollbackLifetimeMillis", rollbackLifetimeMillis);
+            pw.printPair("rollbackImpactLevel", rollbackImpactLevel);
             pw.printPair("applicationEnabledSettingPersistent",
                     applicationEnabledSettingPersistent);
             pw.printHexPair("developmentInstallFlags", developmentInstallFlags);
@@ -3536,6 +3650,7 @@ public class PackageInstaller {
             }
             dest.writeInt(rollbackDataPolicy);
             dest.writeLong(rollbackLifetimeMillis);
+            dest.writeInt(rollbackImpactLevel);
             dest.writeInt(requireUserAction);
             dest.writeInt(packageSource);
             dest.writeBoolean(applicationEnabledSettingPersistent);
@@ -3734,6 +3849,9 @@ public class PackageInstaller {
         public long rollbackLifetimeMillis;
 
         /** {@hide} */
+        public int rollbackImpactLevel;
+
+        /** {@hide} */
         public int requireUserAction;
 
         /** {@hide} */
@@ -3801,6 +3919,7 @@ public class PackageInstaller {
             isPreapprovalRequested = source.readBoolean();
             rollbackDataPolicy = source.readInt();
             rollbackLifetimeMillis = source.readLong();
+            rollbackImpactLevel = source.readInt();
             createdMillis = source.readLong();
             requireUserAction = source.readInt();
             installerUid = source.readInt();
@@ -4438,6 +4557,7 @@ public class PackageInstaller {
             dest.writeBoolean(isPreapprovalRequested);
             dest.writeInt(rollbackDataPolicy);
             dest.writeLong(rollbackLifetimeMillis);
+            dest.writeInt(rollbackImpactLevel);
             dest.writeLong(createdMillis);
             dest.writeInt(requireUserAction);
             dest.writeInt(installerUid);
@@ -4708,9 +4828,9 @@ public class PackageInstaller {
                 codegenVersion = "1.0.23",
                 sourceFile = "frameworks/base/core/java/android/content/pm/PackageInstaller.java",
                 inputSignatures = "private final @android.annotation.Nullable android.graphics.Bitmap mIcon\nprivate final @android.annotation.NonNull java.lang.CharSequence mLabel\nprivate final @android.annotation.NonNull android.icu.util.ULocale mLocale\nprivate final @android.annotation.NonNull java.lang.String mPackageName\npublic static final @android.annotation.NonNull android.os.Parcelable.Creator<android.content.pm.PackageInstaller.PreapprovalDetails> CREATOR\npublic @java.lang.Override void writeToParcel(android.os.Parcel,int)\npublic @java.lang.Override int describeContents()\nclass PreapprovalDetails extends java.lang.Object implements [android.os.Parcelable]\nprivate @android.annotation.Nullable android.graphics.Bitmap mIcon\nprivate @android.annotation.NonNull java.lang.CharSequence mLabel\nprivate @android.annotation.NonNull android.icu.util.ULocale mLocale\nprivate @android.annotation.NonNull java.lang.String mPackageName\nprivate  long mBuilderFieldsSet\npublic @android.annotation.NonNull android.content.pm.PackageInstaller.PreapprovalDetails.Builder setIcon(android.graphics.Bitmap)\npublic @android.annotation.NonNull android.content.pm.PackageInstaller.PreapprovalDetails.Builder setLabel(java.lang.CharSequence)\npublic @android.annotation.NonNull android.content.pm.PackageInstaller.PreapprovalDetails.Builder setLocale(android.icu.util.ULocale)\npublic @android.annotation.NonNull android.content.pm.PackageInstaller.PreapprovalDetails.Builder setPackageName(java.lang.String)\npublic @android.annotation.NonNull android.content.pm.PackageInstaller.PreapprovalDetails build()\nprivate  void checkNotUsed()\nclass Builder extends java.lang.Object implements []\n@com.android.internal.util.DataClass(genConstructor=false, genToString=true)")
+
         @Deprecated
         private void __metadata() {}
-
 
         //@formatter:on
         // End of generated code
@@ -5102,13 +5222,188 @@ public class PackageInstaller {
                 codegenVersion = "1.0.23",
                 sourceFile = "frameworks/base/core/java/android/content/pm/PackageInstaller.java",
                 inputSignatures = "public static final @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints GENTLE_UPDATE\nprivate final  boolean mDeviceIdleRequired\nprivate final  boolean mAppNotForegroundRequired\nprivate final  boolean mAppNotInteractingRequired\nprivate final  boolean mAppNotTopVisibleRequired\nprivate final  boolean mNotInCallRequired\nclass InstallConstraints extends java.lang.Object implements [android.os.Parcelable]\nprivate  boolean mDeviceIdleRequired\nprivate  boolean mAppNotForegroundRequired\nprivate  boolean mAppNotInteractingRequired\nprivate  boolean mAppNotTopVisibleRequired\nprivate  boolean mNotInCallRequired\npublic @android.annotation.SuppressLint @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints.Builder setDeviceIdleRequired()\npublic @android.annotation.SuppressLint @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints.Builder setAppNotForegroundRequired()\npublic @android.annotation.SuppressLint @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints.Builder setAppNotInteractingRequired()\npublic @android.annotation.SuppressLint @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints.Builder setAppNotTopVisibleRequired()\npublic @android.annotation.SuppressLint @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints.Builder setNotInCallRequired()\npublic @android.annotation.NonNull android.content.pm.PackageInstaller.InstallConstraints build()\nclass Builder extends java.lang.Object implements []\n@com.android.internal.util.DataClass(genParcelable=true, genHiddenConstructor=true, genEqualsHashCode=true)")
+
         @Deprecated
         private void __metadata() {}
-
 
         //@formatter:on
         // End of generated code
 
+    }
+
+    /**
+     * Used to communicate the unarchival state in {@link #reportUnarchivalState}.
+     */
+    @FlaggedApi(Flags.FLAG_ARCHIVING)
+    public static final class UnarchivalState {
+
+        /**
+         * The caller is able to facilitate the unarchival for the given {@code unarchiveId}.
+         *
+         * @param unarchiveId the ID provided by the system as part of the intent.action.UNARCHIVE
+         *                    broadcast with EXTRA_UNARCHIVE_ID.
+         */
+        @NonNull
+        public static UnarchivalState createOkState(int unarchiveId) {
+            return new UnarchivalState(unarchiveId, UNARCHIVAL_OK, /* requiredStorageBytes= */ -1,
+                    /* userActionIntent= */ null);
+        }
+
+        /**
+         * User action is required before commencing with the unarchival for the given
+         * {@code unarchiveId}. E.g., this could be used if it's necessary for the user to sign-in
+         * first.
+         *
+         * @param unarchiveId      the ID provided by the system as part of the
+         *                         intent.action.UNARCHIVE
+         *                         broadcast with EXTRA_UNARCHIVE_ID.
+         * @param userActionIntent optional intent to start a follow up action required to
+         *                         facilitate the unarchival flow (e.g. user needs to log in).
+         */
+        @NonNull
+        public static UnarchivalState createUserActionRequiredState(int unarchiveId,
+                @NonNull PendingIntent userActionIntent) {
+            Objects.requireNonNull(userActionIntent);
+            return new UnarchivalState(unarchiveId, UNARCHIVAL_ERROR_USER_ACTION_NEEDED,
+                    /* requiredStorageBytes= */ -1, userActionIntent);
+        }
+
+        /**
+         * There is not enough storage to start the unarchival for the given {@code unarchiveId}.
+         *
+         * @param unarchiveId          the ID provided by the system as part of the
+         *                             intent.action.UNARCHIVE
+         *                             broadcast with EXTRA_UNARCHIVE_ID.
+         * @param requiredStorageBytes ff the error is UNARCHIVAL_ERROR_INSUFFICIENT_STORAGE this
+         *                             field should be set to specify how many additional bytes of
+         *                             storage are required to unarchive the app.
+         * @param userActionIntent     can optionally be set to provide a custom storage-clearing
+         *                             action.
+         */
+        @NonNull
+        public static UnarchivalState createInsufficientStorageState(int unarchiveId,
+                long requiredStorageBytes, @Nullable PendingIntent userActionIntent) {
+            return new UnarchivalState(unarchiveId, UNARCHIVAL_ERROR_INSUFFICIENT_STORAGE,
+                    requiredStorageBytes, userActionIntent);
+        }
+
+        /**
+         * The device has no data connectivity and unarchival cannot be started for the given
+         * {@code unarchiveId}.
+         *
+         * @param unarchiveId the ID provided by the system as part of the intent.action.UNARCHIVE
+         *                    broadcast with EXTRA_UNARCHIVE_ID.
+         */
+        @NonNull
+        public static UnarchivalState createNoConnectivityState(int unarchiveId) {
+            return new UnarchivalState(unarchiveId, UNARCHIVAL_ERROR_NO_CONNECTIVITY,
+                    /* requiredStorageBytes= */ -1,/* userActionIntent= */ null);
+        }
+
+        /**
+         * Generic error state for all cases that are not covered by other methods in this class.
+         *
+         * @param unarchiveId the ID provided by the system as part of the intent.action.UNARCHIVE
+         *                    broadcast with EXTRA_UNARCHIVE_ID.
+         */
+        @NonNull
+        public static UnarchivalState createGenericErrorState(int unarchiveId) {
+            return new UnarchivalState(unarchiveId, UNARCHIVAL_GENERIC_ERROR,
+                    /* requiredStorageBytes= */ -1,/* userActionIntent= */ null);
+        }
+
+
+        /**
+         * The ID provided by the system as part of the intent.action.UNARCHIVE broadcast with
+         * EXTRA_UNARCHIVE_ID.
+         */
+        private final int mUnarchiveId;
+
+        /** Used for the system to provide the user with necessary follow-up steps or errors. */
+        @UnarchivalStatus
+        private final int mStatus;
+
+        /**
+         * If the error is UNARCHIVAL_ERROR_INSUFFICIENT_STORAGE this field should be set to specify
+         * how many additional bytes of storage are required to unarchive the app.
+         */
+        private final long mRequiredStorageBytes;
+
+        /**
+         * Optional intent to start a follow up action required to facilitate the unarchival flow
+         * (e.g., user needs to log in).
+         */
+        @Nullable
+        private final PendingIntent mUserActionIntent;
+
+        /**
+         * Creates a new UnarchivalState.
+         *
+         * @param unarchiveId          The ID provided by the system as part of the
+         *                             intent.action.UNARCHIVE broadcast with
+         *                             EXTRA_UNARCHIVE_ID.
+         * @param status               Used for the system to provide the user with necessary
+         *                             follow-up steps or errors.
+         * @param requiredStorageBytes If the error is UNARCHIVAL_ERROR_INSUFFICIENT_STORAGE this
+         *                             field should be set to specify
+         *                             how many additional bytes of storage are required to
+         *                             unarchive the app.
+         * @param userActionIntent     Optional intent to start a follow up action required to
+         *                             facilitate the unarchival flow
+         *                             (e.g,. user needs to log in).
+         * @hide
+         */
+        private UnarchivalState(
+                int unarchiveId,
+                @UnarchivalStatus int status,
+                long requiredStorageBytes,
+                @Nullable PendingIntent userActionIntent) {
+            this.mUnarchiveId = unarchiveId;
+            this.mStatus = status;
+            com.android.internal.util.AnnotationValidations.validate(
+                    UnarchivalStatus.class, null, mStatus);
+            this.mRequiredStorageBytes = requiredStorageBytes;
+            this.mUserActionIntent = userActionIntent;
+        }
+
+        /**
+         * The ID provided by the system as part of the intent.action.UNARCHIVE broadcast with
+         * EXTRA_UNARCHIVE_ID.
+         *
+         * @hide
+         */
+        int getUnarchiveId() {
+            return mUnarchiveId;
+        }
+
+        /**
+         * Used for the system to provide the user with necessary follow-up steps or errors.
+         *
+         * @hide
+         */
+        @UnarchivalStatus int getStatus() {
+            return mStatus;
+        }
+
+        /**
+         * If the error is UNARCHIVAL_ERROR_INSUFFICIENT_STORAGE this field should be set to specify
+         * how many additional bytes of storage are required to unarchive the app.
+         *
+         * @hide
+         */
+        long getRequiredStorageBytes() {
+            return mRequiredStorageBytes;
+        }
+
+        /**
+         * Optional intent to start a follow up action required to facilitate the unarchival flow
+         * (e.g. user needs to log in).
+         *
+         * @hide
+         */
+        @Nullable PendingIntent getUserActionIntent() {
+            return mUserActionIntent;
+        }
     }
 
 }

@@ -16,6 +16,8 @@
 
 package android.widget;
 
+import static android.appwidget.flags.Flags.FLAG_DRAW_DATA_PARCEL;
+import static android.appwidget.flags.Flags.drawDataParcel;
 import static android.appwidget.flags.Flags.remoteAdapterConversion;
 import static android.view.inputmethod.Flags.FLAG_HOME_SCREEN_HANDWRITING_DELEGATOR;
 
@@ -110,7 +112,11 @@ import android.widget.CompoundButton.OnCheckedChangeListener;
 import com.android.internal.R;
 import com.android.internal.util.Preconditions;
 import com.android.internal.widget.IRemoteViewsFactory;
+import com.android.internal.widget.remotecompose.core.operations.Theme;
+import com.android.internal.widget.remotecompose.player.RemoteComposeDocument;
+import com.android.internal.widget.remotecompose.player.RemoteComposePlayer;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
@@ -243,6 +249,7 @@ public class RemoteViews implements Parcelable, Filter {
     private static final int ATTRIBUTE_REFLECTION_ACTION_TAG = 32;
     private static final int SET_REMOTE_ADAPTER_TAG = 33;
     private static final int SET_ON_STYLUS_HANDWRITING_RESPONSE_TAG = 34;
+    private static final int SET_DRAW_INSTRUCTION_TAG = 35;
 
     /** @hide **/
     @IntDef(prefix = "MARGIN_", value = {
@@ -441,6 +448,19 @@ public class RemoteViews implements Parcelable, Filter {
      */
     @Nullable
     private LayoutInflater.Factory2 mLayoutInflaterFactory2;
+
+    /**
+     * Indicates whether this {@link RemoteViews} was instantiated with a {@link DrawInstructions}
+     * object. {@link DrawInstructions} serves as an alternative protocol for the host process
+     * to render.
+     */
+    private boolean mHasDrawInstructions;
+
+    @Nullable
+    private SparseArray<PendingIntent> mPendingIntentTemplate;
+
+    @Nullable
+    private SparseArray<Intent> mFillInIntent;
 
     private static final InteractionHandler DEFAULT_INTERACTION_HANDLER =
             (view, pendingIntent, response) ->
@@ -1463,6 +1483,9 @@ public class RemoteViews implements Parcelable, Filter {
 
         @Override
         public void apply(View root, ViewGroup rootParent, ActionApplyParams params) {
+            if (hasDrawInstructions() && root instanceof RemoteComposePlayer) {
+                return;
+            }
             final View target = root.findViewById(mViewId);
             if (target == null) return;
 
@@ -3851,6 +3874,53 @@ public class RemoteViews implements Parcelable, Filter {
         }
     }
 
+    private static class SetDrawInstructionAction extends Action {
+
+        @Nullable
+        private final DrawInstructions mInstructions;
+
+        SetDrawInstructionAction(@NonNull final DrawInstructions instructions) {
+            mInstructions = instructions;
+        }
+
+        SetDrawInstructionAction(@NonNull final Parcel in) {
+            if (drawDataParcel()) {
+                mInstructions = DrawInstructions.readFromParcel(in);
+            } else {
+                mInstructions = null;
+            }
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            if (drawDataParcel()) {
+                DrawInstructions.writeToParcel(mInstructions, dest, flags);
+            }
+        }
+
+        @Override
+        public void apply(View root, ViewGroup rootParent, ActionApplyParams params)
+                throws ActionException {
+            if (drawDataParcel() && mInstructions != null
+                    && root instanceof RemoteComposePlayer player) {
+                final List<byte[]> bytes = mInstructions.mInstructions;
+                if (bytes.isEmpty()) {
+                    return;
+                }
+                try (ByteArrayInputStream is = new ByteArrayInputStream(bytes.get(0))) {
+                    player.setDocument(new RemoteComposeDocument(is));
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "Failed to render draw instructions", e);
+                }
+            }
+        }
+
+        @Override
+        public int getActionTag() {
+            return SET_DRAW_INSTRUCTION_TAG;
+        }
+    }
+
     /**
      * Create a new RemoteViews object that will display the views contained
      * in the specified layout file.
@@ -4080,6 +4150,7 @@ public class RemoteViews implements Parcelable, Filter {
         mClassCookies = src.mClassCookies;
         mIdealSize = src.mIdealSize;
         mProviderInstanceId = src.mProviderInstanceId;
+        mHasDrawInstructions = src.mHasDrawInstructions;
 
         if (src.hasLandscapeAndPortraitLayouts()) {
             mLandscape = createInitializedFrom(src.mLandscape, hierarchyRoot);
@@ -4114,10 +4185,24 @@ public class RemoteViews implements Parcelable, Filter {
     /**
      * Reads a RemoteViews object from a parcel.
      *
-     * @param parcel
+     * @param parcel the parcel object
      */
     public RemoteViews(Parcel parcel) {
         this(parcel, /* rootData= */ null, /* info= */ null, /* depth= */ 0);
+    }
+
+    /**
+     * Instantiates a RemoteViews object using {@link DrawInstructions}, which serves as an
+     * alternative to XML layout. {@link DrawInstructions} objects contains the instructions which
+     * can be interpreted and rendered accordingly in the host process.
+     *
+     * @param drawInstructions The {@link DrawInstructions} object
+     */
+    @FlaggedApi(FLAG_DRAW_DATA_PARCEL)
+    public RemoteViews(@NonNull final DrawInstructions drawInstructions) {
+        Objects.requireNonNull(drawInstructions);
+        mHasDrawInstructions = true;
+        addAction(new SetDrawInstructionAction(drawInstructions));
     }
 
     private RemoteViews(@NonNull Parcel parcel, @Nullable HierarchyRootData rootData,
@@ -4178,6 +4263,7 @@ public class RemoteViews implements Parcelable, Filter {
         }
         mApplyFlags = parcel.readInt();
         mProviderInstanceId = parcel.readLong();
+        mHasDrawInstructions = parcel.readBoolean();
 
         // Ensure that all descendants have their caches set up recursively.
         if (mIsRoot) {
@@ -4254,6 +4340,8 @@ public class RemoteViews implements Parcelable, Filter {
                 return new AttributeReflectionAction(parcel);
             case SET_ON_STYLUS_HANDWRITING_RESPONSE_TAG:
                 return new SetOnStylusHandwritingResponse(parcel);
+            case SET_DRAW_INSTRUCTION_TAG:
+                return new SetDrawInstructionAction(parcel);
             default:
                 throw new ActionException("Tag " + tag + " not found");
         }
@@ -4747,7 +4835,12 @@ public class RemoteViews implements Parcelable, Filter {
      *          by a child of viewId and executed when that child is clicked
      */
     public void setPendingIntentTemplate(@IdRes int viewId, PendingIntent pendingIntentTemplate) {
-        addAction(new SetPendingIntentTemplate(viewId, pendingIntentTemplate));
+        if (hasDrawInstructions()) {
+            getPendingIntentTemplate().set(viewId, pendingIntentTemplate);
+            tryAddRemoteResponse(viewId);
+        } else {
+            addAction(new SetPendingIntentTemplate(viewId, pendingIntentTemplate));
+        }
     }
 
     /**
@@ -4768,7 +4861,12 @@ public class RemoteViews implements Parcelable, Filter {
      *        in order to determine the on-click behavior of the view specified by viewId
      */
     public void setOnClickFillInIntent(@IdRes int viewId, Intent fillInIntent) {
-        setOnClickResponse(viewId, RemoteResponse.fromFillInIntent(fillInIntent));
+        if (hasDrawInstructions()) {
+            getFillInIntent().set(viewId, fillInIntent);
+            tryAddRemoteResponse(viewId);
+        } else {
+            setOnClickResponse(viewId, RemoteResponse.fromFillInIntent(fillInIntent));
+        }
     }
 
     /**
@@ -4956,10 +5054,7 @@ public class RemoteViews implements Parcelable, Filter {
      * @param viewId The id of the {@link AdapterView}
      * @param intent The intent of the service which will be
      *            providing data to the RemoteViewsAdapter
-     * @deprecated use
-     * {@link #setRemoteAdapter(int, android.widget.RemoteViews.RemoteCollectionItems)} instead
      */
-    @Deprecated
     public void setRemoteAdapter(@IdRes int viewId, Intent intent) {
         if (remoteAdapterConversion()) {
             addAction(new SetRemoteCollectionItemListAdapterAction(viewId, intent));
@@ -5791,6 +5886,10 @@ public class RemoteViews implements Parcelable, Filter {
         }
     }
 
+    private boolean hasDrawInstructions() {
+        return mHasDrawInstructions;
+    }
+
     private RemoteViews getRemoteViewsToApply(Context context) {
         if (hasLandscapeAndPortraitLayouts()) {
             int orientation = context.getResources().getConfiguration().orientation;
@@ -5952,6 +6051,16 @@ public class RemoteViews implements Parcelable, Filter {
         RemoteViews rvToApply = getRemoteViewsToApply(context, size);
         View result = inflateView(context, rvToApply, directParent,
                 params.applyThemeResId, params.colorResources);
+        if (result instanceof RemoteComposePlayer player) {
+            player.addClickListener((viewId, metadata) -> {
+                mActions.forEach(action -> {
+                    if (viewId == action.mViewId
+                            && action instanceof SetOnClickResponse setOnClickResponse) {
+                        setOnClickResponse.mResponse.handleViewInteraction(player, params.handler);
+                    }
+                });
+            });
+        }
         rvToApply.performApply(result, rootParent, params);
         return result;
     }
@@ -5973,16 +6082,24 @@ public class RemoteViews implements Parcelable, Filter {
         if (applyThemeResId != 0) {
             inflationContext = new ContextThemeWrapper(inflationContext, applyThemeResId);
         }
-        LayoutInflater inflater = LayoutInflater.from(context);
+        View v;
+        // If the RemoteViews contains draw instructions, just use it instead.
+        if (rv.hasDrawInstructions()) {
+            final RemoteComposePlayer player = new RemoteComposePlayer(inflationContext);
+            player.setDebug(Build.IS_USERDEBUG || Build.IS_ENG ? 1 : 0);
+            v = player;
+        } else {
+            LayoutInflater inflater = LayoutInflater.from(context);
 
-        // Clone inflater so we load resources from correct context and
-        // we don't add a filter to the static version returned by getSystemService.
-        inflater = inflater.cloneInContext(inflationContext);
-        inflater.setFilter(shouldUseStaticFilter() ? INFLATER_FILTER : this);
-        if (mLayoutInflaterFactory2 != null) {
-            inflater.setFactory2(mLayoutInflaterFactory2);
+            // Clone inflater so we load resources from correct context and
+            // we don't add a filter to the static version returned by getSystemService.
+            inflater = inflater.cloneInContext(inflationContext);
+            inflater.setFilter(shouldUseStaticFilter() ? INFLATER_FILTER : this);
+            if (mLayoutInflaterFactory2 != null) {
+                inflater.setFactory2(mLayoutInflaterFactory2);
+            }
+            v = inflater.inflate(rv.getLayoutId(), parent, false);
         }
-        View v = inflater.inflate(rv.getLayoutId(), parent, false);
         if (mViewId != View.NO_ID) {
             v.setId(mViewId);
             v.setTagInternal(R.id.remote_views_override_id, mViewId);
@@ -6236,7 +6353,7 @@ public class RemoteViews implements Parcelable, Filter {
 
     /** @hide */
     public boolean canRecycleView(@Nullable View v) {
-        if (v == null) {
+        if (v == null || hasDrawInstructions()) {
             return false;
         }
         Integer previousLayoutId = (Integer) v.getTag(R.id.widget_frame);
@@ -6328,6 +6445,10 @@ public class RemoteViews implements Parcelable, Filter {
         if (params.handler == null) {
             params.handler = DEFAULT_INTERACTION_HANDLER;
         }
+        if (v instanceof RemoteComposePlayer player) {
+            player.setTheme(v.getResources().getConfiguration().isNightModeActive()
+                    ? Theme.DARK : Theme.LIGHT);
+        }
         if (mActions != null) {
             final int count = mActions.size();
             for (int i = 0; i < count; i++) {
@@ -6386,6 +6507,32 @@ public class RemoteViews implements Parcelable, Filter {
         }
 
         return context;
+    }
+
+    @NonNull
+    private SparseArray<PendingIntent> getPendingIntentTemplate() {
+        if (mPendingIntentTemplate == null) {
+            mPendingIntentTemplate = new SparseArray<>();
+        }
+        return mPendingIntentTemplate;
+    }
+
+    @NonNull
+    private SparseArray<Intent> getFillInIntent() {
+        if (mFillInIntent == null) {
+            mFillInIntent = new SparseArray<>();
+        }
+        return mFillInIntent;
+    }
+
+    private void tryAddRemoteResponse(final int viewId) {
+        final PendingIntent pendingIntent = getPendingIntentTemplate().get(viewId);
+        final Intent intent = getFillInIntent().get(viewId);
+        if (pendingIntent != null && intent != null) {
+            addAction(new SetOnClickResponse(viewId,
+                    RemoteResponse.fromPendingIntentTemplateAndFillInIntent(
+                            pendingIntent, intent)));
+        }
     }
 
     /**
@@ -6624,6 +6771,7 @@ public class RemoteViews implements Parcelable, Filter {
         }
         dest.writeInt(mApplyFlags);
         dest.writeLong(mProviderInstanceId);
+        dest.writeBoolean(mHasDrawInstructions);
 
         dest.restoreAllowSquashing(prevSquashingAllowed);
     }
@@ -6926,6 +7074,14 @@ public class RemoteViews implements Parcelable, Filter {
             return response;
         }
 
+        private static RemoteResponse fromPendingIntentTemplateAndFillInIntent(
+                @NonNull final PendingIntent pendingIntent, @NonNull final Intent intent) {
+            RemoteResponse response = new RemoteResponse();
+            response.mPendingIntent = pendingIntent;
+            response.mFillIntent = intent;
+            return response;
+        }
+
         /**
          * Adds a shared element to be transferred as part of the transition between Activities
          * using cross-Activity scene animations. The position of the first element will be used as
@@ -6964,8 +7120,8 @@ public class RemoteViews implements Parcelable, Filter {
 
         private void writeToParcel(Parcel dest, int flags) {
             PendingIntent.writePendingIntentOrNullToParcel(mPendingIntent, dest);
-            if (mPendingIntent == null) {
-                // Only write the intent if pending intent is null
+            dest.writeBoolean((mFillIntent != null));
+            if (mFillIntent != null) {
                 dest.writeTypedObject(mFillIntent, flags);
             }
             dest.writeInt(mInteractionType);
@@ -6975,9 +7131,7 @@ public class RemoteViews implements Parcelable, Filter {
 
         private void readFromParcel(Parcel parcel) {
             mPendingIntent = PendingIntent.readPendingIntentOrNullFromParcel(parcel);
-            if (mPendingIntent == null) {
-                mFillIntent = parcel.readTypedObject(Intent.CREATOR);
-            }
+            mFillIntent = parcel.readBoolean() ? parcel.readTypedObject(Intent.CREATOR) : null;
             mInteractionType = parcel.readInt();
             int[] viewIds = parcel.createIntArray();
             mViewIds = viewIds == null ? null : IntArray.wrap(viewIds);
@@ -7054,7 +7208,7 @@ public class RemoteViews implements Parcelable, Filter {
 
         /** @hide */
         public Pair<Intent, ActivityOptions> getLaunchOptions(View view) {
-            Intent intent = mPendingIntent != null ? new Intent() : new Intent(mFillIntent);
+            Intent intent = mFillIntent == null ? new Intent() : new Intent(mFillIntent);
             intent.setSourceBounds(getSourceBounds(view));
 
             if (view instanceof CompoundButton
@@ -7408,6 +7562,101 @@ public class RemoteViews implements Parcelable, Filter {
         private void visitUris(@NonNull Consumer<Uri> visitor) {
             for (RemoteViews view : mViews) {
                 view.visitUris(visitor);
+            }
+        }
+    }
+
+    /**
+     * A data parcel that carries the instructions to draw the RemoteViews, as an alternative to
+     * XML layout.
+     */
+    @FlaggedApi(FLAG_DRAW_DATA_PARCEL)
+    public static final class DrawInstructions {
+
+        private static final long VERSION = 1L;
+
+        @NonNull
+        final List<byte[]> mInstructions;
+
+        private DrawInstructions() {
+            throw new UnsupportedOperationException(
+                    "DrawInstructions cannot be instantiate without instructions");
+        }
+
+        private DrawInstructions(@NonNull List<byte[]> instructions) {
+            // Create and retain an immutable copy of given instructions.
+            mInstructions = new ArrayList<>(instructions.size());
+            for (byte[] instruction : instructions) {
+                final int len = instruction.length;
+                final byte[] target = new byte[len];
+                System.arraycopy(instruction, 0, target, 0, len);
+                mInstructions.add(target);
+            }
+        }
+
+        @Nullable
+        private static DrawInstructions readFromParcel(@NonNull final Parcel in) {
+            int size = in.readInt();
+            if (size == -1) {
+                return null;
+            }
+            byte[] instruction;
+            final List<byte[]> instructions = new ArrayList<>(size);
+            for (int i = 0; i < size; i++) {
+                instruction = new byte[in.readInt()];
+                in.readByteArray(instruction);
+                instructions.add(instruction);
+            }
+            return new DrawInstructions(instructions);
+        }
+
+        private static void writeToParcel(@Nullable final DrawInstructions drawInstructions,
+                @NonNull final Parcel dest, final int flags) {
+            if (drawInstructions == null) {
+                dest.writeInt(-1);
+                return;
+            }
+            final List<byte[]> instructions = drawInstructions.mInstructions;
+            dest.writeInt(instructions.size());
+            for (byte[] instruction : instructions) {
+                dest.writeInt(instruction.length);
+                dest.writeByteArray(instruction);
+            }
+        }
+
+        /**
+         * Version number of {@link DrawInstructions} currently supported.
+         */
+        @FlaggedApi(FLAG_DRAW_DATA_PARCEL)
+        public static long getSupportedVersion() {
+            return VERSION;
+        }
+
+        /**
+         * Builder class for {@link DrawInstructions} objects.
+         */
+        @FlaggedApi(FLAG_DRAW_DATA_PARCEL)
+        public static final class Builder {
+
+            private final List<byte[]> mInstructions;
+
+            /**
+             * Constructor.
+             *
+             * @param instructions Information to draw the RemoteViews.
+             */
+            @FlaggedApi(FLAG_DRAW_DATA_PARCEL)
+            public Builder(@NonNull final List<byte[]> instructions) {
+                mInstructions = new ArrayList<>(instructions);
+            }
+
+            /**
+             * Creates a {@link DrawInstructions} instance.
+             */
+            @NonNull
+            @FlaggedApi(FLAG_DRAW_DATA_PARCEL)
+            public DrawInstructions build() {
+                return new DrawInstructions(mInstructions);
             }
         }
     }

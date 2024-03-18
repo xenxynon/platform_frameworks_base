@@ -34,6 +34,7 @@ public class PromptInfo implements Parcelable {
 
     @DrawableRes private int mLogoRes = -1;
     @Nullable private Bitmap mLogoBitmap;
+    @Nullable private String mLogoDescription;
     @NonNull private CharSequence mTitle;
     private boolean mUseDefaultTitle;
     @Nullable private CharSequence mSubtitle;
@@ -54,6 +55,7 @@ public class PromptInfo implements Parcelable {
     private boolean mIgnoreEnrollmentState;
     private boolean mIsForLegacyFingerprintManager = false;
     private boolean mShowEmergencyCallButton = false;
+    private boolean mUseParentProfileForDeviceCredential = false;
 
     public PromptInfo() {
 
@@ -62,6 +64,7 @@ public class PromptInfo implements Parcelable {
     PromptInfo(Parcel in) {
         mLogoRes = in.readInt();
         mLogoBitmap = in.readTypedObject(Bitmap.CREATOR);
+        mLogoDescription = in.readString();
         mTitle = in.readCharSequence();
         mUseDefaultTitle = in.readBoolean();
         mSubtitle = in.readCharSequence();
@@ -83,6 +86,7 @@ public class PromptInfo implements Parcelable {
         mIgnoreEnrollmentState = in.readBoolean();
         mIsForLegacyFingerprintManager = in.readBoolean();
         mShowEmergencyCallButton = in.readBoolean();
+        mUseParentProfileForDeviceCredential = in.readBoolean();
     }
 
     public static final Creator<PromptInfo> CREATOR = new Creator<PromptInfo>() {
@@ -106,6 +110,7 @@ public class PromptInfo implements Parcelable {
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(mLogoRes);
         dest.writeTypedObject(mLogoBitmap, 0);
+        dest.writeString(mLogoDescription);
         dest.writeCharSequence(mTitle);
         dest.writeBoolean(mUseDefaultTitle);
         dest.writeCharSequence(mSubtitle);
@@ -126,6 +131,7 @@ public class PromptInfo implements Parcelable {
         dest.writeBoolean(mIgnoreEnrollmentState);
         dest.writeBoolean(mIsForLegacyFingerprintManager);
         dest.writeBoolean(mShowEmergencyCallButton);
+        dest.writeBoolean(mUseParentProfileForDeviceCredential);
     }
 
     // LINT.IfChange
@@ -166,15 +172,24 @@ public class PromptInfo implements Parcelable {
     }
 
     /**
-     * Returns whether MANAGE_BIOMETRIC_DIALOG is contained.
+     * Returns whether SET_BIOMETRIC_DIALOG_LOGO is contained.
      */
-    public boolean containsManageBioApiConfigurations() {
+    public boolean containsSetLogoApiConfigurations() {
         if (mLogoRes != -1) {
             return true;
         } else if (mLogoBitmap != null) {
             return true;
+        } else if (mLogoDescription != null) {
+            return true;
         }
         return false;
+    }
+
+    /**
+     * Returns if parent profile needs to be used for device credential.
+     */
+    public boolean shouldUseParentProfileForDeviceCredential() {
+        return mUseParentProfileForDeviceCredential;
     }
     // LINT.ThenChange(frameworks/base/core/java/android/hardware/biometrics/BiometricPrompt.java)
 
@@ -187,6 +202,10 @@ public class PromptInfo implements Parcelable {
     public void setLogoBitmap(@NonNull Bitmap logoBitmap) {
         mLogoBitmap = logoBitmap;
         checkOnlyOneLogoSet();
+    }
+
+    public void setLogoDescription(@NonNull String logoDescription) {
+        mLogoDescription = logoDescription;
     }
 
     public void setTitle(CharSequence title) {
@@ -272,6 +291,11 @@ public class PromptInfo implements Parcelable {
         mShowEmergencyCallButton = showEmergencyCallButton;
     }
 
+    public void setUseParentProfileForDeviceCredential(
+            boolean useParentProfileForDeviceCredential) {
+        mUseParentProfileForDeviceCredential = useParentProfileForDeviceCredential;
+    }
+
     // Getters
     @DrawableRes
     public int getLogoRes() {
@@ -280,6 +304,10 @@ public class PromptInfo implements Parcelable {
 
     public Bitmap getLogoBitmap() {
         return mLogoBitmap;
+    }
+
+    public String getLogoDescription() {
+        return mLogoDescription;
     }
 
     public CharSequence getTitle() {

@@ -16,7 +16,9 @@
 
 package com.android.server.locksettings;
 
+import static android.security.Flags.reportPrimaryAuthAttempts;
 import static android.Manifest.permission.ACCESS_KEYGUARD_SECURE_STORAGE;
+import static android.Manifest.permission.CONFIGURE_FACTORY_RESET_PROTECTION;
 import static android.Manifest.permission.MANAGE_BIOMETRIC;
 import static android.Manifest.permission.SET_AND_VERIFY_LOCKSCREEN_CREDENTIALS;
 import static android.Manifest.permission.SET_INITIAL_LOCK;
@@ -26,6 +28,7 @@ import static android.app.admin.DevicePolicyResources.Strings.Core.PROFILE_ENCRY
 import static android.app.admin.DevicePolicyResources.Strings.Core.PROFILE_ENCRYPTED_MESSAGE;
 import static android.app.admin.DevicePolicyResources.Strings.Core.PROFILE_ENCRYPTED_TITLE;
 import static android.content.Context.KEYGUARD_SERVICE;
+import static android.content.Intent.ACTION_MAIN_USER_LOCKSCREEN_KNOWLEDGE_FACTOR_CHANGED;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.UserHandle.USER_ALL;
 import static android.os.UserHandle.USER_SYSTEM;
@@ -141,6 +144,7 @@ import com.android.internal.widget.IWeakEscrowTokenActivatedListener;
 import com.android.internal.widget.IWeakEscrowTokenRemovedListener;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.LockSettingsInternal;
+import com.android.internal.widget.LockSettingsStateListener;
 import com.android.internal.widget.LockscreenCredential;
 import com.android.internal.widget.RebootEscrowListener;
 import com.android.internal.widget.VerifyCredentialResponse;
@@ -182,6 +186,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -331,6 +336,9 @@ public class LockSettingsService extends ILockSettings.Stub {
             Process.VPN_UID, Process.ROOT_UID, Process.SYSTEM_UID};
 
     private HashMap<UserHandle, UserManager> mUserManagerCache = new HashMap<>();
+
+    private final CopyOnWriteArrayList<LockSettingsStateListener> mLockSettingsStateListeners =
+            new CopyOnWriteArrayList<>();
 
     // This class manages life cycle events for encrypted users on File Based Encryption (FBE)
     // devices. The most basic of these is to show/hide notifications about missing features until
@@ -1198,8 +1206,9 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         final boolean inSetupWizard = Settings.Secure.getIntForUser(cr,
                 Settings.Secure.USER_SETUP_COMPLETE, 0, mainUserId) == 0;
-        final boolean secureFrp = Settings.Global.getInt(cr,
-                Settings.Global.SECURE_FRP_MODE, 0) == 1;
+        final boolean secureFrp = android.security.Flags.frpEnforcement()
+                ? mStorage.isFactoryResetProtectionActive()
+                : (Settings.Global.getInt(cr, Settings.Global.SECURE_FRP_MODE, 0) == 1);
 
         if (inSetupWizard && secureFrp) {
             throw new SecurityException("Cannot change credential in SUW while factory reset"
@@ -2376,8 +2385,13 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         synchronized (mSpManager) {
             if (isSpecialUserId(userId)) {
-                return mSpManager.verifySpecialUserCredential(userId, getGateKeeperService(),
+                response = mSpManager.verifySpecialUserCredential(userId, getGateKeeperService(),
                         credential, progressCallback);
+                if (android.security.Flags.frpEnforcement() && response.isMatched()
+                        && userId == USER_FRP) {
+                    mStorage.deactivateFactoryResetProtectionWithoutSecret();
+                }
+                return response;
             }
 
             long protectorId = getCurrentLskfBasedProtectorId(userId);
@@ -2414,7 +2428,22 @@ public class LockSettingsService extends ILockSettings.Stub {
                 requireStrongAuth(STRONG_AUTH_REQUIRED_AFTER_LOCKOUT, userId);
             }
         }
+        if (reportPrimaryAuthAttempts()) {
+            final boolean success =
+                    response.getResponseCode() == VerifyCredentialResponse.RESPONSE_OK;
+            notifyLockSettingsStateListeners(success, userId);
+        }
         return response;
+    }
+
+    private void notifyLockSettingsStateListeners(boolean success, int userId) {
+        for (LockSettingsStateListener listener : mLockSettingsStateListeners) {
+            if (success) {
+                listener.onAuthenticationSucceeded(userId);
+            } else {
+                listener.onAuthenticationFailed(userId);
+            }
+        }
     }
 
     @Override
@@ -3083,6 +3112,7 @@ public class LockSettingsService extends ILockSettings.Stub {
         setCurrentLskfBasedProtectorId(newProtectorId, userId);
         LockPatternUtils.invalidateCredentialTypeCache();
         synchronizeUnifiedChallengeForProfiles(userId, profilePasswords);
+        sendMainUserCredentialChangedNotificationIfNeeded(userId);
 
         setUserPasswordMetrics(credential, userId);
         mUnifiedProfilePasswordCache.removePassword(userId);
@@ -3098,6 +3128,24 @@ public class LockSettingsService extends ILockSettings.Stub {
         mSpManager.destroyLskfBasedProtector(oldProtectorId, userId);
         Slogf.i(TAG, "Successfully changed lockscreen credential of user %d", userId);
         return newProtectorId;
+    }
+
+    private void sendMainUserCredentialChangedNotificationIfNeeded(int userId) {
+        if (!android.security.Flags.frpEnforcement()) {
+            return;
+        }
+
+        if (userId != mInjector.getUserManagerInternal().getMainUserId()) {
+            return;
+        }
+
+        sendBroadcast(new Intent(ACTION_MAIN_USER_LOCKSCREEN_KNOWLEDGE_FACTOR_CHANGED),
+                UserHandle.of(userId), CONFIGURE_FACTORY_RESET_PROTECTION);
+    }
+
+    @VisibleForTesting
+    void sendBroadcast(Intent intent, UserHandle userHandle, String permission) {
+        mContext.sendBroadcastAsUser(intent, userHandle, permission, /* options */ null);
     }
 
     private void removeBiometricsForUser(int userId) {
@@ -3733,6 +3781,18 @@ public class LockSettingsService extends ILockSettings.Stub {
         @Override
         public void refreshStrongAuthTimeout(int userId) {
             mStrongAuth.refreshStrongAuthTimeout(userId);
+        }
+
+        @Override
+        public void registerLockSettingsStateListener(@NonNull LockSettingsStateListener listener) {
+            Objects.requireNonNull(listener, "listener cannot be null");
+            mLockSettingsStateListeners.add(listener);
+        }
+
+        @Override
+        public void unregisterLockSettingsStateListener(
+                @NonNull LockSettingsStateListener listener) {
+            mLockSettingsStateListeners.remove(listener);
         }
     }
 

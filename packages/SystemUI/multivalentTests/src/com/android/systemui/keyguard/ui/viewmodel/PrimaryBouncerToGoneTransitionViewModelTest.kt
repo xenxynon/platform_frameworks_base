@@ -19,7 +19,7 @@ package com.android.systemui.keyguard.ui.viewmodel
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.bouncer.domain.interactor.primaryBouncerInteractor
+import com.android.systemui.bouncer.domain.interactor.mockPrimaryBouncerInteractor
 import com.android.systemui.coroutines.collectValues
 import com.android.systemui.flags.Flags
 import com.android.systemui.flags.fakeFeatureFlagsClassic
@@ -52,9 +52,9 @@ class PrimaryBouncerToGoneTransitionViewModelTest : SysuiTestCase() {
     val testScope = kosmos.testScope
 
     val keyguardTransitionRepository = kosmos.fakeKeyguardTransitionRepository
-    val primaryBouncerInteractor = kosmos.primaryBouncerInteractor
-    val sysuiStatusBarStateController = kosmos.sysuiStatusBarStateController
-    val underTest = kosmos.primaryBouncerToGoneTransitionViewModel
+    val primaryBouncerInteractor = kosmos.mockPrimaryBouncerInteractor
+    private val sysuiStatusBarStateController = kosmos.sysuiStatusBarStateController
+    val underTest by lazy { kosmos.primaryBouncerToGoneTransitionViewModel }
 
     @Before
     fun setUp() {
@@ -119,15 +119,19 @@ class PrimaryBouncerToGoneTransitionViewModelTest : SysuiTestCase() {
     fun lockscreenAlpha_runDimissFromKeyguard() =
         testScope.runTest {
             val values by collectValues(underTest.lockscreenAlpha)
+            sysuiStatusBarStateController.setLeaveOpenOnKeyguardHide(true)
             runCurrent()
 
-            sysuiStatusBarStateController.setLeaveOpenOnKeyguardHide(true)
+            keyguardTransitionRepository.sendTransitionSteps(
+                from = KeyguardState.PRIMARY_BOUNCER,
+                to = KeyguardState.GONE,
+                testScope,
+            )
 
-            keyguardTransitionRepository.sendTransitionStep(step(0f, TransitionState.STARTED))
-            keyguardTransitionRepository.sendTransitionStep(step(1f))
-
-            assertThat(values.size).isEqualTo(2)
-            values.forEach { assertThat(it).isEqualTo(1f) }
+            assertThat(values[0]).isEqualTo(1f)
+            assertThat(values[1]).isEqualTo(1f)
+            // Ensure FINISHED sets alpha to 0
+            assertThat(values[2]).isEqualTo(0f)
         }
 
     @Test

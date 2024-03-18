@@ -62,6 +62,7 @@ import android.util.ArrayMap;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.IWindow;
+import android.view.SurfaceControl;
 import android.view.View;
 import android.view.accessibility.AccessibilityEvent.EventType;
 
@@ -2440,6 +2441,55 @@ public final class AccessibilityManager {
         }
         try {
             return service.getWindowTransformationSpec(windowId);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Attaches a {@link android.view.SurfaceControl} containing an accessibility overlay to the
+     * specified display.
+     *
+     * @hide
+     */
+    @RequiresPermission(android.Manifest.permission.INTERNAL_SYSTEM_WINDOW)
+    public void attachAccessibilityOverlayToDisplay(
+            int displayId, @NonNull SurfaceControl surfaceControl) {
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.attachAccessibilityOverlayToDisplay(
+                    displayId, surfaceControl);
+        } catch (RemoteException re) {
+            throw re.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Notifies that the current a11y tiles in QuickSettings Panel has been changed
+     *
+     * @param userId            The userId of the user attempts to change the qs panel.
+     * @param tileComponentNames A list of Accessibility feature's TileServices' component names
+     *                           and the a11y platform tiles' component names
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.STATUS_BAR_SERVICE)
+    public void notifyQuickSettingsTilesChanged(
+            @UserIdInt int userId, List<ComponentName> tileComponentNames) {
+        final IAccessibilityManager service;
+        synchronized (mLock) {
+            service = getServiceLocked();
+            if (service == null) {
+                return;
+            }
+        }
+        try {
+            service.notifyQuickSettingsTilesChanged(userId, tileComponentNames);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }

@@ -583,8 +583,21 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
             }
             final List<WindowContainerTransaction.HierarchyOp> hops = t.getHierarchyOps();
             final int hopSize = hops.size();
-            Iterator<Map.Entry<IBinder, WindowContainerTransaction.Change>> entries =
-                    t.getChanges().entrySet().iterator();
+            Iterator<Map.Entry<IBinder, WindowContainerTransaction.Change>> entries;
+            if (transition != null) {
+                // Mark any config-at-end containers before applying config changes so that
+                // the config changes don't dispatch to client.
+                entries = t.getChanges().entrySet().iterator();
+                while (entries.hasNext()) {
+                    final Map.Entry<IBinder, WindowContainerTransaction.Change> entry =
+                            entries.next();
+                    if (!entry.getValue().getConfigAtTransitionEnd()) continue;
+                    final WindowContainer wc = WindowContainer.fromBinder(entry.getKey());
+                    if (wc == null || !wc.isAttached()) continue;
+                    transition.setConfigAtEnd(wc);
+                }
+            }
+            entries = t.getChanges().entrySet().iterator();
             while (entries.hasNext()) {
                 final Map.Entry<IBinder, WindowContainerTransaction.Change> entry = entries.next();
                 final WindowContainer wc = WindowContainer.fromBinder(entry.getKey());
@@ -1471,6 +1484,10 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                         final int index = task.mChildren.indexOf(topTaskFragment);
                         task.mChildren.remove(taskFragment);
                         task.mChildren.add(index, taskFragment);
+                        if (!taskFragment.hasChild()) {
+                            // Ensure that the child layers are updated if the TaskFragment is empty
+                            task.assignChildLayers();
+                        }
                         effects |= TRANSACT_EFFECTS_LIFECYCLE;
                     }
                 }
@@ -1486,6 +1503,10 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                 if (task != null) {
                     task.mChildren.remove(taskFragment);
                     task.mChildren.add(0, taskFragment);
+                    if (!taskFragment.hasChild()) {
+                        // Ensure that the child layers are updated if the TaskFragment is empty.
+                        task.assignChildLayers();
+                    }
                     effects |= TRANSACT_EFFECTS_LIFECYCLE;
                 }
                 break;
@@ -1495,6 +1516,10 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
                 if (task != null) {
                     task.mChildren.remove(taskFragment);
                     task.mChildren.add(taskFragment);
+                    if (!taskFragment.hasChild()) {
+                        // Ensure that the child layers are updated if the TaskFragment is empty.
+                        task.assignChildLayers();
+                    }
                     effects |= TRANSACT_EFFECTS_LIFECYCLE;
                 }
                 break;
@@ -2202,6 +2227,7 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
         }
         final TaskFragment taskFragment = new TaskFragment(mService,
                 creationParams.getFragmentToken(), true /* createdByOrganizer */);
+        taskFragment.setAllowTransitionWhenEmpty(creationParams.getAllowTransitionWhenEmpty());
         // Set task fragment organizer immediately, since it might have to be notified about further
         // actions.
         TaskFragmentOrganizerToken organizerToken = creationParams.getOrganizer();
@@ -2228,6 +2254,11 @@ class WindowOrganizerController extends IWindowOrganizerController.Stub
         ownerTask.addChild(taskFragment, position);
         taskFragment.setWindowingMode(creationParams.getWindowingMode());
         if (!creationParams.getInitialRelativeBounds().isEmpty()) {
+            // The surface operations for the task fragment should sync with the transition.
+            // This avoid using pending transaction before collectExistenceChange is called.
+            if (transition != null) {
+                addToSyncSet(transition.getSyncId(), taskFragment);
+            }
             // Set relative bounds instead of using setBounds. This will avoid unnecessary update in
             // case the parent has resized since the last time parent info is sent to the organizer.
             taskFragment.setRelativeEmbeddedBounds(creationParams.getInitialRelativeBounds());

@@ -18,6 +18,7 @@ package android.view.inputmethod;
 
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.inputmethod.Flags.FLAG_HOME_SCREEN_HANDWRITING_DELEGATOR;
+import static android.view.inputmethod.Flags.initiationWithoutInputConnection;
 import static android.view.inputmethod.InputConnection.CURSOR_UPDATE_IMMEDIATE;
 import static android.view.inputmethod.InputConnection.CURSOR_UPDATE_MONITOR;
 import static android.view.inputmethod.InputMethodEditorTraceProto.InputMethodClientsTraceProto.ClientSideProto.DISPLAY_ID;
@@ -37,6 +38,7 @@ import static android.view.inputmethod.InputMethodManagerProto.SERVED_VIEW;
 import static com.android.internal.inputmethod.StartInputReason.BOUND_TO_IMMS;
 
 import android.Manifest;
+import android.annotation.CallbackExecutor;
 import android.annotation.DisplayContext;
 import android.annotation.DrawableRes;
 import android.annotation.DurationMillisLong;
@@ -108,6 +110,8 @@ import android.window.WindowOnBackInvokedDispatcher;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.inputmethod.DirectBootAwareness;
+import com.android.internal.inputmethod.IBooleanListener;
+import com.android.internal.inputmethod.IConnectionlessHandwritingCallback;
 import com.android.internal.inputmethod.IInputMethodClient;
 import com.android.internal.inputmethod.IInputMethodSession;
 import com.android.internal.inputmethod.IRemoteAccessibilityInputConnection;
@@ -134,6 +138,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -321,6 +326,22 @@ public final class InputMethodManager {
             }
         }
     };
+
+    /**
+     * A runnable that reports {@link InputConnection} opened event for calls to
+     * {@link IInputMethodManagerGlobalInvoker#startInputOrWindowGainedFocusAsync}.
+     */
+    private abstract static class ReportInputConnectionOpenedRunner implements Runnable {
+        /**
+         * Sequence number to track startInput requests to
+         * {@link IInputMethodManagerGlobalInvoker#startInputOrWindowGainedFocusAsync}
+         */
+        int mSequenceNum;
+        ReportInputConnectionOpenedRunner(int sequenceNum) {
+            this.mSequenceNum = sequenceNum;
+        }
+    }
+    private ReportInputConnectionOpenedRunner mReportInputConnectionOpenedRunner;
 
     /**
      * Ensures that {@link #sInstance} becomes non-{@code null} for application that have directly
@@ -571,8 +592,15 @@ public final class InputMethodManager {
     @GuardedBy("mH")
     private PropertyInvalidatedCache<Integer, Boolean> mStylusHandwritingAvailableCache;
 
+    /** Cached value for {@link #isConnectionlessStylusHandwritingAvailable} for userId. */
+    @GuardedBy("mH")
+    private PropertyInvalidatedCache<Integer, Boolean>
+            mConnectionlessStylusHandwritingAvailableCache;
+
     private static final String CACHE_KEY_STYLUS_HANDWRITING_PROPERTY =
             "cache_key.system_server.stylus_handwriting";
+    private static final String CACHE_KEY_CONNECTIONLESS_STYLUS_HANDWRITING_PROPERTY =
+            "cache_key.system_server.connectionless_stylus_handwriting";
 
     @GuardedBy("mH")
     private int mCursorSelStart;
@@ -686,6 +714,7 @@ public final class InputMethodManager {
     private static final int MSG_UNBIND_ACCESSIBILITY_SERVICE = 12;
     private static final int MSG_SET_INTERACTIVE = 13;
     private static final int MSG_ON_SHOW_REQUESTED = 31;
+    private static final int MSG_START_INPUT_RESULT = 40;
 
     /**
      * Calling this will invalidate Local stylus handwriting availability Cache which
@@ -694,6 +723,17 @@ public final class InputMethodManager {
      */
     public static void invalidateLocalStylusHandwritingAvailabilityCaches() {
         PropertyInvalidatedCache.invalidateCache(CACHE_KEY_STYLUS_HANDWRITING_PROPERTY);
+    }
+
+    /**
+     * Calling this will invalidate the local connectionless stylus handwriting availability cache,
+     * which forces the next query in any process to recompute the cache.
+     *
+     * @hide
+     */
+    public static void invalidateLocalConnectionlessStylusHandwritingAvailabilityCaches() {
+        PropertyInvalidatedCache.invalidateCache(
+                CACHE_KEY_CONNECTIONLESS_STYLUS_HANDWRITING_PROPERTY);
     }
 
     private static boolean isAutofillUIShowing(View servedView) {
@@ -1029,7 +1069,7 @@ public final class InputMethodManager {
                     return;
                 }
                 case MSG_BIND: {
-                    final InputBindResult res = (InputBindResult)msg.obj;
+                    final InputBindResult res = (InputBindResult) msg.obj;
                     if (DEBUG) {
                         Log.i(TAG, "handleMessage: MSG_BIND " + res.sequence + "," + res.id);
                     }
@@ -1053,6 +1093,60 @@ public final class InputMethodManager {
                         mCurId = res.id; // for @UnsupportedAppUsage
                     }
                     startInputInner(StartInputReason.BOUND_TO_IMMS, null, 0, 0, 0);
+                    return;
+                }
+
+                case MSG_START_INPUT_RESULT: {
+                    final InputBindResult res = (InputBindResult) msg.obj;
+                    final int startInputSeq = msg.arg1;
+                    if (res == null) {
+                        // IMMS logs .wtf already.
+                        return;
+                    }
+                    if (DEBUG) Log.v(TAG, "Starting input: Bind result=" + res);
+                    synchronized (mH) {
+                        if (res.id != null) {
+                            updateInputChannelLocked(res.channel);
+                            mCurMethod = res.method; // for @UnsupportedAppUsage
+                            mCurBindState = new BindState(res);
+                            mAccessibilityInputMethodSession.clear();
+                            if (res.accessibilitySessions != null) {
+                                for (int i = 0; i < res.accessibilitySessions.size(); i++) {
+                                    IAccessibilityInputMethodSessionInvoker wrapper =
+                                            IAccessibilityInputMethodSessionInvoker.createOrNull(
+                                                    res.accessibilitySessions.valueAt(i));
+                                    if (wrapper != null) {
+                                        mAccessibilityInputMethodSession.append(
+                                                res.accessibilitySessions.keyAt(i), wrapper);
+                                    }
+                                }
+                            }
+                            mCurId = res.id; // for @UnsupportedAppUsage
+                        } else if (res.channel != null && res.channel != mCurChannel) {
+                            res.channel.dispose();
+                        }
+                        switch (res.result) {
+                            case InputBindResult.ResultCode.ERROR_NOT_IME_TARGET_WINDOW:
+                                mRestartOnNextWindowFocus = true;
+                                mServedView = null;
+                                break;
+                        }
+                        if (mCompletions != null) {
+                            if (isImeSessionAvailableLocked()) {
+                                mCurBindState.mImeSession.displayCompletions(mCompletions);
+                            }
+                        }
+
+                        if (res != null
+                                && res.method != null
+                                && mServedView != null
+                                && mReportInputConnectionOpenedRunner != null
+                                && mReportInputConnectionOpenedRunner.mSequenceNum
+                                        == startInputSeq) {
+                            mReportInputConnectionOpenedRunner.run();
+                        }
+                        mReportInputConnectionOpenedRunner = null;
+                    }
                     return;
                 }
                 case MSG_UNBIND: {
@@ -1303,6 +1397,12 @@ public final class InputMethodManager {
         @Override
         public void onBindMethod(InputBindResult res) {
             mH.obtainMessage(MSG_BIND, res).sendToTarget();
+        }
+
+        @Override
+        public void onStartInputResult(InputBindResult res, int startInputSeq) {
+            mH.obtainMessage(MSG_START_INPUT_RESULT, startInputSeq, -1 /* unused */, res)
+                    .sendToTarget();
         }
 
         @Override
@@ -1589,13 +1689,37 @@ public final class InputMethodManager {
                     @Override
                     public Boolean recompute(Integer userId) {
                         return IInputMethodManagerGlobalInvoker.isStylusHandwritingAvailableAsUser(
-                                userId);
+                                userId, /* connectionless= */ false);
                     }
                 };
             }
             isAvailable = mStylusHandwritingAvailableCache.query(user.getIdentifier());
         }
         return isAvailable;
+    }
+
+    /**
+     * Returns {@code true} if the currently selected IME supports connectionless stylus handwriting
+     * sessions and is enabled.
+     */
+    @FlaggedApi(Flags.FLAG_CONNECTIONLESS_HANDWRITING)
+    public boolean isConnectionlessStylusHandwritingAvailable() {
+        if (ActivityThread.currentApplication() == null) {
+            return false;
+        }
+        synchronized (mH) {
+            if (mConnectionlessStylusHandwritingAvailableCache == null) {
+                mConnectionlessStylusHandwritingAvailableCache = new PropertyInvalidatedCache<>(
+                        /* maxEntries= */ 4, CACHE_KEY_CONNECTIONLESS_STYLUS_HANDWRITING_PROPERTY) {
+                    @Override
+                    public Boolean recompute(@NonNull Integer userId) {
+                        return IInputMethodManagerGlobalInvoker.isStylusHandwritingAvailableAsUser(
+                                userId, /* connectionless= */ true);
+                    }
+                };
+            }
+            return mConnectionlessStylusHandwritingAvailableCache.query(UserHandle.myUserId());
+        }
     }
 
     /**
@@ -1956,6 +2080,10 @@ public final class InputMethodManager {
         if (mServedView != null) {
             clearedView = mServedView;
             mServedView = null;
+            if (initiationWithoutInputConnection() && clearedView.getViewRootImpl() != null) {
+                clearedView.getViewRootImpl().getHandwritingInitiator()
+                        .clearFocusedView(clearedView);
+            }
         }
         if (clearedView != null) {
             if (DEBUG) {
@@ -1966,6 +2094,7 @@ public final class InputMethodManager {
             mServedConnecting = false;
             clearConnectionLocked();
         }
+        mReportInputConnectionOpenedRunner = null;
         // Clear the back callbacks held by the ime dispatcher to avoid memory leaks.
         mImeDispatcher.clear();
     }
@@ -2147,8 +2276,10 @@ public final class InputMethodManager {
             @ShowFlags int flags, ResultReceiver resultReceiver,
             @SoftInputShowHideReason int reason) {
         if (statsToken == null) {
+            // TODO(b/303041796): handle tracking physical keyboard and DPAD as user interactions
             statsToken = ImeTracker.forLogging().onRequestShow(null /* component */,
-                    Process.myUid(), ImeTracker.ORIGIN_CLIENT_SHOW_SOFT_INPUT, reason);
+                    Process.myUid(), ImeTracker.ORIGIN_CLIENT_SHOW_SOFT_INPUT, reason,
+                    ImeTracker.isFromUser(view));
         }
         ImeTracker.forLatency().onRequestShow(statsToken, ImeTracker.ORIGIN_CLIENT_SHOW_SOFT_INPUT,
                 reason, ActivityThread::currentApplication);
@@ -2297,15 +2428,22 @@ public final class InputMethodManager {
 
     private boolean hideSoftInputFromWindow(IBinder windowToken, @HideFlags int flags,
             ResultReceiver resultReceiver, @SoftInputShowHideReason int reason) {
+        // Get served view initially for statsToken creation.
+        final View initialServedView;
+        synchronized (mH) {
+            initialServedView = getServedViewLocked();
+        }
+
         final ImeTracker.Token statsToken = ImeTracker.forLogging().onRequestHide(
-                null /* component */, Process.myUid(),
-                ImeTracker.ORIGIN_CLIENT_HIDE_SOFT_INPUT, reason);
+                null /* component */, Process.myUid(), ImeTracker.ORIGIN_CLIENT_HIDE_SOFT_INPUT,
+                reason, ImeTracker.isFromUser(initialServedView));
         ImeTracker.forLatency().onRequestHide(statsToken, ImeTracker.ORIGIN_CLIENT_HIDE_SOFT_INPUT,
                 reason, ActivityThread::currentApplication);
         ImeTracing.getInstance().triggerClientDump("InputMethodManager#hideSoftInputFromWindow",
                 this, null /* icProto */);
         checkFocus();
         synchronized (mH) {
+            // Get served view again in case it changed between the synchronized blocks.
             final View servedView = getServedViewLocked();
             if (servedView == null || servedView.getWindowToken() != windowToken) {
                 ImeTracker.forLogging().onFailed(statsToken, ImeTracker.PHASE_CLIENT_VIEW_SERVED);
@@ -2341,8 +2479,8 @@ public final class InputMethodManager {
 
         final var reason = SoftInputShowHideReason.HIDE_SOFT_INPUT_FROM_VIEW;
         final ImeTracker.Token statsToken = ImeTracker.forLogging().onRequestHide(
-                null /* component */, Process.myUid(),
-                ImeTracker.ORIGIN_CLIENT_HIDE_SOFT_INPUT, reason);
+                null /* component */, Process.myUid(), ImeTracker.ORIGIN_CLIENT_HIDE_SOFT_INPUT,
+                reason, ImeTracker.isFromUser(view));
         ImeTracker.forLatency().onRequestHide(statsToken, ImeTracker.ORIGIN_CLIENT_HIDE_SOFT_INPUT,
                 reason, ActivityThread::currentApplication);
         ImeTracing.getInstance().triggerClientDump("InputMethodManager#hideSoftInputFromView",
@@ -2387,16 +2525,46 @@ public final class InputMethodManager {
                 view, /* delegatorPackageName= */ null, /* handwritingDelegateFlags= */ 0);
     }
 
+    private void startStylusHandwritingInternalAsync(
+            @NonNull View view, @Nullable String delegatorPackageName,
+            @HandwritingDelegateFlags int handwritingDelegateFlags,
+            @NonNull @CallbackExecutor Executor executor, @NonNull Consumer<Boolean> callback) {
+        Objects.requireNonNull(view);
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+
+        startStylusHandwritingInternal(
+                view, delegatorPackageName, handwritingDelegateFlags, executor, callback);
+    }
+
+    private void sendFailureCallback(@NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<Boolean> callback) {
+        if (executor == null || callback == null) {
+            return;
+        }
+        executor.execute(() -> callback.accept(false));
+    }
+
     private boolean startStylusHandwritingInternal(
             @NonNull View view, @Nullable String delegatorPackageName,
             @HandwritingDelegateFlags int handwritingDelegateFlags) {
+        return startStylusHandwritingInternal(
+                view, delegatorPackageName, handwritingDelegateFlags,
+                null /* executor */, null /* callback */);
+    }
+
+    private boolean startStylusHandwritingInternal(
+            @NonNull View view, @Nullable String delegatorPackageName,
+            @HandwritingDelegateFlags int handwritingDelegateFlags, Executor executor,
+            Consumer<Boolean> callback) {
         Objects.requireNonNull(view);
+        boolean useCallback = callback != null;
 
         // Re-dispatch if there is a context mismatch.
         final InputMethodManager fallbackImm = getFallbackInputMethodManagerIfNecessary(view);
         if (fallbackImm != null) {
             fallbackImm.startStylusHandwritingInternal(
-                    view, delegatorPackageName, handwritingDelegateFlags);
+                    view, delegatorPackageName, handwritingDelegateFlags, executor, callback);
         }
 
         boolean useDelegation = !TextUtils.isEmpty(delegatorPackageName);
@@ -2406,21 +2574,161 @@ public final class InputMethodManager {
             if (!hasServedByInputMethodLocked(view)) {
                 Log.w(TAG,
                         "Ignoring startStylusHandwriting as view=" + view + " is not served.");
+                sendFailureCallback(executor, callback);
                 return false;
             }
             if (view.getViewRootImpl() != mCurRootView) {
                 Log.w(TAG,
                         "Ignoring startStylusHandwriting: View's window does not have focus.");
+                sendFailureCallback(executor, callback);
                 return false;
             }
             if (useDelegation) {
-                return IInputMethodManagerGlobalInvoker.acceptStylusHandwritingDelegation(
-                        mClient, UserHandle.myUserId(), view.getContext().getOpPackageName(),
-                        delegatorPackageName, handwritingDelegateFlags);
+                if (useCallback) {
+                    IBooleanListener listener = new IBooleanListener.Stub() {
+                        @Override
+                        public void onResult(boolean value) {
+                            executor.execute(() -> {
+                                callback.accept(value);
+                            });
+                        }
+                    };
+                    if (!IInputMethodManagerGlobalInvoker.acceptStylusHandwritingDelegationAsync(
+                            mClient, UserHandle.myUserId(), view.getContext().getOpPackageName(),
+                            delegatorPackageName, handwritingDelegateFlags, listener)) {
+                        sendFailureCallback(executor, callback);
+                    }
+                    return true;
+                } else {
+                    return IInputMethodManagerGlobalInvoker.acceptStylusHandwritingDelegation(
+                            mClient, UserHandle.myUserId(), view.getContext().getOpPackageName(),
+                            delegatorPackageName, handwritingDelegateFlags);
+                }
             } else {
                 IInputMethodManagerGlobalInvoker.startStylusHandwriting(mClient);
+                return false;
             }
-            return false;
+        }
+    }
+
+    /**
+     * Starts a connectionless stylus handwriting session. A connectionless session differs from a
+     * regular stylus handwriting session in that the IME does not use an input connection to
+     * communicate with a text editor. Instead, the IME directly returns recognised handwritten text
+     * via a callback.
+     *
+     * <p>The {code cursorAnchorInfo} may be used by the IME to improve the handwriting recognition
+     * accuracy and user experience of the handwriting session. Usually connectionless handwriting
+     * is used for a view which appears like a text editor but does not really support text editing.
+     * For best results, the {code cursorAnchorInfo} should be populated as it would be for a real
+     * text editor (for example, the insertion marker location can be set to where the user would
+     * expect it to be, even if there is no visible cursor).
+     *
+     * @param view the view receiving stylus events
+     * @param cursorAnchorInfo positional information about the view receiving stylus events
+     * @param callbackExecutor the executor to run the callback on
+     * @param callback the callback to receive the result
+     */
+    @FlaggedApi(Flags.FLAG_CONNECTIONLESS_HANDWRITING)
+    public void startConnectionlessStylusHandwriting(@NonNull View view,
+            @Nullable CursorAnchorInfo cursorAnchorInfo,
+            @NonNull @CallbackExecutor Executor callbackExecutor,
+            @NonNull ConnectionlessHandwritingCallback callback) {
+        startConnectionlessStylusHandwritingInternal(
+                view, cursorAnchorInfo, null, null, callbackExecutor, callback);
+    }
+
+    /**
+     * Starts a connectionless stylus handwriting session (see {@link
+     * #startConnectionlessStylusHandwriting}) and additionally enables the recognised handwritten
+     * text to be later committed to a text editor using {@link
+     * #acceptStylusHandwritingDelegation(View)}.
+     *
+     * <p>After a connectionless session started using this method completes successfully, a text
+     * editor view, called the delegate view, may call {@link
+     * #acceptStylusHandwritingDelegation(View)} which will request the IME to commit the recognised
+     * handwritten text from the connectionless session to the delegate view.
+     *
+     * <p>The delegate view must belong to the same package as the delegator view for the delegation
+     * to succeed. If the delegate view belongs to a different package, use {@link
+     * #startConnectionlessStylusHandwritingForDelegation(View, CursorAnchorInfo, String, Executor,
+     * ConnectionlessHandwritingCallback)} instead.
+     *
+     * @param delegatorView the view receiving stylus events
+     * @param cursorAnchorInfo positional information about the view receiving stylus events
+     * @param callbackExecutor the executor to run the callback on
+     * @param callback the callback to receive the result
+     */
+    @FlaggedApi(Flags.FLAG_CONNECTIONLESS_HANDWRITING)
+    public void startConnectionlessStylusHandwritingForDelegation(@NonNull View delegatorView,
+            @Nullable CursorAnchorInfo cursorAnchorInfo,
+            @NonNull @CallbackExecutor Executor callbackExecutor,
+            @NonNull ConnectionlessHandwritingCallback callback) {
+        String delegatorPackageName = delegatorView.getContext().getOpPackageName();
+        startConnectionlessStylusHandwritingInternal(delegatorView, cursorAnchorInfo,
+                delegatorPackageName, delegatorPackageName, callbackExecutor, callback);
+    }
+
+    /**
+     * Starts a connectionless stylus handwriting session (see {@link
+     * #startConnectionlessStylusHandwriting}) and additionally enables the recognised handwritten
+     * text to be later committed to a text editor using {@link
+     * #acceptStylusHandwritingDelegation(View, String)}.
+     *
+     * <p>After a connectionless session started using this method completes successfully, a text
+     * editor view, called the delegate view, may call {@link
+     * #acceptStylusHandwritingDelegation(View, String)} which will request the IME to commit the
+     * recognised handwritten text from the connectionless session to the delegate view.
+     *
+     * <p>The delegate view must belong to {@code delegatePackageName} for the delegation to
+     * succeed.
+     *
+     * @param delegatorView the view receiving stylus events
+     * @param cursorAnchorInfo positional information about the view receiving stylus events
+     * @param delegatePackageName name of the package containing the delegate view which will accept
+     *     the delegation
+     * @param callbackExecutor the executor to run the callback on
+     * @param callback the callback to receive the result
+     */
+    @FlaggedApi(Flags.FLAG_CONNECTIONLESS_HANDWRITING)
+    public void startConnectionlessStylusHandwritingForDelegation(@NonNull View delegatorView,
+            @Nullable CursorAnchorInfo cursorAnchorInfo,
+            @NonNull String delegatePackageName,
+            @NonNull @CallbackExecutor Executor callbackExecutor,
+            @NonNull ConnectionlessHandwritingCallback callback) {
+        Objects.requireNonNull(delegatePackageName);
+        String delegatorPackageName = delegatorView.getContext().getOpPackageName();
+        startConnectionlessStylusHandwritingInternal(delegatorView, cursorAnchorInfo,
+                delegatorPackageName, delegatePackageName, callbackExecutor, callback);
+    }
+
+    private void startConnectionlessStylusHandwritingInternal(@NonNull View view,
+            @Nullable CursorAnchorInfo cursorAnchorInfo,
+            @Nullable String delegatorPackageName,
+            @Nullable String delegatePackageName,
+            @NonNull @CallbackExecutor Executor callbackExecutor,
+            @NonNull ConnectionlessHandwritingCallback callback) {
+        Objects.requireNonNull(view);
+        Objects.requireNonNull(callbackExecutor);
+        Objects.requireNonNull(callback);
+        // Re-dispatch if there is a context mismatch.
+        final InputMethodManager fallbackImm = getFallbackInputMethodManagerIfNecessary(view);
+        if (fallbackImm != null) {
+            fallbackImm.startConnectionlessStylusHandwritingInternal(view, cursorAnchorInfo,
+                    delegatorPackageName, delegatePackageName, callbackExecutor, callback);
+        }
+
+        checkFocus();
+        synchronized (mH) {
+            if (view.getViewRootImpl() != mCurRootView) {
+                Log.w(TAG, "Ignoring startConnectionlessStylusHandwriting: "
+                        + "View's window does not have focus.");
+                return;
+            }
+            IInputMethodManagerGlobalInvoker.startConnectionlessStylusHandwriting(
+                    mClient, UserHandle.myUserId(), cursorAnchorInfo,
+                    delegatePackageName, delegatorPackageName,
+                    new ConnectionlessHandwritingCallbackProxy(callbackExecutor, callback));
         }
     }
 
@@ -2503,12 +2811,18 @@ public final class InputMethodManager {
      * {@link #acceptStylusHandwritingDelegation(View, String)} instead.</p>
      *
      * @param delegateView delegate view capable of receiving input via {@link InputConnection}
-     *  on which {@link #startStylusHandwriting(View)} will be called.
      * @return {@code true} if view belongs to same application package as used in
-     *  {@link #prepareStylusHandwritingDelegation(View)} and handwriting session can start.
-     * @see #acceptStylusHandwritingDelegation(View, String)
+     *  {@link #prepareStylusHandwritingDelegation(View)} and delegation is accepted
      * @see #prepareStylusHandwritingDelegation(View)
+     * @see #acceptStylusHandwritingDelegation(View, String)
      */
+    // TODO(b/300979854): Once connectionless APIs are finalised, update documentation to add:
+    // <p>Otherwise, if the delegator view previously started delegation using {@link
+    // #startConnectionlessStylusHandwritingForDelegation(View, ResultReceiver, CursorAnchorInfo)},
+    // requests the IME to commit the recognised handwritten text from the connectionless session to
+    // the delegate view.
+    // @see #startConnectionlessStylusHandwritingForDelegation(View, ResultReceiver,
+    //     CursorAnchorInfo)
     public boolean acceptStylusHandwritingDelegation(@NonNull View delegateView) {
         return startStylusHandwritingInternal(
                 delegateView, delegateView.getContext().getOpPackageName(),
@@ -2525,18 +2839,55 @@ public final class InputMethodManager {
      * {@link #acceptStylusHandwritingDelegation(View)} instead.</p>
      *
      * @param delegateView delegate view capable of receiving input via {@link InputConnection}
-     *  on which {@link #startStylusHandwriting(View)} will be called.
      * @param delegatorPackageName package name of the delegator that handled initial stylus stroke.
-     * @return {@code true} if view belongs to allowed delegate package declared in
-     *  {@link #prepareStylusHandwritingDelegation(View, String)} and handwriting session can start.
+     * @return {@code true} if view belongs to allowed delegate package declared in {@link
+     *     #prepareStylusHandwritingDelegation(View, String)} and delegation is accepted
      * @see #prepareStylusHandwritingDelegation(View, String)
      * @see #acceptStylusHandwritingDelegation(View)
+     * TODO (b/293640003): deprecate this method once flag is enabled.
      */
+    // TODO(b/300979854): Once connectionless APIs are finalised, update documentation to add:
+    // <p>Otherwise, if the delegator view previously started delegation using {@link
+    // #startConnectionlessStylusHandwritingForDelegation(View, ResultReceiver, CursorAnchorInfo,
+    // String)}, requests the IME to commit the recognised handwritten text from the connectionless
+    // session to the delegate view.
+    // @see #startConnectionlessStylusHandwritingForDelegation(View, ResultReceiver,
+    //     CursorAnchorInfo, String)
     public boolean acceptStylusHandwritingDelegation(
             @NonNull View delegateView, @NonNull String delegatorPackageName) {
         Objects.requireNonNull(delegatorPackageName);
         return startStylusHandwritingInternal(
                 delegateView, delegatorPackageName, delegateView.getHandwritingDelegateFlags());
+    }
+
+    /**
+     * Accepts and starts a stylus handwriting session on the delegate view, if handwriting
+     * initiation delegation was previously requested using
+     * {@link #prepareStylusHandwritingDelegation(View, String)} from the delegator and the view
+     * belongs to a specified delegate package.
+     *
+     * @param delegateView delegate view capable of receiving input via {@link InputConnection}
+     *  on which {@link #startStylusHandwriting(View)} will be called.
+     * @param delegatorPackageName package name of the delegator that handled initial stylus stroke.
+     * @param executor The executor to run the callback on.
+     * @param callback Consumer callback that provides {@code true} if view belongs to allowed
+     *                delegate package declared in
+     *                {@link #prepareStylusHandwritingDelegation(View, String)} and handwriting
+     *                session can start.
+     * @see #prepareStylusHandwritingDelegation(View, String)
+     * @see #acceptStylusHandwritingDelegation(View)
+     */
+    @FlaggedApi(Flags.FLAG_USE_ZERO_JANK_PROXY)
+    public void acceptStylusHandwritingDelegation(
+            @NonNull View delegateView, @NonNull String delegatorPackageName,
+            @NonNull @CallbackExecutor Executor executor, @NonNull Consumer<Boolean> callback) {
+        Objects.requireNonNull(delegatorPackageName);
+        int flags = 0;
+        if (Flags.homeScreenHandwritingDelegator()) {
+            flags = delegateView.getHandwritingDelegateFlags();
+        }
+        startStylusHandwritingInternalAsync(
+                delegateView, delegatorPackageName, flags, executor, callback);
     }
 
     /**
@@ -2548,15 +2899,21 @@ public final class InputMethodManager {
      * <p>Note: If delegator and delegate are in the same application package, use {@link
      * #acceptStylusHandwritingDelegation(View)} instead.
      *
-     * @param delegateView delegate view capable of receiving input via {@link InputConnection} on
-     *     which {@link #startStylusHandwriting(View)} will be called.
+     * @param delegateView delegate view capable of receiving input via {@link InputConnection}
      * @param delegatorPackageName package name of the delegator that handled initial stylus stroke.
      * @param flags {@link #HANDWRITING_DELEGATE_FLAG_HOME_DELEGATOR_ALLOWED} or {@code 0}
      * @return {@code true} if view belongs to allowed delegate package declared in {@link
-     *     #prepareStylusHandwritingDelegation(View, String)} and handwriting session can start.
+     *     #prepareStylusHandwritingDelegation(View, String)} and delegation is accepted
      * @see #prepareStylusHandwritingDelegation(View, String)
      * @see #acceptStylusHandwritingDelegation(View)
      */
+    // TODO(b/300979854): Once connectionless APIs are finalised, update documentation to add:
+    // <p>Otherwise, if the delegator view previously started delegation using {@link
+    // #startConnectionlessStylusHandwritingForDelegation(View, ResultReceiver, CursorAnchorInfo,
+    // String)}, requests the IME to commit the recognised handwritten text from the connectionless
+    // session to the delegate view.
+    // @see #startConnectionlessStylusHandwritingForDelegation(View, ResultReceiver,
+    //     CursorAnchorInfo, String)
     @FlaggedApi(FLAG_HOME_SCREEN_HANDWRITING_DELEGATOR)
     public boolean acceptStylusHandwritingDelegation(
             @NonNull View delegateView, @NonNull String delegatorPackageName,
@@ -2888,14 +3245,52 @@ public final class InputMethodManager {
             final int targetUserId = editorInfo.targetInputMethodUser != null
                     ? editorInfo.targetInputMethodUser.getIdentifier() : UserHandle.myUserId();
             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "IMM.startInputOrWindowGainedFocus");
-            res = IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocus(
-                    startInputReason, mClient, windowGainingFocus, startInputFlags,
-                    softInputMode, windowFlags, editorInfo, servedInputConnection,
-                    servedInputConnection == null ? null
-                            : servedInputConnection.asIRemoteAccessibilityInputConnection(),
-                    view.getContext().getApplicationInfo().targetSdkVersion, targetUserId,
-                    mImeDispatcher);
+
+            int startInputSeq = -1;
+            if (Flags.useZeroJankProxy()) {
+                // async result delivered via MSG_START_INPUT_RESULT.
+                startInputSeq = IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocusAsync(
+                        startInputReason, mClient, windowGainingFocus, startInputFlags,
+                        softInputMode, windowFlags, editorInfo, servedInputConnection,
+                        servedInputConnection == null ? null
+                                : servedInputConnection.asIRemoteAccessibilityInputConnection(),
+                        view.getContext().getApplicationInfo().targetSdkVersion, targetUserId,
+                        mImeDispatcher);
+            } else {
+                res = IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocus(
+                        startInputReason, mClient, windowGainingFocus, startInputFlags,
+                        softInputMode, windowFlags, editorInfo, servedInputConnection,
+                        servedInputConnection == null ? null
+                                : servedInputConnection.asIRemoteAccessibilityInputConnection(),
+                        view.getContext().getApplicationInfo().targetSdkVersion, targetUserId,
+                        mImeDispatcher);
+            }
             Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
+            if (Flags.useZeroJankProxy()) {
+                // Create a runnable for delayed notification to the app that the InputConnection is
+                // initialized and ready for use.
+                if (ic != null) {
+                    final int seqId = startInputSeq;
+                    mReportInputConnectionOpenedRunner =
+                            new ReportInputConnectionOpenedRunner(startInputSeq) {
+                                @Override
+                                public void run() {
+                                    if (DEBUG) {
+                                        Log.v(TAG, "Calling View.onInputConnectionOpened: view= "
+                                                + view
+                                                + ", ic=" + ic + ", editorInfo=" + editorInfo
+                                                + ", handler="
+                                                + icHandler + ", startInputSeq=" + seqId);
+                                    }
+                                    reportInputConnectionOpened(ic, editorInfo, icHandler, view);
+                                }
+                            };
+                } else {
+                    mReportInputConnectionOpenedRunner = null;
+                }
+                return true;
+            }
+
             if (DEBUG) Log.v(TAG, "Starting input: Bind result=" + res);
             if (res == null) {
                 Log.wtf(TAG, "startInputOrWindowGainedFocus must not return"
@@ -2926,9 +3321,14 @@ public final class InputMethodManager {
             } else if (res.channel != null && res.channel != mCurChannel) {
                 res.channel.dispose();
             }
+
             switch (res.result) {
                 case InputBindResult.ResultCode.ERROR_NOT_IME_TARGET_WINDOW:
                     mRestartOnNextWindowFocus = true;
+                    if (initiationWithoutInputConnection()) {
+                        mServedView.getViewRootImpl().getHandwritingInitiator().clearFocusedView(
+                                mServedView);
+                    }
                     mServedView = null;
                     break;
             }
@@ -3091,6 +3491,11 @@ public final class InputMethodManager {
             return false;
         }
         mServedView = mNextServedView;
+        if (initiationWithoutInputConnection() && mServedView.onCheckIsTextEditor()
+                && mServedView.isHandwritingDelegate()) {
+            mServedView.getViewRootImpl().getHandwritingInitiator().onDelegateViewFocused(
+                    mServedView);
+        }
         if (mServedInputConnection != null) {
             mServedInputConnection.finishComposingTextFromImm();
         }
@@ -4296,6 +4701,73 @@ public final class InputMethodManager {
      */
     public interface FinishedInputEventCallback {
         public void onFinishedInputEvent(Object token, boolean handled);
+    }
+
+    private static class ConnectionlessHandwritingCallbackProxy
+            extends IConnectionlessHandwritingCallback.Stub {
+        private final Object mLock = new Object();
+
+        @Nullable
+        @GuardedBy("mLock")
+        private Executor mExecutor;
+
+        @Nullable
+        @GuardedBy("mLock")
+        private ConnectionlessHandwritingCallback mCallback;
+
+        ConnectionlessHandwritingCallbackProxy(
+                @NonNull Executor executor, @NonNull ConnectionlessHandwritingCallback callback) {
+            mExecutor = executor;
+            mCallback = callback;
+        }
+
+        @Override
+        public void onResult(CharSequence text) {
+            Executor executor;
+            ConnectionlessHandwritingCallback callback;
+            synchronized (mLock) {
+                if (mExecutor == null || mCallback == null) {
+                    return;
+                }
+                executor = mExecutor;
+                callback = mCallback;
+                mExecutor = null;
+                mCallback = null;
+            }
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                if (TextUtils.isEmpty(text)) {
+                    executor.execute(() -> callback.onError(
+                            ConnectionlessHandwritingCallback
+                                    .CONNECTIONLESS_HANDWRITING_ERROR_NO_TEXT_RECOGNIZED));
+                } else {
+                    executor.execute(() -> callback.onResult(text));
+                }
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        }
+
+        @Override
+        public void onError(int errorCode) {
+            Executor executor;
+            ConnectionlessHandwritingCallback callback;
+            synchronized (mLock) {
+                if (mExecutor == null || mCallback == null) {
+                    return;
+                }
+                executor = mExecutor;
+                callback = mCallback;
+                mExecutor = null;
+                mCallback = null;
+            }
+            final long identity = Binder.clearCallingIdentity();
+            try {
+                executor.execute(() -> callback.onError(errorCode));
+            } finally {
+                Binder.restoreCallingIdentity(identity);
+            }
+        }
     }
 
     private final class ImeInputEventSender extends InputEventSender {

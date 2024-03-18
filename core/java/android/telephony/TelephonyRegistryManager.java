@@ -19,12 +19,15 @@ import android.annotation.CallbackExecutor;
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.RequiresFeature;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
+import android.annotation.SystemService;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.RemoteException;
@@ -38,6 +41,7 @@ import android.telephony.Annotation.PreciseDisconnectCauses;
 import android.telephony.Annotation.RadioPowerState;
 import android.telephony.Annotation.SimActivationState;
 import android.telephony.Annotation.SrvccState;
+import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager.CarrierPrivilegesCallback;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.ImsCallSession;
@@ -72,9 +76,15 @@ import java.util.stream.Collectors;
  * Limit API access to only carrier apps with certain permissions or apps running on
  * privileged UID.
  *
+ * TelephonyRegistryManager is intended for use on devices that implement
+ * {@link android.content.pm.PackageManager#FEATURE_TELEPHONY FEATURE_TELEPHONY}. On devices
+ * that do not implement this feature, the behavior is not reliable.
+ *
  * @hide
  */
 @SystemApi
+@SystemService(Context.TELEPHONY_REGISTRY_SERVICE)
+@RequiresFeature(PackageManager.FEATURE_TELEPHONY)
 @FlaggedApi(Flags.FLAG_TELECOM_RESOLVE_HIDDEN_DEPENDENCIES)
 public class TelephonyRegistryManager {
 
@@ -116,14 +126,15 @@ public class TelephonyRegistryManager {
     }
 
     /**
-     * Register for changes to the list of active {@link SubscriptionInfo} records or to the
-     * individual records themselves. When a change occurs the onSubscriptionsChanged method of
-     * the listener will be invoked immediately if there has been a notification. The
-     * onSubscriptionChanged method will also be triggered once initially when calling this
-     * function.
+     * Register for changes to the list of {@link SubscriptionInfo} records or to the
+     * individual records (active or inactive) themselves. When a change occurs, the
+     * {@link OnSubscriptionsChangedListener#onSubscriptionsChanged()} method of
+     * the listener will be invoked immediately. The
+     * {@link OnSubscriptionsChangedListener#onSubscriptionsChanged()} method will also be invoked
+     * once initially when calling this method.
      *
-     * @param listener an instance of {@link SubscriptionManager.OnSubscriptionsChangedListener}
-     *                 with onSubscriptionsChanged overridden.
+     * @param listener an instance of {@link OnSubscriptionsChangedListener} with
+     * {@link OnSubscriptionsChangedListener#onSubscriptionsChanged()} overridden.
      * @param executor the executor that will execute callbacks.
      * @hide
      */
@@ -387,10 +398,11 @@ public class TelephonyRegistryManager {
     }
 
     /**
-     * Notify call state changed on all subscriptions.
+     * Notify call state changed on all subscriptions, excluding over-the-top VOIP calls (otherwise
+     * known as self-managed calls in the Android Platform).
      *
      * @param state latest call state. e.g, offhook, ringing
-     * @param incomingNumber incoming phone number.
+     * @param incomingNumber incoming phone number or null in the case for OTT VOIP calls
      * @hide
      */
     @SystemApi
@@ -625,17 +637,20 @@ public class TelephonyRegistryManager {
     }
 
     /**
-     * Notify outgoing emergency call.
+     * Notify outgoing emergency call to all applications that have registered a listener
+     * ({@link PhoneStateListener}) or a callback ({@link TelephonyCallback}) to monitor changes in
+     * telephony states.
      * @param simSlotIndex Sender phone ID.
-     * @param subId Sender subscription ID.
+     * @param subscriptionId Sender subscription ID.
      * @param emergencyNumber Emergency number.
      * @hide
      */
     @SystemApi
-    public void notifyOutgoingEmergencyCall(int simSlotIndex, int subId,
+    @RequiresPermission(android.Manifest.permission.MODIFY_PHONE_STATE)
+    public void notifyOutgoingEmergencyCall(int simSlotIndex, int subscriptionId,
             @NonNull EmergencyNumber emergencyNumber) {
         try {
-            sRegistry.notifyOutgoingEmergencyCall(simSlotIndex, subId, emergencyNumber);
+            sRegistry.notifyOutgoingEmergencyCall(simSlotIndex, subscriptionId, emergencyNumber);
         } catch (RemoteException ex) {
             // system process is dead
             throw ex.rethrowFromSystemServer();

@@ -57,6 +57,7 @@ import android.view.KeyEvent;
 import android.view.WindowInsets.Type.InsetsType;
 import android.view.WindowInsetsController.Appearance;
 import android.view.WindowInsetsController.Behavior;
+import android.view.accessibility.Flags;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
@@ -177,6 +178,7 @@ public class CommandQueue extends IStatusBar.Stub implements
     private static final int MSG_CONFIRM_IMMERSIVE_PROMPT = 77 << MSG_SHIFT;
     private static final int MSG_IMMERSIVE_CHANGED = 78 << MSG_SHIFT;
     private static final int MSG_SET_QS_TILES = 79 << MSG_SHIFT;
+    private static final int MSG_ENTER_DESKTOP = 80 << MSG_SHIFT;
     // Device Integration: new case to handler disable message from VirtualDisplay
     private static final int MSG_DISABLE_VD = 100 << MSG_SHIFT;
     public static final int FLAG_EXCLUDE_NONE = 0;
@@ -308,6 +310,13 @@ public class CommandQueue extends IStatusBar.Stub implements
         default void setTopAppHidesStatusBar(boolean topAppHidesStatusBar) { }
 
         default void addQsTile(ComponentName tile) { }
+
+        /**
+         * Add a tile to the Quick Settings Panel
+         * @param tile the ComponentName of the {@link android.service.quicksettings.TileService}
+         * @param end if true, the tile will be added at the end. If false, at the beginning.
+         */
+        default void addQsTileToFrontOrEnd(ComponentName tile, boolean end) { }
         default void remQsTile(ComponentName tile) { }
 
         default void setQsTiles(String[] tiles) {}
@@ -515,6 +524,11 @@ public class CommandQueue extends IStatusBar.Stub implements
          * @see IStatusBar#immersiveModeChanged
          */
         default void immersiveModeChanged(int rootDisplayAreaId, boolean isImmersiveMode) {}
+
+        /**
+         * @see IStatusBar#enterDesktop(int)
+         */
+        default void enterDesktop(int displayId) {}
     }
 
     @VisibleForTesting
@@ -610,15 +624,7 @@ public class CommandQueue extends IStatusBar.Stub implements
             args.argi2 = state1;
             args.argi3 = state2;
             args.argi4 = animate ? 1 : 0;
-            Message msg = mHandler.obtainMessage(msgType, args);
-
-            if (Looper.myLooper() == mHandler.getLooper()) {
-                // If its the right looper execute immediately so hides can be handled quickly.
-                mHandler.handleMessage(msg);
-                msg.recycle();
-            } else {
-                msg.sendToTarget();
-            }
+            mHandler.obtainMessage(msgType, args).sendToTarget();
         }
     }
 
@@ -914,8 +920,29 @@ public class CommandQueue extends IStatusBar.Stub implements
 
     @Override
     public void addQsTile(ComponentName tile) {
-        synchronized (mLock) {
-            mHandler.obtainMessage(MSG_ADD_QS_TILE, tile).sendToTarget();
+        if (Flags.a11yQsShortcut()) {
+            addQsTileToFrontOrEnd(tile, false);
+        } else {
+            synchronized (mLock) {
+                mHandler.obtainMessage(MSG_ADD_QS_TILE, tile).sendToTarget();
+            }
+        }
+    }
+
+    /**
+     * Add a tile to the Quick Settings Panel
+     * @param tile the ComponentName of the {@link android.service.quicksettings.TileService}
+     * @param end if true, the tile will be added at the end. If false, at the beginning.
+     */
+    @Override
+    public void addQsTileToFrontOrEnd(ComponentName tile, boolean end) {
+        if (Flags.a11yQsShortcut()) {
+            synchronized (mLock) {
+                SomeArgs args = SomeArgs.obtain();
+                args.arg1 = tile;
+                args.arg2 = end;
+                mHandler.obtainMessage(MSG_ADD_QS_TILE, args).sendToTarget();
+            }
         }
     }
 
@@ -1401,6 +1428,13 @@ public class CommandQueue extends IStatusBar.Stub implements
         mHandler.obtainMessage(MSG_GO_TO_FULLSCREEN_FROM_SPLIT).sendToTarget();
     }
 
+    @Override
+    public void enterDesktop(int displayId) {
+        SomeArgs args = SomeArgs.obtain();
+        args.arg1 = displayId;
+        mHandler.obtainMessage(MSG_ENTER_DESKTOP, args).sendToTarget();
+    }
+
     private final class H extends Handler {
         private H(Looper l) {
             super(l);
@@ -1557,11 +1591,21 @@ public class CommandQueue extends IStatusBar.Stub implements
                         mCallbacks.get(i).showPictureInPictureMenu();
                     }
                     break;
-                case MSG_ADD_QS_TILE:
-                    for (int i = 0; i < mCallbacks.size(); i++) {
-                        mCallbacks.get(i).addQsTile((ComponentName) msg.obj);
+                case MSG_ADD_QS_TILE: {
+                    if (Flags.a11yQsShortcut()) {
+                        SomeArgs someArgs = (SomeArgs) msg.obj;
+                        for (int i = 0; i < mCallbacks.size(); i++) {
+                            mCallbacks.get(i).addQsTileToFrontOrEnd(
+                                    (ComponentName) someArgs.arg1, (boolean) someArgs.arg2);
+                        }
+                        someArgs.recycle();
+                    } else {
+                        for (int i = 0; i < mCallbacks.size(); i++) {
+                            mCallbacks.get(i).addQsTile((ComponentName) msg.obj);
+                        }
                     }
                     break;
+                }
                 case MSG_REMOVE_QS_TILE:
                     for (int i = 0; i < mCallbacks.size(); i++) {
                         mCallbacks.get(i).remQsTile((ComponentName) msg.obj);
@@ -1884,6 +1928,13 @@ public class CommandQueue extends IStatusBar.Stub implements
                     boolean isImmersiveMode = args.argi2 != 0;
                     for (int i = 0; i < mCallbacks.size(); i++) {
                         mCallbacks.get(i).immersiveModeChanged(rootDisplayAreaId, isImmersiveMode);
+                    }
+                    break;
+                case MSG_ENTER_DESKTOP:
+                    args = (SomeArgs) msg.obj;
+                    int displayId = args.argi1;
+                    for (int i = 0; i < mCallbacks.size(); i++) {
+                        mCallbacks.get(i).enterDesktop(displayId);
                     }
                     break;
             }

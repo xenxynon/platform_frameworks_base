@@ -151,8 +151,17 @@ oneway interface IStatusBar
      * @param hidesStatusBar whether it is being hidden
      */
     void setTopAppHidesStatusBar(boolean hidesStatusBar);
-
+    /**
+     * Add a tile to the Quick Settings Panel to the first item in the QS Panel
+     * @param tile the ComponentName of the {@link android.service.quicksettings.TileService}
+     */
     void addQsTile(in ComponentName tile);
+    /**
+     * Add a tile to the Quick Settings Panel
+     * @param tile the ComponentName of the {@link android.service.quicksettings.TileService}
+     * @param end if true, the tile will be added at the end. If false, at the beginning.
+     */
+    void addQsTileToFrontOrEnd(in ComponentName tile, boolean end);
     void remQsTile(in ComponentName tile);
     void setQsTiles(in String[] tiles);
     void clickQsTile(in ComponentName tile);
@@ -367,4 +376,10 @@ oneway interface IStatusBar
      * @param packageName of the session for which the output switcher is shown.
      */
     void showMediaOutputSwitcher(String packageName);
+
+    /** Enters desktop mode.
+    *
+    * @param displayId the id of the current display.
+    */
+    void enterDesktop(int displayId);
 }

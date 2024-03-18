@@ -350,7 +350,7 @@ public final class ProcessList {
     // LMK_PROCKILL
     // LMK_UPDATE_PROPS
     // LMK_KILL_OCCURRED
-    // LMK_STATE_CHANGED
+    // LMK_START_MONITORING
     static final byte LMK_TARGET = 0;
     static final byte LMK_PROCPRIO = 1;
     static final byte LMK_PROCREMOVE = 2;
@@ -360,7 +360,6 @@ public final class ProcessList {
     static final byte LMK_PROCKILL = 6; // Note: this is an unsolicited command
     static final byte LMK_UPDATE_PROPS = 7;
     static final byte LMK_KILL_OCCURRED = 8; // Msg to subscribed clients on kill occurred event
-    static final byte LMK_STATE_CHANGED = 9; // Msg to subscribed clients on state changed
     static final byte LMK_START_MONITORING = 9; // Start monitoring if delayed earlier
 
     // Low Memory Killer Daemon command codes.
@@ -371,6 +370,12 @@ public final class ProcessList {
 
     // lmkd reconnect delay in msecs
     private static final long LMKD_RECONNECT_DELAY_MS = 1000;
+
+    /**
+     * The cuttoff adj for the freezer, app processes with adj greater than this value will be
+     * eligible for the freezer.
+     */
+    static final int FREEZER_CUTOFF_ADJ = CACHED_APP_MIN_ADJ;
 
     /**
      * Apps have no access to the private data directories of any other app, even if the other
@@ -965,14 +970,6 @@ public final class ProcessList {
                                         LmkdStatsReporter.logKillOccurred(inputData,
                                                 foregroundServices.first,
                                                 foregroundServices.second);
-                                        return true;
-                                    case LMK_STATE_CHANGED:
-                                        if (receivedLen
-                                                != LmkdStatsReporter.STATE_CHANGED_MSG_SIZE) {
-                                            return false;
-                                        }
-                                        final int state = inputData.readInt();
-                                        LmkdStatsReporter.logStateChanged(state);
                                         return true;
                                     default:
                                         return false;
@@ -1951,7 +1948,8 @@ public final class ProcessList {
                 mService.mNativeDebuggingApp = null;
             }
 
-            if (app.info.isEmbeddedDexUsed()) {
+            if (app.info.isEmbeddedDexUsed()
+                    || (app.processInfo != null && app.processInfo.useEmbeddedDex)) {
                 runtimeFlags |= Zygote.ONLY_USE_SYSTEM_OAT_FILES;
             }
 
@@ -2499,7 +2497,7 @@ public final class ProcessList {
                         app.info.dataDir, null, app.info.packageName,
                         /*zygotePolicyFlags=*/ ZYGOTE_POLICY_FLAG_EMPTY, isTopApp,
                         app.getDisabledCompatChanges(), pkgDataInfoMap, allowlistedAppDataInfoMap,
-                        false, false, bindOverrideSysprops,
+                        false, false, false,
                         new String[]{PROC_START_SEQ_IDENT + app.getStartSeq()});
             } else {
                 regularZygote = true;
@@ -2869,6 +2867,7 @@ public final class ProcessList {
                         ? PROC_START_TIMEOUT_WITH_WRAPPER : PROC_START_TIMEOUT);
             }
         }
+        dispatchProcessStarted(app, pid);
         checkSlow(app.getStartTime(), "startProcess: done updating pids map");
         return true;
     }
@@ -4992,6 +4991,10 @@ public final class ProcessList {
             mService.mUiHandler.obtainMessage(DISPATCH_PROCESS_DIED_UI_MSG, pid, uid,
                     null).sendToTarget();
         }
+    }
+
+    void dispatchProcessStarted(ProcessRecord app, int pid) {
+        // TODO(b/323959187) Add the implementation.
     }
 
     void dispatchProcessDied(int pid, int uid) {

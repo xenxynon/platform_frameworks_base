@@ -120,7 +120,6 @@ import android.window.OnBackInvokedDispatcher;
 import android.window.ProxyOnBackInvokedDispatcher;
 
 import com.android.internal.R;
-import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.view.menu.ContextMenuBuilder;
 import com.android.internal.view.menu.IconMenuPresenter;
 import com.android.internal.view.menu.ListMenuPresenter;
@@ -364,13 +363,14 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     private boolean mUseDecorContext = false;
 
+    private boolean mIsFrameRatePowerSavingsBalanced = true;
+
     /** @see ViewRootImpl#mActivityConfigCallback */
     private ActivityConfigCallback mActivityConfigCallback;
 
     boolean mDecorFitsSystemWindows = true;
 
-    @VisibleForTesting
-    public final boolean mEdgeToEdgeEnforced;
+    private boolean mEdgeToEdgeEnforced;
 
     private final ProxyOnBackInvokedDispatcher mProxyOnBackInvokedDispatcher;
 
@@ -390,11 +390,6 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
         mProxyOnBackInvokedDispatcher = new ProxyOnBackInvokedDispatcher(context);
         mAllowFloatingWindowsFillScreen = context.getResources().getBoolean(
                 com.android.internal.R.bool.config_allowFloatingWindowsFillScreen);
-        mEdgeToEdgeEnforced = isEdgeToEdgeEnforced(context.getApplicationInfo(), true /* local */);
-        if (mEdgeToEdgeEnforced) {
-            getAttributes().privateFlags |= PRIVATE_FLAG_EDGE_TO_EDGE_ENFORCED;
-            mDecorFitsSystemWindows = false;
-        }
     }
 
     /**
@@ -436,15 +431,18 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
      *
      * @param info The application to query.
      * @param local Whether this is called from the process of the given application.
+     * @param windowStyle The style of the window.
      * @return {@code true} if edge-to-edge is enforced. Otherwise, {@code false}.
      */
-    public static boolean isEdgeToEdgeEnforced(ApplicationInfo info, boolean local) {
-        return info.targetSdkVersion >= ENFORCE_EDGE_TO_EDGE_SDK_VERSION
-                || (Flags.enforceEdgeToEdge() && (local
-                        // Calling this doesn't require a permission.
-                        ? CompatChanges.isChangeEnabled(ENFORCE_EDGE_TO_EDGE)
-                        // Calling this requires permissions.
-                        : info.isChangeEnabled(ENFORCE_EDGE_TO_EDGE)));
+    public static boolean isEdgeToEdgeEnforced(ApplicationInfo info, boolean local,
+            TypedArray windowStyle) {
+        return !windowStyle.getBoolean(R.styleable.Window_windowOptOutEdgeToEdgeEnforcement, false)
+                && (info.targetSdkVersion >= ENFORCE_EDGE_TO_EDGE_SDK_VERSION
+                        || (Flags.enforceEdgeToEdge() && (local
+                                // Calling this doesn't require a permission.
+                                ? CompatChanges.isChangeEnabled(ENFORCE_EDGE_TO_EDGE)
+                                // Calling this requires permissions.
+                                : info.isChangeEnabled(ENFORCE_EDGE_TO_EDGE))));
     }
 
     @Override
@@ -2215,6 +2213,7 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
     void onViewRootImplSet(ViewRootImpl viewRoot) {
         viewRoot.setActivityConfigCallback(mActivityConfigCallback);
         viewRoot.getOnBackInvokedDispatcher().updateContext(getContext());
+        viewRoot.setFrameRatePowerSavingsBalanced(mIsFrameRatePowerSavingsBalanced);
         mProxyOnBackInvokedDispatcher.setActualDispatcher(viewRoot.getOnBackInvokedDispatcher());
         applyDecorFitsSystemWindows();
     }
@@ -2470,6 +2469,13 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             System.out.println(s);
         }
 
+        mEdgeToEdgeEnforced = isEdgeToEdgeEnforced(
+                getContext().getApplicationInfo(), true /* local */, a);
+        if (mEdgeToEdgeEnforced) {
+            getAttributes().privateFlags |= PRIVATE_FLAG_EDGE_TO_EDGE_ENFORCED;
+            mDecorFitsSystemWindows = false;
+        }
+
         mIsFloating = a.getBoolean(R.styleable.Window_windowIsFloating, false);
         int flagsToUpdate = (FLAG_LAYOUT_IN_SCREEN|FLAG_LAYOUT_INSET_DECOR)
                 & (~getForcedWindowFlags());
@@ -2556,6 +2562,10 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
         if (a.getBoolean(R.styleable.Window_windowActivityTransitions, false)) {
             requestFeature(FEATURE_ACTIVITY_TRANSITIONS);
         }
+        if (a.hasValue(R.styleable.Window_windowIsFrameRatePowerSavingsBalanced)) {
+            mIsFrameRatePowerSavingsBalanced =
+                    a.getBoolean(R.styleable.Window_windowIsFrameRatePowerSavingsBalanced, true);
+        }
 
         mIsTranslucent = a.getBoolean(R.styleable.Window_windowIsTranslucent, false);
 
@@ -2583,7 +2593,7 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
             mNavigationBarDividerColor = a.getColor(R.styleable.Window_navigationBarDividerColor,
                     Color.TRANSPARENT);
         }
-        if (!targetPreQ && !mEdgeToEdgeEnforced) {
+        if (!targetPreQ) {
             mEnsureStatusBarContrastWhenTransparent = a.getBoolean(
                     R.styleable.Window_enforceStatusBarContrast, false);
             mEnsureNavigationBarContrastWhenTransparent = a.getBoolean(
@@ -3966,9 +3976,6 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public void setStatusBarContrastEnforced(boolean ensureContrast) {
-        if (mEdgeToEdgeEnforced) {
-            return;
-        }
         mEnsureStatusBarContrastWhenTransparent = ensureContrast;
         if (mDecor != null) {
             mDecor.updateColorViews(null, false /* animate */);
@@ -3982,9 +3989,6 @@ public class PhoneWindow extends Window implements MenuBuilder.Callback {
 
     @Override
     public void setNavigationBarContrastEnforced(boolean enforceContrast) {
-        if (mEdgeToEdgeEnforced) {
-            return;
-        }
         mEnsureNavigationBarContrastWhenTransparent = enforceContrast;
         if (mDecor != null) {
             mDecor.updateColorViews(null, false /* animate */);

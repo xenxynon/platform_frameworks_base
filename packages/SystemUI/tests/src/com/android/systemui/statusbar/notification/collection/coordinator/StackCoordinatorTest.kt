@@ -81,7 +81,7 @@ class StackCoordinatorTest : SysuiTestCase() {
     }
 
     @Test
-    @DisableFlags(NotificationIconContainerRefactor.FLAG_NAME, FooterViewRefactor.FLAG_NAME)
+    @DisableFlags(NotificationIconContainerRefactor.FLAG_NAME)
     fun testUpdateNotificationIcons() {
         afterRenderListListener.onAfterRenderList(listOf(entry), stackController)
         verify(notificationIconAreaController).updateNotificationIcons(eq(listOf(entry)))
@@ -89,12 +89,20 @@ class StackCoordinatorTest : SysuiTestCase() {
 
     @Test
     @EnableFlags(NotificationIconContainerRefactor.FLAG_NAME)
-    fun testSetRenderedListOnInteractor() {
+    fun testSetRenderedListOnInteractor_iconContainerFlagOn() {
         afterRenderListListener.onAfterRenderList(listOf(entry), stackController)
         verify(renderListInteractor).setRenderedList(eq(listOf(entry)))
     }
 
     @Test
+    @EnableFlags(FooterViewRefactor.FLAG_NAME)
+    fun testSetRenderedListOnInteractor_footerFlagOn() {
+        afterRenderListListener.onAfterRenderList(listOf(entry), stackController)
+        verify(renderListInteractor).setRenderedList(eq(listOf(entry)))
+    }
+
+    @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
     fun testSetNotificationStats_clearableAlerting() {
         whenever(section.bucket).thenReturn(BUCKET_ALERTING)
         afterRenderListListener.onAfterRenderList(listOf(entry), stackController)
@@ -102,6 +110,7 @@ class StackCoordinatorTest : SysuiTestCase() {
     }
 
     @Test
+    @DisableFlags(FooterViewRefactor.FLAG_NAME)
     fun testSetNotificationStats_clearableSilent() {
         whenever(section.bucket).thenReturn(BUCKET_SILENT)
         afterRenderListListener.onAfterRenderList(listOf(entry), stackController)

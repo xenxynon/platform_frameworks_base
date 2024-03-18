@@ -29,7 +29,6 @@ import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 
 /**
@@ -79,19 +78,11 @@ constructor(
             startTime = 233.milliseconds,
             duration = 250.milliseconds,
             onStep = { it },
-            onStart = { 0f },
             name = "OCCLUDED->LOCKSCREEN: lockscreenAlpha",
         )
 
     val deviceEntryBackgroundViewAlpha: Flow<Float> =
-        deviceEntryUdfpsInteractor.isUdfpsEnrolledAndEnabled.flatMapLatest {
-            isUdfpsEnrolledAndEnabled ->
-            if (isUdfpsEnrolledAndEnabled) {
-                transitionAnimation.immediatelyTransitionTo(1f)
-            } else {
-                emptyFlow()
-            }
-        }
+        transitionAnimation.immediatelyTransitionTo(1f)
 
     override val deviceEntryParentViewAlpha: Flow<Float> = lockscreenAlpha
 }

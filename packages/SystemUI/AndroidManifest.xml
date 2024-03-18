@@ -262,6 +262,9 @@
 
     <uses-permission android:name="android.permission.MODIFY_THEME_OVERLAY" />
 
+    <!-- Activity Manager -->
+    <uses-permission android:name="android.permission.SET_THEME_OVERLAY_CONTROLLER_READY" />
+
     <!-- accessibility -->
     <uses-permission android:name="android.permission.MODIFY_ACCESSIBILITY_DATA" />
     <uses-permission android:name="android.permission.MANAGE_ACCESSIBILITY" />
@@ -476,6 +479,9 @@
             android:permission="android.permission.LAUNCH_CAPTURE_CONTENT_ACTIVITY_FOR_NOTE" />
 
         <service android:name=".screenrecord.RecordingService"
+                 android:foregroundServiceType="systemExempted"/>
+
+        <service android:name=".recordissue.IssueRecordingService"
                  android:foregroundServiceType="systemExempted"/>
 
         <receiver android:name=".SysuiRestartReceiver"
@@ -902,6 +908,14 @@
                   android:exported="true"
                   />
 
+        <activity
+            android:name=".volume.panel.ui.activity.VolumePanelActivity"
+            android:label="@string/sound_settings"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:theme="@style/Theme.VolumePanelActivity" />
+
         <activity android:name=".wallet.ui.WalletActivity"
                   android:label="@string/wallet_title"
                   android:theme="@style/Wallet.Theme"
@@ -987,7 +1001,6 @@
             android:theme="@style/Theme.EditWidgetsActivity"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
-            android:showOnLockScreen="true"
             android:launchMode="singleTop"
             android:exported="false">
         </activity>
@@ -1079,5 +1092,25 @@
         <!-- Allow SystemUI to listen for the capabilities defined in the linked xml -->
         <property android:name="android.net.PROPERTY_SELF_CERTIFIED_CAPABILITIES"
                   android:value="@xml/self_certified_network_capabilities_both" />
+
+
+        <service
+            android:name="com.android.systemui.dreams.homecontrols.HomeControlsDreamService"
+            android:exported="false"
+            android:enabled="false"
+            android:label="@string/home_controls_dream_label"
+            android:description="@string/home_controls_dream_description"
+            android:permission="android.permission.BIND_DREAM_SERVICE"
+            android:icon="@drawable/controls_icon"
+            >
+
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.dream"
+                android:resource="@xml/home_controls_dream_metadata" />
+        </service>
     </application>
 </manifest>

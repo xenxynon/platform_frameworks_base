@@ -23,8 +23,8 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.sqlite.db.SupportSQLiteDatabase
-import com.android.systemui.communal.data.repository.CommunalWidgetRepositoryModule.Companion.DEFAULT_WIDGETS
-import com.android.systemui.communal.shared.CommunalWidgetHost
+import com.android.systemui.communal.widgets.CommunalWidgetHost
+import com.android.systemui.communal.widgets.CommunalWidgetModule.Companion.DEFAULT_WIDGETS
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.log.LogBuffer
@@ -97,7 +97,7 @@ interface CommunalWidgetDao {
     fun getWidgets(): Flow<Map<CommunalItemRank, CommunalWidgetItem>>
 
     @Query("SELECT * FROM communal_widget_table WHERE widget_id = :id")
-    fun getWidgetByIdNow(id: Int): CommunalWidgetItem
+    fun getWidgetByIdNow(id: Int): CommunalWidgetItem?
 
     @Delete fun deleteWidgets(vararg widgets: CommunalWidgetItem)
 
@@ -120,7 +120,9 @@ interface CommunalWidgetDao {
     fun updateWidgetOrder(widgetIdToPriorityMap: Map<Int, Int>) {
         widgetIdToPriorityMap.forEach { (id, priority) ->
             val widget = getWidgetByIdNow(id)
-            updateItemRank(widget.itemId, priority)
+            if (widget != null) {
+                updateItemRank(widget.itemId, priority)
+            }
         }
     }
 
@@ -134,9 +136,13 @@ interface CommunalWidgetDao {
     }
 
     @Transaction
-    fun deleteWidgetById(widgetId: Int) {
-        val widget = getWidgetByIdNow(widgetId)
+    fun deleteWidgetById(widgetId: Int): Boolean {
+        val widget =
+            getWidgetByIdNow(widgetId) ?: // no entry to delete from db
+            return false
+
         deleteItemRankById(widget.itemId)
         deleteWidgets(widget)
+        return true
     }
 }

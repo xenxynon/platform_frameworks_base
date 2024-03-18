@@ -24,6 +24,8 @@ import android.hardware.input.InputManager
 import android.hardware.input.InputManagerGlobal
 import android.os.test.TestLooper
 import android.platform.test.annotations.Presubmit
+import android.platform.test.annotations.RequiresFlagsDisabled
+import android.platform.test.flag.junit.DeviceFlagsValueProvider
 import android.provider.Settings
 import android.test.mock.MockContentResolver
 import android.view.Display
@@ -71,6 +73,9 @@ class InputManagerServiceTests {
 
     @get:Rule
     val fakeSettingsProviderRule = FakeSettingsProvider.rule()!!
+
+    @get:Rule
+    val checkFlagsRule = DeviceFlagsValueProvider.createCheckFlagsRule()!!
 
     @Mock
     private lateinit var native: NativeInputManagerService
@@ -142,9 +147,9 @@ class InputManagerServiceTests {
         verify(native).setTouchpadPointerSpeed(anyInt())
         verify(native).setTouchpadNaturalScrollingEnabled(anyBoolean())
         verify(native).setTouchpadTapToClickEnabled(anyBoolean())
+        verify(native).setTouchpadTapDraggingEnabled(anyBoolean())
         verify(native).setTouchpadRightClickZoneEnabled(anyBoolean())
         verify(native).setShowTouches(anyBoolean())
-        verify(native).reloadPointerIcons()
         verify(native).setMotionClassifierEnabled(anyBoolean())
         verify(native).setMaximumObscuringOpacityForTouch(anyFloat())
         verify(native).setStylusPointerIconEnabled(anyBoolean())
@@ -169,6 +174,7 @@ class InputManagerServiceTests {
         verify(wmCallbacks).notifyPointerDisplayIdChanged(displayId, x, y)
     }
 
+    @RequiresFlagsDisabled(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER)
     @Test
     fun testSetVirtualMousePointerDisplayId() {
         // Set the virtual mouse pointer displayId, and ensure that the calling thread is blocked
@@ -220,6 +226,7 @@ class InputManagerServiceTests {
         verify(native).setPointerDisplayId(pointerDisplayId)
     }
 
+    @RequiresFlagsDisabled(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER)
     @Test
     fun testSetVirtualMousePointerDisplayId_unsuccessfulUpdate() {
         // Set the virtual mouse pointer displayId, and ensure that the calling thread is blocked
@@ -245,6 +252,7 @@ class InputManagerServiceTests {
         verify(native).setPointerDisplayId(overrideDisplayId)
     }
 
+    @RequiresFlagsDisabled(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER)
     @Test
     fun testSetVirtualMousePointerDisplayId_competingRequests() {
         val firstRequestSyncLatch = CountDownLatch(1)
@@ -288,19 +296,22 @@ class InputManagerServiceTests {
         verify(native, times(2)).setPointerDisplayId(anyInt())
     }
 
+    @RequiresFlagsDisabled(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER)
     @Test
     fun onDisplayRemoved_resetAllAdditionalInputProperties() {
         setVirtualMousePointerDisplayIdAndVerify(10)
 
         localService.setPointerIconVisible(false, 10)
+        verify(native).setPointerIconVisibility(10, false)
         verify(native).setPointerIconType(eq(PointerIcon.TYPE_NULL))
         localService.setMousePointerAccelerationEnabled(false, 10)
-        verify(native).setMousePointerAccelerationEnabled(eq(false))
+        verify(native).setMousePointerAccelerationEnabled(10, false)
 
         service.onDisplayRemoved(10)
+        verify(native).setPointerIconVisibility(10, true)
         verify(native).displayRemoved(eq(10))
         verify(native).setPointerIconType(eq(PointerIcon.TYPE_NOT_SPECIFIED))
-        verify(native).setMousePointerAccelerationEnabled(true)
+        verify(native).setMousePointerAccelerationEnabled(10, true)
         verifyNoMoreInteractions(native)
 
         // This call should not block because the virtual mouse pointer override was never removed.
@@ -310,44 +321,48 @@ class InputManagerServiceTests {
         verifyNoMoreInteractions(native)
     }
 
+    @RequiresFlagsDisabled(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER)
     @Test
     fun updateAdditionalInputPropertiesForOverrideDisplay() {
         setVirtualMousePointerDisplayIdAndVerify(10)
 
         localService.setPointerIconVisible(false, 10)
         verify(native).setPointerIconType(eq(PointerIcon.TYPE_NULL))
+        verify(native).setPointerIconVisibility(10, false)
         localService.setMousePointerAccelerationEnabled(false, 10)
-        verify(native).setMousePointerAccelerationEnabled(eq(false))
+        verify(native).setMousePointerAccelerationEnabled(10, false)
 
         localService.setPointerIconVisible(true, 10)
         verify(native).setPointerIconType(eq(PointerIcon.TYPE_NOT_SPECIFIED))
+        verify(native).setPointerIconVisibility(10, true)
         localService.setMousePointerAccelerationEnabled(true, 10)
-        verify(native).setMousePointerAccelerationEnabled(eq(true))
+        verify(native).setMousePointerAccelerationEnabled(10, true)
 
-        // Verify that setting properties on a different display is not propagated until the
-        // pointer is moved to that display.
         localService.setPointerIconVisible(false, 20)
+        verify(native).setPointerIconVisibility(20, false)
         localService.setMousePointerAccelerationEnabled(false, 20)
+        verify(native).setMousePointerAccelerationEnabled(20, false)
         verifyNoMoreInteractions(native)
 
         clearInvocations(native)
         setVirtualMousePointerDisplayIdAndVerify(20)
 
         verify(native).setPointerIconType(eq(PointerIcon.TYPE_NULL))
-        verify(native).setMousePointerAccelerationEnabled(eq(false))
     }
 
+    @RequiresFlagsDisabled(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER)
     @Test
     fun setAdditionalInputPropertiesBeforeOverride() {
         localService.setPointerIconVisible(false, 10)
         localService.setMousePointerAccelerationEnabled(false, 10)
 
+        verify(native).setPointerIconVisibility(10, false)
+        verify(native).setMousePointerAccelerationEnabled(10, false)
         verifyNoMoreInteractions(native)
 
         setVirtualMousePointerDisplayIdAndVerify(10)
 
         verify(native).setPointerIconType(eq(PointerIcon.TYPE_NULL))
-        verify(native).setMousePointerAccelerationEnabled(eq(false))
     }
 
     @Test

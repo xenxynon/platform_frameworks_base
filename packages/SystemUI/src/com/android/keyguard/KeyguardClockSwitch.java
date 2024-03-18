@@ -196,6 +196,9 @@ public class KeyguardClockSwitch extends RelativeLayout {
             mSmallClockFrame = findViewById(R.id.lockscreen_clock_view);
             mLargeClockFrame = findViewById(R.id.lockscreen_clock_view_large);
             mStatusArea = findViewById(R.id.keyguard_status_area);
+        } else {
+            removeView(findViewById(R.id.lockscreen_clock_view));
+            removeView(findViewById(R.id.lockscreen_clock_view_large));
         }
         onConfigChanged();
     }
@@ -263,6 +266,9 @@ public class KeyguardClockSwitch extends RelativeLayout {
     }
 
     void updateClockTargetRegions() {
+        if (migrateClocksToBlueprint()) {
+            return;
+        }
         if (mClock != null) {
             if (mSmallClockFrame.isLaidOut()) {
                 Rect targetRegion = getSmallClockRegion(mSmallClockFrame);
@@ -477,9 +483,13 @@ public class KeyguardClockSwitch extends RelativeLayout {
     public void dump(PrintWriter pw, String[] args) {
         pw.println("KeyguardClockSwitch:");
         pw.println("  mSmallClockFrame = " + mSmallClockFrame);
-        pw.println("  mSmallClockFrame.alpha = " + mSmallClockFrame.getAlpha());
+        if (mSmallClockFrame != null) {
+            pw.println("  mSmallClockFrame.alpha = " + mSmallClockFrame.getAlpha());
+        }
         pw.println("  mLargeClockFrame = " + mLargeClockFrame);
-        pw.println("  mLargeClockFrame.alpha = " + mLargeClockFrame.getAlpha());
+        if (mLargeClockFrame != null) {
+            pw.println("  mLargeClockFrame.alpha = " + mLargeClockFrame.getAlpha());
+        }
         pw.println("  mStatusArea = " + mStatusArea);
         pw.println("  mDisplayedClockSize = " + mDisplayedClockSize);
     }

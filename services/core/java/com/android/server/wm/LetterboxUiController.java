@@ -52,12 +52,13 @@ import static android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_FULLSCREEN
 import static android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_SPLIT_SCREEN;
 import static android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static android.content.res.Configuration.ORIENTATION_UNDEFINED;
 import static android.content.res.Configuration.SCREEN_HEIGHT_DP_UNDEFINED;
 import static android.content.res.Configuration.SCREEN_WIDTH_DP_UNDEFINED;
 import static android.content.res.Configuration.SMALLEST_SCREEN_WIDTH_DP_UNDEFINED;
 import static android.view.WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER;
+import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_STARTING;
+import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.view.WindowManager.PROPERTY_CAMERA_COMPAT_ALLOW_FORCE_ROTATION;
 import static android.view.WindowManager.PROPERTY_CAMERA_COMPAT_ALLOW_REFRESH;
 import static android.view.WindowManager.PROPERTY_CAMERA_COMPAT_ENABLE_REFRESH_VIA_PAUSE;
@@ -148,7 +149,7 @@ import java.util.function.Predicate;
 final class LetterboxUiController {
 
     private static final Predicate<ActivityRecord> FIRST_OPAQUE_NOT_FINISHING_ACTIVITY_PREDICATE =
-            activityRecord -> activityRecord.fillsParent() && !activityRecord.isFinishing();
+            ActivityRecord::occludesParent;
 
     private static final String TAG = TAG_WITH_CLASS_NAME ? "LetterboxUiController" : TAG_ATM;
 
@@ -922,35 +923,25 @@ final class LetterboxUiController {
         return mLetterbox == null || mLetterbox.notIntersectsOrFullyContains(rect);
     }
 
-    void updateLetterboxSurface(WindowState winHint) {
-        updateLetterboxSurface(winHint, mActivityRecord.getSyncTransaction());
+    void updateLetterboxSurfaceIfNeeded(WindowState winHint) {
+        updateLetterboxSurfaceIfNeeded(winHint, mActivityRecord.getSyncTransaction());
     }
 
-    void updateLetterboxSurface(WindowState winHint, Transaction t) {
-        final WindowState w = mActivityRecord.findMainWindow();
-        if (w != winHint && winHint != null && w != null) {
+    void updateLetterboxSurfaceIfNeeded(WindowState winHint, Transaction t) {
+        if (shouldNotLayoutLetterbox(winHint)) {
             return;
         }
-        layoutLetterbox(winHint);
+        layoutLetterboxIfNeeded(winHint);
         if (mLetterbox != null && mLetterbox.needsApplySurfaceChanges()) {
             mLetterbox.applySurfaceChanges(t);
         }
     }
 
-    void layoutLetterbox(WindowState winHint) {
-        final WindowState w = mActivityRecord.findMainWindow();
-        if (w == null || winHint != null && w != winHint) {
+    void layoutLetterboxIfNeeded(WindowState w) {
+        if (shouldNotLayoutLetterbox(w)) {
             return;
         }
         updateRoundedCornersIfNeeded(w);
-        // If there is another main window that is not an application-starting window, we should
-        // update rounded corners for it as well, to avoid flickering rounded corners.
-        final WindowState nonStartingAppW = mActivityRecord.findMainWindow(
-                /* includeStartingApp= */ false);
-        if (nonStartingAppW != null && nonStartingAppW != w) {
-            updateRoundedCornersIfNeeded(nonStartingAppW);
-        }
-
         updateWallpaperForLetterbox(w);
         if (shouldShowLetterboxUi(w)) {
             if (mLetterbox == null) {
@@ -1021,6 +1012,18 @@ final class LetterboxUiController {
             return mActivityRecord.getTask().getSurfaceControl();
         }
         return mActivityRecord.getSurfaceControl();
+    }
+
+    private static boolean shouldNotLayoutLetterbox(WindowState w) {
+        if (w == null) {
+            return true;
+        }
+        final int type = w.mAttrs.type;
+        // Allow letterbox to be displayed early for base application or application starting
+        // windows even if it is not on the top z order to prevent flickering when the
+        // letterboxed window is brought to the top
+        return (type != TYPE_BASE_APPLICATION && type != TYPE_APPLICATION_STARTING)
+                || w.mAnimatingExit;
     }
 
     private boolean shouldLetterboxHaveRoundedCorners() {
@@ -1365,23 +1368,25 @@ final class LetterboxUiController {
      *
      * <p>Conditions that needs to be met:
      * <ul>
-     *   <li>Activity is portrait-only.
-     *   <li>Fullscreen window in landscape device orientation.
+     *   <li>Windowing mode is fullscreen.
      *   <li>Horizontal Reachability is enabled.
-     *   <li>Activity fills parent vertically.
+     *   <li>First top opaque activity fills parent vertically, but not horizontally.
      * </ul>
      */
     private boolean isHorizontalReachabilityEnabled(Configuration parentConfiguration) {
         // Use screen resolved bounds which uses resolved bounds or size compat bounds
         // as activity bounds can sometimes be empty
+        final Rect opaqueActivityBounds = hasInheritedLetterboxBehavior()
+                ? mFirstOpaqueActivityBeneath.getScreenResolvedBounds()
+                : mActivityRecord.getScreenResolvedBounds();
         return mLetterboxConfiguration.getIsHorizontalReachabilityEnabled()
                 && parentConfiguration.windowConfiguration.getWindowingMode()
                         == WINDOWING_MODE_FULLSCREEN
-                && (parentConfiguration.orientation == ORIENTATION_LANDSCAPE
-                        && mActivityRecord.getOrientationForReachability() == ORIENTATION_PORTRAIT)
                 // Check whether the activity fills the parent vertically.
                 && parentConfiguration.windowConfiguration.getAppBounds().height()
-                        <= mActivityRecord.getScreenResolvedBounds().height();
+                        <= opaqueActivityBounds.height()
+                && parentConfiguration.windowConfiguration.getAppBounds().width()
+                        > opaqueActivityBounds.width();
     }
 
     @VisibleForTesting
@@ -1398,23 +1403,25 @@ final class LetterboxUiController {
      *
      * <p>Conditions that needs to be met:
      * <ul>
-     *   <li>Activity is landscape-only.
-     *   <li>Fullscreen window in portrait device orientation.
+     *   <li>Windowing mode is fullscreen.
      *   <li>Vertical Reachability is enabled.
-     *   <li>Activity fills parent horizontally.
+     *   <li>First top opaque activity fills parent horizontally but not vertically.
      * </ul>
      */
     private boolean isVerticalReachabilityEnabled(Configuration parentConfiguration) {
         // Use screen resolved bounds which uses resolved bounds or size compat bounds
         // as activity bounds can sometimes be empty
+        final Rect opaqueActivityBounds = hasInheritedLetterboxBehavior()
+                ? mFirstOpaqueActivityBeneath.getScreenResolvedBounds()
+                : mActivityRecord.getScreenResolvedBounds();
         return mLetterboxConfiguration.getIsVerticalReachabilityEnabled()
                 && parentConfiguration.windowConfiguration.getWindowingMode()
                         == WINDOWING_MODE_FULLSCREEN
-                && (parentConfiguration.orientation == ORIENTATION_PORTRAIT
-                        && mActivityRecord.getOrientationForReachability() == ORIENTATION_LANDSCAPE)
                 // Check whether the activity fills the parent horizontally.
-                && parentConfiguration.windowConfiguration.getBounds().width()
-                        == mActivityRecord.getScreenResolvedBounds().width();
+                && parentConfiguration.windowConfiguration.getAppBounds().width()
+                        <= opaqueActivityBounds.width()
+                && parentConfiguration.windowConfiguration.getAppBounds().height()
+                        > opaqueActivityBounds.height();
     }
 
     @VisibleForTesting
@@ -1424,7 +1431,7 @@ final class LetterboxUiController {
 
     @VisibleForTesting
     boolean shouldShowLetterboxUi(WindowState mainWindow) {
-        if (mIsRelaunchingAfterRequestedOrientationChanged || !isSurfaceReadyToShow(mainWindow)) {
+        if (mIsRelaunchingAfterRequestedOrientationChanged) {
             return mLastShouldShowLetterboxUi;
         }
 
@@ -1439,13 +1446,6 @@ final class LetterboxUiController {
         mLastShouldShowLetterboxUi = shouldShowLetterboxUi;
 
         return shouldShowLetterboxUi;
-    }
-
-    @VisibleForTesting
-    boolean isSurfaceReadyToShow(WindowState mainWindow) {
-        return mainWindow.isDrawn() // Regular case
-                // Waiting for relayoutWindow to call preserveSurface
-                || mainWindow.isDragResizeChanged();
     }
 
     @VisibleForTesting

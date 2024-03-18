@@ -20,21 +20,6 @@ flag {
 
 flag {
     namespace: "window_surfaces"
-    name: "get_host_token_api"
-    description: "Feature flag to associate the host and embedded windows"
-    is_fixed_read_only: true
-    bug: "304508760"
-}
-
-flag {
-    namespace: "window_surfaces"
-    name: "transfer_gesture_to_embedded"
-    description: "Enable public API for Window Surfaces"
-    bug: "287076178"
-}
-
-flag {
-    namespace: "window_surfaces"
     name: "delete_capture_display"
     description: "Delete uses of ScreenCapture#captureDisplay"
     is_fixed_read_only: true
@@ -87,4 +72,12 @@ flag {
     description: "Enable screen recording callbacks public API"
     is_fixed_read_only: true
     bug: "304574518"
+}
+
+flag {
+    namespace: "window_surfaces"
+    name: "sync_screen_capture"
+    description: "Create a screen capture API that blocks in SurfaceFlinger"
+    is_fixed_read_only: true
+    bug: "321263247"
 }

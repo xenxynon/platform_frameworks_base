@@ -16,7 +16,7 @@
 
 package com.android.systemui.statusbar.phone;
 
-import static com.android.systemui.Flags.centralizedStatusBarDimensRefactor;
+import static com.android.systemui.Flags.centralizedStatusBarHeightFix;
 import static com.android.systemui.doze.util.BurnInHelperKt.getBurnInOffset;
 import static com.android.systemui.doze.util.BurnInHelperKt.getBurnInScale;
 import static com.android.systemui.statusbar.notification.NotificationUtils.interpolate;
@@ -43,6 +43,7 @@ import javax.inject.Inject;
  */
 public class KeyguardClockPositionAlgorithm {
     private static final String TAG = "KeyguardClockPositionAlgorithm";
+    private static final boolean DEBUG = false;
 
     /**
      * Margin between the bottom of the status view and the notification shade.
@@ -168,7 +169,7 @@ public class KeyguardClockPositionAlgorithm {
         mStatusViewBottomMargin =
                 res.getDimensionPixelSize(R.dimen.keyguard_status_view_bottom_margin);
         mSplitShadeTopNotificationsMargin =
-                centralizedStatusBarDimensRefactor()
+                centralizedStatusBarHeightFix()
                         ? LargeScreenHeaderHelper.getLargeScreenHeaderHeight(context)
                         : res.getDimensionPixelSize(R.dimen.large_screen_shade_header_height);
         mSplitShadeTargetTopMargin =
@@ -318,24 +319,26 @@ public class KeyguardClockPositionAlgorithm {
         }
 
         float fullyDarkBurnInOffset = burnInPreventionOffsetY(burnInPreventionOffsetY);
-        float clockYDark = clockY
-                + fullyDarkBurnInOffset
-                + shift;
+        float clockYDark = clockY + fullyDarkBurnInOffset + shift;
         mCurrentBurnInOffsetY = MathUtils.lerp(0, fullyDarkBurnInOffset, darkAmount);
-        final String inputs = "panelExpansion: " + panelExpansion + " darkAmount: " + darkAmount;
-        final String outputs = "clockY: " + clockY
-                + " burnInPreventionOffsetY: " + burnInPreventionOffsetY
-                + " fullyDarkBurnInOffset: " + fullyDarkBurnInOffset
-                + " shift: " + shift
-                + " mOverStretchAmount: " + mOverStretchAmount
-                + " mCurrentBurnInOffsetY: " + mCurrentBurnInOffsetY;
-        mLogger.i(msg -> {
-            return msg.getStr1() + " -> " + msg.getStr2();
-        }, msg -> {
-            msg.setStr1(inputs);
-            msg.setStr2(outputs);
-            return kotlin.Unit.INSTANCE;
-        });
+
+        if (DEBUG) {
+            final float finalShift = shift;
+            final float finalBurnInPreventionOffsetY = burnInPreventionOffsetY;
+            mLogger.i(msg -> {
+                final String inputs = "panelExpansion: " + panelExpansion
+                        + " darkAmount: " + darkAmount;
+                final String outputs = "clockY: " + clockY
+                        + " burnInPreventionOffsetY: " + finalBurnInPreventionOffsetY
+                        + " fullyDarkBurnInOffset: " + fullyDarkBurnInOffset
+                        + " shift: " + finalShift
+                        + " mOverStretchAmount: " + mOverStretchAmount
+                        + " mCurrentBurnInOffsetY: " + mCurrentBurnInOffsetY;
+                return inputs + " -> " + outputs;
+            }, msg -> {
+                return kotlin.Unit.INSTANCE;
+            });
+        }
         return (int) (MathUtils.lerp(clockY, clockYDark, darkAmount) + mOverStretchAmount);
     }
 

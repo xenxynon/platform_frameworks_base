@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 
 data class CardButton(
     val text: String,
+    val contentDescription: String? = null,
     val onClick: () -> Unit,
 )
 
@@ -44,4 +45,6 @@ data class CardModel(
 
     /** If specified, this color will be used to tint the icon and the buttons. */
     val containerColor: Color = Color.Unspecified,
+
+    val onClick: (() -> Unit)? = null,
 )

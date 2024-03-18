@@ -16,16 +16,12 @@
 
 package com.android.systemui.communal.data.repository
 
-import com.android.systemui.Flags.communalHub
 import com.android.systemui.communal.shared.model.CommunalSceneKey
 import com.android.systemui.communal.shared.model.ObservableCommunalTransitionState
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
-import com.android.systemui.flags.FeatureFlagsClassic
-import com.android.systemui.flags.Flags
 import com.android.systemui.scene.data.repository.SceneContainerRepository
 import com.android.systemui.scene.shared.flag.SceneContainerFlags
-import com.android.systemui.scene.shared.model.SceneKey
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,17 +32,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /** Encapsulates the state of communal mode. */
 interface CommunalRepository {
-    /** Whether communal features are enabled. */
-    val isCommunalEnabled: Boolean
-
-    /** Whether the communal hub is showing. */
-    val isCommunalHubShowing: Flow<Boolean>
-
     /**
      * Target scene as requested by the underlying [SceneTransitionLayout] or through
      * [setDesiredScene].
@@ -73,12 +62,9 @@ class CommunalRepositoryImpl
 @Inject
 constructor(
     @Background backgroundScope: CoroutineScope,
-    private val featureFlagsClassic: FeatureFlagsClassic,
     sceneContainerFlags: SceneContainerFlags,
     sceneContainerRepository: SceneContainerRepository,
 ) : CommunalRepository {
-    override val isCommunalEnabled: Boolean
-        get() = featureFlagsClassic.isEnabled(Flags.COMMUNAL_SERVICE_ENABLED) && communalHub()
 
     private val _desiredScene: MutableStateFlow<CommunalSceneKey> =
         MutableStateFlow(CommunalSceneKey.DEFAULT)
@@ -108,11 +94,4 @@ constructor(
     override fun setTransitionState(transitionState: Flow<ObservableCommunalTransitionState>?) {
         _transitionState.value = transitionState
     }
-
-    override val isCommunalHubShowing: Flow<Boolean> =
-        if (sceneContainerFlags.isEnabled()) {
-            sceneContainerRepository.desiredScene.map { scene -> scene.key == SceneKey.Communal }
-        } else {
-            desiredScene.map { sceneKey -> sceneKey == CommunalSceneKey.Communal }
-        }
 }

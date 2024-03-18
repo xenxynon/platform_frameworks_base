@@ -16,19 +16,20 @@
 
 package com.android.wm.shell.bubbles;
 
+import static com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_BUBBLES;
+
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Insets;
-import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.util.Log;
 import android.view.Surface;
 import android.view.WindowManager;
 
 import androidx.annotation.VisibleForTesting;
 
+import com.android.internal.protolog.common.ProtoLog;
 import com.android.launcher3.icons.IconNormalizer;
 import com.android.wm.shell.R;
 
@@ -37,9 +38,6 @@ import com.android.wm.shell.R;
  * placement and positioning calculations to refer to.
  */
 public class BubblePositioner {
-    private static final String TAG = BubbleDebugConfig.TAG_WITH_CLASS_NAME
-            ? "BubblePositioner"
-            : BubbleDebugConfig.TAG_BUBBLES;
 
     /** The screen edge the bubble stack is pinned to */
     public enum StackPinnedEdge {
@@ -97,7 +95,7 @@ public class BubblePositioner {
     private PointF mRestingStackPosition;
 
     private boolean mShowingInBubbleBar;
-    private final Point mBubbleBarPosition = new Point();
+    private final Rect mBubbleBarBounds = new Rect();
 
     public BubblePositioner(Context context, WindowManager windowManager) {
         mContext = context;
@@ -111,21 +109,24 @@ public class BubblePositioner {
      */
     public void update(DeviceConfig deviceConfig) {
         mDeviceConfig = deviceConfig;
-
-        if (BubbleDebugConfig.DEBUG_POSITIONER) {
-            Log.w(TAG, "update positioner:"
-                    + " rotation: " + mRotation
-                    + " insets: " + deviceConfig.getInsets()
-                    + " isLargeScreen: " + deviceConfig.isLargeScreen()
-                    + " isSmallTablet: " + deviceConfig.isSmallTablet()
-                    + " showingInBubbleBar: " + mShowingInBubbleBar
-                    + " bounds: " + deviceConfig.getWindowBounds());
-        }
+        ProtoLog.d(WM_SHELL_BUBBLES, "update positioner: "
+                        + "rotation=%d insets=%s largeScreen=%b "
+                        + "smallTablet=%b isBubbleBar=%b bounds=%s",
+                mRotation, deviceConfig.getInsets(), deviceConfig.isLargeScreen(),
+                deviceConfig.isSmallTablet(), mShowingInBubbleBar,
+                deviceConfig.getWindowBounds());
         updateInternal(mRotation, deviceConfig.getInsets(), deviceConfig.getWindowBounds());
     }
 
     @VisibleForTesting
     public void updateInternal(int rotation, Insets insets, Rect bounds) {
+        BubbleStackView.RelativeStackPosition prevStackPosition = null;
+        if (mRestingStackPosition != null && mScreenRect != null && !mScreenRect.equals(bounds)) {
+            // Save the resting position as a relative position with the previous bounds, at the
+            // end of the update we'll restore it based on the new bounds.
+            prevStackPosition = new BubbleStackView.RelativeStackPosition(getRestingPosition(),
+                    getAllowableStackPositionRegion(1));
+        }
         mRotation = rotation;
         mInsets = insets;
 
@@ -188,6 +189,12 @@ public class BubblePositioner {
                 R.dimen.bubbles_flyout_min_width_large_screen);
 
         mMaxBubbles = calculateMaxBubbles();
+
+        if (prevStackPosition != null) {
+            // Get the new resting position based on the updated values
+            mRestingStackPosition = prevStackPosition.getAbsolutePositionInRegion(
+                    getAllowableStackPositionRegion(1));
+        }
     }
 
     /**
@@ -388,7 +395,7 @@ public class BubblePositioner {
     public int getTaskViewContentWidth(boolean onLeft) {
         int[] paddings = getExpandedViewContainerPadding(onLeft, /* isOverflow = */ false);
         int pointerOffset = showBubblesVertically() ? getPointerSize() : 0;
-        return mPositionRect.width() - paddings[0] - paddings[2] - pointerOffset;
+        return mScreenRect.width() - paddings[0] - paddings[2] - pointerOffset;
     }
 
     /** Gets the y position of the expanded view if it was top-aligned. */
@@ -791,15 +798,10 @@ public class BubblePositioner {
     }
 
     /**
-     * Sets the position of the bubble bar in screen coordinates.
-     *
-     * @param offsetX the offset of the bubble bar from the edge of the screen on the X axis
-     * @param offsetY the offset of the bubble bar from the edge of the screen on the Y axis
+     * Sets the position of the bubble bar in display coordinates.
      */
-    public void setBubbleBarPosition(int offsetX, int offsetY) {
-        mBubbleBarPosition.set(
-                getAvailableRect().width() - offsetX,
-                getAvailableRect().height() + mInsets.top + mInsets.bottom - offsetY);
+    public void setBubbleBarPosition(Rect bubbleBarBounds) {
+        mBubbleBarBounds.set(bubbleBarBounds);
     }
 
     /**
@@ -820,7 +822,7 @@ public class BubblePositioner {
 
     /** The bottom position of the expanded view when showing above the bubble bar. */
     public int getExpandedViewBottomForBubbleBar() {
-        return mBubbleBarPosition.y - mExpandedViewPadding;
+        return mBubbleBarBounds.top - mExpandedViewPadding;
     }
 
     /**
@@ -831,9 +833,9 @@ public class BubblePositioner {
     }
 
     /**
-     * Returns the on screen co-ordinates of the bubble bar.
+     * Returns the display coordinates of the bubble bar.
      */
-    public Point getBubbleBarPosition() {
-        return mBubbleBarPosition;
+    public Rect getBubbleBarBounds() {
+        return mBubbleBarBounds;
     }
 }

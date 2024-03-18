@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.icu.text.SimpleDateFormat;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -249,7 +250,7 @@ public final class ApplicationStartInfo implements Parcelable {
     private @StartType int mStartType;
 
     /**
-     * @see #getStartIntent
+     * @see #getIntent
      */
     private Intent mStartIntent;
 
@@ -257,6 +258,11 @@ public final class ApplicationStartInfo implements Parcelable {
      * @see #getLaunchMode
      */
     private @LaunchMode int mLaunchMode;
+
+    /**
+     * @see #wasForceStopped()
+     */
+    private boolean mWasForceStopped;
 
     /**
      * @hide *
@@ -413,7 +419,9 @@ public final class ApplicationStartInfo implements Parcelable {
      * @hide
      */
     public void setIntent(Intent startIntent) {
-        mStartIntent = startIntent;
+        if (startIntent != null) {
+            mStartIntent = startIntent.maybeStripForHistory();
+        }
     }
 
     /**
@@ -422,6 +430,15 @@ public final class ApplicationStartInfo implements Parcelable {
      */
     public void setLaunchMode(@LaunchMode int launchMode) {
         mLaunchMode = launchMode;
+    }
+
+    /**
+     * @see #wasForceStopped()
+     * @param wasForceStopped whether the app had been force-stopped in the past
+     * @hide
+     */
+    public void setForceStopped(boolean wasForceStopped) {
+        mWasForceStopped = wasForceStopped;
     }
 
     /**
@@ -548,6 +565,8 @@ public final class ApplicationStartInfo implements Parcelable {
     /**
      * The intent used to launch the application.
      *
+     * <p class="note"> Note: Intent is stripped and does not include extras.</p>
+     *
      * <p class="note"> Note: field will be set for any {@link #getStartupState} value.</p>
      */
     @SuppressLint("IntentBuilderName")
@@ -572,6 +591,20 @@ public final class ApplicationStartInfo implements Parcelable {
      */
     public @LaunchMode int getLaunchMode() {
         return mLaunchMode;
+    }
+
+    /**
+     * Informs whether this is the first process launch for an app since it was
+     * {@link ApplicationInfo#FLAG_STOPPED force-stopped} for some reason.
+     * This allows the app to know if it should re-register for any alarms, jobs and other callbacks
+     * that were cleared when the app was force-stopped.
+     *
+     * @return {@code true} if this is the first process launch of the app after having been
+     *      stopped, {@code false} otherwise.
+     */
+    @FlaggedApi(android.content.pm.Flags.FLAG_STAY_STOPPED)
+    public boolean wasForceStopped() {
+        return mWasForceStopped;
     }
 
     @Override
@@ -599,6 +632,7 @@ public final class ApplicationStartInfo implements Parcelable {
         dest.writeInt(mStartType);
         dest.writeParcelable(mStartIntent, flags);
         dest.writeInt(mLaunchMode);
+        dest.writeBoolean(mWasForceStopped);
     }
 
     /** @hide */
@@ -618,6 +652,7 @@ public final class ApplicationStartInfo implements Parcelable {
         mStartType = other.mStartType;
         mStartIntent = other.mStartIntent;
         mLaunchMode = other.mLaunchMode;
+        mWasForceStopped = other.mWasForceStopped;
     }
 
     private ApplicationStartInfo(@NonNull Parcel in) {
@@ -639,6 +674,7 @@ public final class ApplicationStartInfo implements Parcelable {
         mStartIntent =
                 in.readParcelable(Intent.class.getClassLoader(), android.content.Intent.class);
         mLaunchMode = in.readInt();
+        mWasForceStopped = in.readBoolean();
     }
 
     private static String intern(@Nullable String source) {
@@ -662,6 +698,7 @@ public final class ApplicationStartInfo implements Parcelable {
     private static final String PROTO_SERIALIZER_ATTRIBUTE_TIMESTAMP = "timestamp";
     private static final String PROTO_SERIALIZER_ATTRIBUTE_KEY = "key";
     private static final String PROTO_SERIALIZER_ATTRIBUTE_TS = "ts";
+    private static final String PROTO_SERIALIZER_ATTRIBUTE_INTENT = "intent";
 
     /**
      * Write to a protocol buffer output stream. Protocol buffer message definition at {@link
@@ -702,12 +739,20 @@ public final class ApplicationStartInfo implements Parcelable {
         }
         proto.write(ApplicationStartInfoProto.START_TYPE, mStartType);
         if (mStartIntent != null) {
-            Parcel parcel = Parcel.obtain();
-            mStartIntent.writeToParcel(parcel, 0);
-            proto.write(ApplicationStartInfoProto.START_INTENT, parcel.marshall());
-            parcel.recycle();
+            ByteArrayOutputStream intentBytes = new ByteArrayOutputStream();
+            ObjectOutputStream intentOut = new ObjectOutputStream(intentBytes);
+            TypedXmlSerializer serializer = Xml.resolveSerializer(intentOut);
+            serializer.startDocument(null, true);
+            serializer.startTag(null, PROTO_SERIALIZER_ATTRIBUTE_INTENT);
+            mStartIntent.saveToXml(serializer);
+            serializer.endTag(null, PROTO_SERIALIZER_ATTRIBUTE_INTENT);
+            serializer.endDocument();
+            proto.write(ApplicationStartInfoProto.START_INTENT,
+                    intentBytes.toByteArray());
+            intentOut.close();
         }
         proto.write(ApplicationStartInfoProto.LAUNCH_MODE, mLaunchMode);
+        proto.write(ApplicationStartInfoProto.WAS_FORCE_STOPPED, mWasForceStopped);
         proto.end(token);
     }
 
@@ -772,18 +817,24 @@ public final class ApplicationStartInfo implements Parcelable {
                     mStartType = proto.readInt(ApplicationStartInfoProto.START_TYPE);
                     break;
                 case (int) ApplicationStartInfoProto.START_INTENT:
-                    byte[] startIntentBytes = proto.readBytes(
-                        ApplicationStartInfoProto.START_INTENT);
-                    if (startIntentBytes.length > 0) {
-                        Parcel parcel = Parcel.obtain();
-                        parcel.unmarshall(startIntentBytes, 0, startIntentBytes.length);
-                        parcel.setDataPosition(0);
-                        mStartIntent = Intent.CREATOR.createFromParcel(parcel);
-                        parcel.recycle();
+                    ByteArrayInputStream intentBytes = new ByteArrayInputStream(proto.readBytes(
+                            ApplicationStartInfoProto.START_INTENT));
+                    ObjectInputStream intentIn = new ObjectInputStream(intentBytes);
+                    try {
+                        TypedXmlPullParser parser = Xml.resolvePullParser(intentIn);
+                        XmlUtils.beginDocument(parser, PROTO_SERIALIZER_ATTRIBUTE_INTENT);
+                        mStartIntent = Intent.restoreFromXml(parser);
+                    } catch (XmlPullParserException e) {
+                        // Intent lost
                     }
+                    intentIn.close();
                     break;
                 case (int) ApplicationStartInfoProto.LAUNCH_MODE:
                     mLaunchMode = proto.readInt(ApplicationStartInfoProto.LAUNCH_MODE);
+                    break;
+                case (int) ApplicationStartInfoProto.WAS_FORCE_STOPPED:
+                    mWasForceStopped = proto.readBoolean(
+                            ApplicationStartInfoProto.WAS_FORCE_STOPPED);
                     break;
             }
         }
@@ -809,6 +860,7 @@ public final class ApplicationStartInfo implements Parcelable {
                 .append(" reason=").append(reasonToString(mReason))
                 .append(" startType=").append(startTypeToString(mStartType))
                 .append(" launchMode=").append(mLaunchMode)
+                .append(" wasForceStopped=").append(mWasForceStopped)
                 .append('\n');
         if (mStartIntent != null) {
             sb.append(" intent=").append(mStartIntent.toString())
@@ -864,7 +916,7 @@ public final class ApplicationStartInfo implements Parcelable {
             && mDefiningUid == o.mDefiningUid && mReason == o.mReason
             && mStartupState == o.mStartupState && mStartType == o.mStartType
             && mLaunchMode == o.mLaunchMode && TextUtils.equals(mProcessName, o.mProcessName)
-            && timestampsEquals(o);
+            && timestampsEquals(o) && mWasForceStopped == o.mWasForceStopped;
     }
 
     @Override

@@ -27,7 +27,10 @@ import com.android.systemui.common.ui.domain.interactor.ConfigurationInteractor
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.keyguard.data.repository.FakeCommandQueue
 import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
+import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.CameraLaunchSourceModel
+import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.keyguard.shared.model.StatusBarState
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.power.domain.interactor.PowerInteractorFactory
 import com.android.systemui.scene.domain.interactor.sceneInteractor
@@ -54,15 +57,16 @@ class KeyguardInteractorTest : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
-    private val repository = kosmos.fakeKeyguardRepository
-    private val sceneInteractor = kosmos.sceneInteractor
-    private val commandQueue = FakeCommandQueue()
+    private val repository by lazy { kosmos.fakeKeyguardRepository }
+    private val sceneInteractor by lazy { kosmos.sceneInteractor }
+    private val commandQueue by lazy { FakeCommandQueue() }
     private val bouncerRepository = FakeKeyguardBouncerRepository()
     private val shadeRepository = FakeShadeRepository()
+    private val keyguardTransitionRepository = kosmos.fakeKeyguardTransitionRepository
     private val transitionState: MutableStateFlow<ObservableTransitionState> =
         MutableStateFlow(ObservableTransitionState.Idle(SceneKey.Gone))
 
-    private val underTest =
+    private val underTest by lazy {
         KeyguardInteractor(
             repository = repository,
             commandQueue = commandQueue,
@@ -71,8 +75,10 @@ class KeyguardInteractorTest : SysuiTestCase() {
             bouncerRepository = bouncerRepository,
             configurationInteractor = ConfigurationInteractor(FakeConfigurationRepository()),
             shadeRepository = shadeRepository,
+            keyguardTransitionInteractor = kosmos.keyguardTransitionInteractor,
             sceneInteractorProvider = { sceneInteractor },
         )
+    }
 
     @Before
     fun setUp() {
@@ -182,6 +188,49 @@ class KeyguardInteractorTest : SysuiTestCase() {
             runCurrent()
 
             assertThat(secureCameraActive()).isFalse()
+        }
+
+    @Test
+    fun dismissAlpha() =
+        testScope.runTest {
+            val dismissAlpha by collectLastValue(underTest.dismissAlpha)
+
+            keyguardTransitionRepository.sendTransitionSteps(
+                from = KeyguardState.AOD,
+                to = KeyguardState.LOCKSCREEN,
+                testScope,
+            )
+
+            repository.setStatusBarState(StatusBarState.KEYGUARD)
+            shadeRepository.setLegacyShadeExpansion(1f)
+
+            // When not dismissable, no alpha value (null) should emit
+            repository.setKeyguardDismissible(false)
+            assertThat(dismissAlpha).isNull()
+
+            repository.setKeyguardDismissible(true)
+            assertThat(dismissAlpha).isGreaterThan(0.95f)
+        }
+
+    @Test
+    fun dismissAlpha_whenShadeIsExpandedEmitsNull() =
+        testScope.runTest {
+            val dismissAlpha by collectLastValue(underTest.dismissAlpha)
+
+            keyguardTransitionRepository.sendTransitionSteps(
+                from = KeyguardState.AOD,
+                to = KeyguardState.LOCKSCREEN,
+                testScope,
+            )
+
+            repository.setStatusBarState(StatusBarState.SHADE_LOCKED)
+            shadeRepository.setQsExpansion(1f)
+
+            repository.setKeyguardDismissible(false)
+            assertThat(dismissAlpha).isNull()
+
+            repository.setKeyguardDismissible(true)
+            assertThat(dismissAlpha).isNull()
         }
 
     @Test

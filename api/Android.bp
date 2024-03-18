@@ -113,8 +113,10 @@ combined_apis {
         "framework-nfc",
         "framework-ondevicepersonalization",
         "framework-pdf",
+        "framework-pdf-v",
         "framework-permission",
         "framework-permission-s",
+        "framework-profiling",
         "framework-scheduling",
         "framework-sdkextensions",
         "framework-statsd",
@@ -199,7 +201,7 @@ genrule {
     out: ["current.srcjar"],
     cmd: "$(location merge_zips) $(out) $(in)",
     srcs: [
-        ":api-stubs-docs-non-updatable",
+        ":api-stubs-docs-non-updatable{.exportable}",
         ":all-modules-public-stubs-source",
     ],
     visibility: ["//visibility:private"], // Used by make module in //development, mind
@@ -222,7 +224,7 @@ genrule {
     name: "sdk-annotations.zip",
     defaults: ["sdk-annotations-defaults"],
     srcs: [
-        ":android-non-updatable-doc-stubs{.annotations.zip}",
+        ":android-non-updatable-doc-stubs{.exportable.annotations.zip}",
         ":all-modules-public-annotations",
     ],
 }
@@ -231,7 +233,7 @@ genrule {
     name: "sdk-annotations-system.zip",
     defaults: ["sdk-annotations-defaults"],
     srcs: [
-        ":android-non-updatable-doc-stubs-system{.annotations.zip}",
+        ":android-non-updatable-doc-stubs-system{.exportable.annotations.zip}",
         ":all-modules-system-annotations",
     ],
 }
@@ -240,7 +242,7 @@ genrule {
     name: "sdk-annotations-module-lib.zip",
     defaults: ["sdk-annotations-defaults"],
     srcs: [
-        ":android-non-updatable-doc-stubs-module-lib{.annotations.zip}",
+        ":android-non-updatable-doc-stubs-module-lib{.exportable.annotations.zip}",
         ":all-modules-module-lib-annotations",
     ],
 }
@@ -249,7 +251,7 @@ genrule {
     name: "sdk-annotations-system-server.zip",
     defaults: ["sdk-annotations-defaults"],
     srcs: [
-        ":android-non-updatable-doc-stubs-system-server{.annotations.zip}",
+        ":android-non-updatable-doc-stubs-system-server{.exportable.annotations.zip}",
         ":all-modules-system-server-annotations",
     ],
 }
@@ -301,7 +303,7 @@ packages_to_document = [
 // classpath (or sources) somehow.
 stubs_defaults {
     name: "android-non-updatable-stubs-defaults",
-    defaults: ["framework-minus-apex-aconfig-declarations"],
+    aconfig_declarations: ["framework-minus-apex-aconfig-declarations"],
     srcs: [":android-non-updatable-stub-sources"],
     sdk_version: "none",
     system_modules: "none",
@@ -361,7 +363,10 @@ stubs_defaults {
     previous_api: ":android.api.public.latest",
     merge_annotations_dirs: ["metalava-manual"],
     defaults_visibility: ["//frameworks/base/api"],
-    visibility: ["//frameworks/base/api"],
+    visibility: [
+        "//frameworks/base/api",
+        "//frameworks/base/core/api",
+    ],
 }
 
 // We resolve dependencies on APIs in modules by depending on a prebuilt of the whole

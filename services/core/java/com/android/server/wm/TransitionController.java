@@ -267,7 +267,8 @@ class TransitionController {
         mSyncEngine.addOnIdleListener(this::tryStartCollectFromQueue);
     }
 
-    private void detachPlayer() {
+    @VisibleForTesting
+    void detachPlayer() {
         if (mTransitionPlayer == null) return;
         // Immediately set to null so that nothing inadvertently starts/queues.
         mTransitionPlayer = null;
@@ -496,6 +497,9 @@ class TransitionController {
         if (mCollectingTransition != null && mCollectingTransition.isInTransientHide(task)) {
             return true;
         }
+        for (int i = mWaitingTransitions.size() - 1; i >= 0; --i) {
+            if (mWaitingTransitions.get(i).isInTransientHide(task)) return true;
+        }
         for (int i = mPlayingTransitions.size() - 1; i >= 0; --i) {
             if (mPlayingTransitions.get(i).isInTransientHide(task)) return true;
         }
@@ -505,6 +509,9 @@ class TransitionController {
     boolean isTransientVisible(@NonNull Task task) {
         if (mCollectingTransition != null && mCollectingTransition.isTransientVisible(task)) {
             return true;
+        }
+        for (int i = mWaitingTransitions.size() - 1; i >= 0; --i) {
+            if (mWaitingTransitions.get(i).isTransientVisible(task)) return true;
         }
         for (int i = mPlayingTransitions.size() - 1; i >= 0; --i) {
             if (mPlayingTransitions.get(i).isTransientVisible(task)) return true;
@@ -634,11 +641,16 @@ class TransitionController {
     }
 
     /** Sets the sync method for the display change. */
-    void setDisplaySyncMethod(@NonNull TransitionRequestInfo.DisplayChange displayChange,
+    private void setDisplaySyncMethod(@NonNull TransitionRequestInfo.DisplayChange displayChange,
             @NonNull DisplayContent displayContent) {
         final Rect startBounds = displayChange.getStartAbsBounds();
         final Rect endBounds = displayChange.getEndAbsBounds();
         if (startBounds == null || endBounds == null) return;
+        setDisplaySyncMethod(startBounds, endBounds, displayContent);
+    }
+
+    void setDisplaySyncMethod(@NonNull Rect startBounds, @NonNull Rect endBounds,
+            @NonNull DisplayContent displayContent) {
         final int startWidth = startBounds.width();
         final int startHeight = startBounds.height();
         final int endWidth = endBounds.width();
@@ -983,37 +995,16 @@ class TransitionController {
         Slog.e(TAG, "Set visible without transition " + wc + " playing=" + isPlaying
                 + " caller=" + caller);
         if (!isPlaying) {
-            enforceSurfaceVisible(wc);
+            WindowContainer.enforceSurfaceVisible(wc);
             return;
         }
         // Update surface visibility after the playing transitions are finished, so the last
         // visibility won't be replaced by the finish transaction of transition.
         mStateValidators.add(() -> {
             if (wc.isVisibleRequested()) {
-                enforceSurfaceVisible(wc);
+                WindowContainer.enforceSurfaceVisible(wc);
             }
         });
-    }
-
-    private void enforceSurfaceVisible(WindowContainer<?> wc) {
-        if (wc.mSurfaceControl == null) return;
-        wc.getSyncTransaction().show(wc.mSurfaceControl);
-        final ActivityRecord ar = wc.asActivityRecord();
-        if (ar != null) {
-            ar.mLastSurfaceShowing = true;
-        }
-        // Force showing the parents because they may be hidden by previous transition.
-        for (WindowContainer<?> p = wc.getParent(); p != null && p != wc.mDisplayContent;
-                p = p.getParent()) {
-            if (p.mSurfaceControl != null) {
-                p.getSyncTransaction().show(p.mSurfaceControl);
-                final Task task = p.asTask();
-                if (task != null) {
-                    task.mLastSurfaceShowing = true;
-                }
-            }
-        }
-        wc.scheduleAnimation();
     }
 
     /**

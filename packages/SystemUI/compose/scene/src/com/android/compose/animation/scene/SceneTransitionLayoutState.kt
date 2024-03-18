@@ -24,6 +24,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.util.fastFilter
+import androidx.compose.ui.util.fastForEach
+import com.android.compose.animation.scene.transition.link.LinkedTransition
+import com.android.compose.animation.scene.transition.link.StateLink
+import kotlin.math.absoluteValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 
@@ -92,15 +97,34 @@ sealed interface MutableSceneTransitionLayoutState : SceneTransitionLayoutState 
     fun setTargetScene(
         targetScene: SceneKey,
         coroutineScope: CoroutineScope,
+        transitionKey: TransitionKey? = null,
     ): TransitionState.Transition?
 }
 
-/** Return a [MutableSceneTransitionLayoutState] initially idle at [initialScene]. */
+/**
+ * Return a [MutableSceneTransitionLayoutState] initially idle at [initialScene].
+ *
+ * @param initialScene the initial scene to which this state is initialized.
+ * @param transitions the [SceneTransitions] used when this state is transitioning between scenes.
+ * @param canChangeScene whether we can transition to the given scene. This is called when the user
+ *   commits a transition to a new scene because of a [UserAction]. If [canChangeScene] returns
+ *   `true`, then the gesture will be committed and we will animate to the other scene. Otherwise,
+ *   the gesture will be cancelled and we will animate back to the current scene.
+ * @param stateLinks the [StateLink] connecting this [SceneTransitionLayoutState] to other
+ *   [SceneTransitionLayoutState]s.
+ */
 fun MutableSceneTransitionLayoutState(
     initialScene: SceneKey,
     transitions: SceneTransitions = SceneTransitions.Empty,
+    canChangeScene: (SceneKey) -> Boolean = { true },
+    stateLinks: List<StateLink> = emptyList(),
 ): MutableSceneTransitionLayoutState {
-    return MutableSceneTransitionLayoutStateImpl(initialScene, transitions)
+    return MutableSceneTransitionLayoutStateImpl(
+        initialScene,
+        transitions,
+        canChangeScene,
+        stateLinks,
+    )
 }
 
 /**
@@ -113,15 +137,32 @@ fun MutableSceneTransitionLayoutState(
  *   This is called when the user commits a transition to a new scene because of a [UserAction], for
  *   instance by triggering back navigation or by swiping to a new scene.
  * @param transitions the definition of the transitions used to animate a change of scene.
+ * @param canChangeScene whether we can transition to the given scene. This is called when the user
+ *   commits a transition to a new scene because of a [UserAction]. If [canChangeScene] returns
+ *   `true`, then [onChangeScene] will be called right afterwards with the same [SceneKey]. If it
+ *   returns `false`, the user action will be cancelled and we will animate back to the current
+ *   scene.
+ * @param stateLinks the [StateLink] connecting this [SceneTransitionLayoutState] to other
+ *   [SceneTransitionLayoutState]s.
  */
 @Composable
 fun updateSceneTransitionLayoutState(
     currentScene: SceneKey,
     onChangeScene: (SceneKey) -> Unit,
     transitions: SceneTransitions = SceneTransitions.Empty,
+    canChangeScene: (SceneKey) -> Boolean = { true },
+    stateLinks: List<StateLink> = emptyList(),
 ): SceneTransitionLayoutState {
-    return remember { HoistedSceneTransitionLayoutScene(currentScene, transitions, onChangeScene) }
-        .apply { update(currentScene, onChangeScene, transitions) }
+    return remember {
+            HoistedSceneTransitionLayoutState(
+                currentScene,
+                transitions,
+                onChangeScene,
+                canChangeScene,
+                stateLinks,
+            )
+        }
+        .apply { update(currentScene, onChangeScene, canChangeScene, transitions, stateLinks) }
 }
 
 @Stable
@@ -182,8 +223,10 @@ sealed interface TransitionState {
     }
 }
 
-internal abstract class BaseSceneTransitionLayoutState(initialScene: SceneKey) :
-    SceneTransitionLayoutState {
+internal abstract class BaseSceneTransitionLayoutState(
+    initialScene: SceneKey,
+    protected var stateLinks: List<StateLink>,
+) : SceneTransitionLayoutState {
     override var transitionState: TransitionState by
         mutableStateOf(TransitionState.Idle(initialScene))
         protected set
@@ -193,6 +236,11 @@ internal abstract class BaseSceneTransitionLayoutState(initialScene: SceneKey) :
      * sense only if [transitionState] is a [TransitionState.Transition].
      */
     internal var transformationSpec: TransformationSpecImpl = TransformationSpec.Empty
+
+    private val activeTransitionLinks = mutableMapOf<StateLink, LinkedTransition>()
+
+    /** Whether we can transition to the given [scene]. */
+    internal abstract fun canChangeScene(scene: SceneKey): Boolean
 
     /**
      * Called when the [current scene][TransitionState.currentScene] should be changed to [scene].
@@ -213,14 +261,50 @@ internal abstract class BaseSceneTransitionLayoutState(initialScene: SceneKey) :
     }
 
     /** Start a new [transition], instantly interrupting any ongoing transition if there was one. */
-    internal fun startTransition(transition: TransitionState.Transition) {
+    internal fun startTransition(
+        transition: TransitionState.Transition,
+        transitionKey: TransitionKey?,
+    ) {
         // Compute the [TransformationSpec] when the transition starts.
         transformationSpec =
             transitions
-                .transitionSpec(transition.fromScene, transition.toScene)
+                .transitionSpec(transition.fromScene, transition.toScene, key = transitionKey)
                 .transformationSpec()
-
+        cancelActiveTransitionLinks()
+        setupTransitionLinks(transition)
         transitionState = transition
+    }
+
+    private fun cancelActiveTransitionLinks() {
+        for ((link, linkedTransition) in activeTransitionLinks) {
+            link.target.finishTransition(linkedTransition, linkedTransition.currentScene)
+        }
+        activeTransitionLinks.clear()
+    }
+
+    private fun setupTransitionLinks(transitionState: TransitionState) {
+        if (transitionState !is TransitionState.Transition) return
+        stateLinks.fastForEach { stateLink ->
+            val matchingLinks =
+                stateLink.transitionLinks.fastFilter { it.isMatchingLink(transitionState) }
+            if (matchingLinks.isEmpty()) return@fastForEach
+            if (matchingLinks.size > 1) error("More than one link matched.")
+
+            val targetCurrentScene = stateLink.target.transitionState.currentScene
+            val matchingLink = matchingLinks[0]
+
+            if (!matchingLink.targetIsInValidState(targetCurrentScene)) return@fastForEach
+
+            val linkedTransition =
+                LinkedTransition(
+                    originalTransition = transitionState,
+                    fromScene = targetCurrentScene,
+                    toScene = matchingLink.targetTo,
+                )
+
+            stateLink.target.startTransition(linkedTransition, matchingLink.targetTransitionKey)
+            activeTransitionLinks[stateLink] = linkedTransition
+        }
     }
 
     /**
@@ -228,8 +312,50 @@ internal abstract class BaseSceneTransitionLayoutState(initialScene: SceneKey) :
      * nothing if [transition] was interrupted since it was started.
      */
     internal fun finishTransition(transition: TransitionState.Transition, idleScene: SceneKey) {
+        resolveActiveTransitionLinks(idleScene)
         if (transitionState == transition) {
             transitionState = TransitionState.Idle(idleScene)
+        }
+    }
+
+    private fun resolveActiveTransitionLinks(idleScene: SceneKey) {
+        val previousTransition = this.transitionState as? TransitionState.Transition ?: return
+        for ((link, linkedTransition) in activeTransitionLinks) {
+            if (previousTransition.fromScene == idleScene) {
+                // The transition ended by arriving at the fromScene, move link to Idle(fromScene).
+                link.target.finishTransition(linkedTransition, linkedTransition.fromScene)
+            } else if (previousTransition.toScene == idleScene) {
+                // The transition ended by arriving at the toScene, move link to Idle(toScene).
+                link.target.finishTransition(linkedTransition, linkedTransition.toScene)
+            } else {
+                // The transition was interrupted by something else, we reset to initial state.
+                link.target.finishTransition(linkedTransition, linkedTransition.fromScene)
+            }
+        }
+        activeTransitionLinks.clear()
+    }
+
+    /**
+     * Check if a transition is in progress. If the progress value is near 0 or 1, immediately snap
+     * to the closest scene.
+     *
+     * @return true if snapped to the closest scene.
+     */
+    internal fun snapToIdleIfClose(threshold: Float): Boolean {
+        val transition = currentTransition ?: return false
+        val progress = transition.progress
+        fun isProgressCloseTo(value: Float) = (progress - value).absoluteValue <= threshold
+
+        return when {
+            isProgressCloseTo(0f) -> {
+                finishTransition(transition, transition.fromScene)
+                true
+            }
+            isProgressCloseTo(1f) -> {
+                finishTransition(transition, transition.toScene)
+                true
+            }
+            else -> false
         }
     }
 }
@@ -238,24 +364,32 @@ internal abstract class BaseSceneTransitionLayoutState(initialScene: SceneKey) :
  * A [SceneTransitionLayout] whose current scene/source of truth is hoisted (its current value comes
  * from outside).
  */
-internal class HoistedSceneTransitionLayoutScene(
+internal class HoistedSceneTransitionLayoutState(
     initialScene: SceneKey,
     override var transitions: SceneTransitions,
     private var changeScene: (SceneKey) -> Unit,
-) : BaseSceneTransitionLayoutState(initialScene) {
+    private var canChangeScene: (SceneKey) -> Boolean,
+    stateLinks: List<StateLink> = emptyList(),
+) : BaseSceneTransitionLayoutState(initialScene, stateLinks) {
     private val targetSceneChannel = Channel<SceneKey>(Channel.CONFLATED)
 
-    override fun CoroutineScope.onChangeScene(scene: SceneKey) = changeScene(scene)
+    override fun canChangeScene(scene: SceneKey): Boolean = canChangeScene.invoke(scene)
+
+    override fun CoroutineScope.onChangeScene(scene: SceneKey) = changeScene.invoke(scene)
 
     @Composable
     fun update(
         currentScene: SceneKey,
         onChangeScene: (SceneKey) -> Unit,
+        canChangeScene: (SceneKey) -> Boolean,
         transitions: SceneTransitions,
+        stateLinks: List<StateLink>,
     ) {
         SideEffect {
             this.changeScene = onChangeScene
+            this.canChangeScene = canChangeScene
             this.transitions = transitions
+            this.stateLinks = stateLinks
 
             targetSceneChannel.trySend(currentScene)
         }
@@ -265,7 +399,11 @@ internal class HoistedSceneTransitionLayoutScene(
                 // Inspired by AnimateAsState.kt: let's poll the last value to avoid being one frame
                 // late.
                 val newKey = targetSceneChannel.tryReceive().getOrNull() ?: newKey
-                animateToScene(layoutState = this@HoistedSceneTransitionLayoutScene, newKey)
+                animateToScene(
+                    layoutState = this@HoistedSceneTransitionLayoutState,
+                    target = newKey,
+                    transitionKey = null,
+                )
             }
         }
     }
@@ -275,18 +413,22 @@ internal class HoistedSceneTransitionLayoutScene(
 internal class MutableSceneTransitionLayoutStateImpl(
     initialScene: SceneKey,
     override var transitions: SceneTransitions,
-) : MutableSceneTransitionLayoutState, BaseSceneTransitionLayoutState(initialScene) {
+    private val canChangeScene: (SceneKey) -> Boolean = { true },
+    stateLinks: List<StateLink> = emptyList(),
+) : MutableSceneTransitionLayoutState, BaseSceneTransitionLayoutState(initialScene, stateLinks) {
     override fun setTargetScene(
         targetScene: SceneKey,
-        coroutineScope: CoroutineScope
+        coroutineScope: CoroutineScope,
+        transitionKey: TransitionKey?,
     ): TransitionState.Transition? {
-        return with(this) {
-            coroutineScope.animateToScene(
-                layoutState = this@MutableSceneTransitionLayoutStateImpl,
-                target = targetScene,
-            )
-        }
+        return coroutineScope.animateToScene(
+            layoutState = this@MutableSceneTransitionLayoutStateImpl,
+            target = targetScene,
+            transitionKey = transitionKey,
+        )
     }
+
+    override fun canChangeScene(scene: SceneKey): Boolean = canChangeScene.invoke(scene)
 
     override fun CoroutineScope.onChangeScene(scene: SceneKey) {
         setTargetScene(scene, coroutineScope = this)

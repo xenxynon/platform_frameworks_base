@@ -18,11 +18,13 @@
 
 package com.android.systemui.keyguard.ui.viewmodel
 
+import com.android.systemui.communal.domain.interactor.communalInteractor
 import com.android.systemui.deviceentry.domain.interactor.deviceEntryInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.keyguardTransitionInteractor
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
+import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.statusbar.notification.stack.domain.interactor.notificationsKeyguardInteractor
 import com.android.systemui.statusbar.phone.dozeParameters
 import com.android.systemui.statusbar.phone.screenOffAnimationController
@@ -33,13 +35,28 @@ val Kosmos.keyguardRootViewModel by Fixture {
         deviceEntryInteractor = deviceEntryInteractor,
         dozeParameters = dozeParameters,
         keyguardInteractor = keyguardInteractor,
+        communalInteractor = communalInteractor,
         keyguardTransitionInteractor = keyguardTransitionInteractor,
         notificationsKeyguardInteractor = notificationsKeyguardInteractor,
+        alternateBouncerToGoneTransitionViewModel = alternateBouncerToGoneTransitionViewModel,
         aodToLockscreenTransitionViewModel = aodToLockscreenTransitionViewModel,
+        dozingToLockscreenTransitionViewModel = dozingToLockscreenTransitionViewModel,
+        glanceableHubToLockscreenTransitionViewModel = glanceableHubToLockscreenTransitionViewModel,
+        lockscreenToDreamingTransitionViewModel = lockscreenToDreamingTransitionViewModel,
+        lockscreenToGlanceableHubTransitionViewModel = lockscreenToGlanceableHubTransitionViewModel,
+        lockscreenToGoneTransitionViewModel = lockscreenToGoneTransitionViewModel,
+        lockscreenToOccludedTransitionViewModel = lockscreenToOccludedTransitionViewModel,
+        lockscreenToPrimaryBouncerTransitionViewModel =
+            lockscreenToPrimaryBouncerTransitionViewModel,
+        occludedToAodTransitionViewModel = occludedToAodTransitionViewModel,
+        occludedToLockscreenTransitionViewModel = occludedToLockscreenTransitionViewModel,
+        primaryBouncerToAodTransitionViewModel = primaryBouncerToAodTransitionViewModel,
+        primaryBouncerToGoneTransitionViewModel = primaryBouncerToGoneTransitionViewModel,
+        primaryBouncerToLockscreenTransitionViewModel =
+            primaryBouncerToLockscreenTransitionViewModel,
         screenOffAnimationController = screenOffAnimationController,
         aodBurnInViewModel = aodBurnInViewModel,
         aodAlphaViewModel = aodAlphaViewModel,
-        lockscreenToGlanceableHubTransitionViewModel = lockscreenToGlanceableHubTransitionViewModel,
-        glanceableHubToLockscreenTransitionViewModel = glanceableHubToLockscreenTransitionViewModel,
+        shadeInteractor = shadeInteractor,
     )
 }

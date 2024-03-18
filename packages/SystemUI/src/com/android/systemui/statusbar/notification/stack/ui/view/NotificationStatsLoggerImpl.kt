@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.notification.stack.ui.view
 
+import android.os.Trace
 import android.service.notification.NotificationListenerService
 import androidx.annotation.VisibleForTesting
 import com.android.internal.statusbar.IStatusBarService
@@ -53,10 +54,11 @@ constructor(
 
     private val expansionStates: MutableMap<String, ExpansionState> =
         ConcurrentHashMap<String, ExpansionState>()
-    private val lastReportedExpansionValues: MutableMap<String, Boolean> =
+    @VisibleForTesting
+    val lastReportedExpansionValues: MutableMap<String, Boolean> =
         ConcurrentHashMap<String, Boolean>()
 
-    override fun onNotificationListUpdated(
+    override fun onNotificationLocationsChanged(
         locationsProvider: Callable<Map<String, Int>>,
         notificationRanks: Map<String, Int>,
     ) {
@@ -152,14 +154,12 @@ constructor(
             )
     }
 
-    // TODO(b/308623704) wire this in with NotifPipeline updates
     override fun onNotificationRemoved(key: String) {
         // No need to track expansion states for Notifications that are removed.
         expansionStates.remove(key)
         lastReportedExpansionValues.remove(key)
     }
 
-    // TODO(b/308623704) wire this in with NotifPipeline updates
     override fun onNotificationUpdated(key: String) {
         // When the Notification is updated, we should consider it as not yet logged.
         lastReportedExpansionValues.remove(key)
@@ -183,6 +183,8 @@ constructor(
 
             maybeLogVisibilityChanges(newlyVisible, noLongerVisible, activeNotifCount)
             updateExpansionStates(newlyVisible, noLongerVisible)
+            Trace.traceCounter(Trace.TRACE_TAG_APP, "Notifications [Active]", activeNotifCount)
+            Trace.traceCounter(Trace.TRACE_TAG_APP, "Notifications [Visible]", newVisibilities.size)
 
             lastLoggedVisibilities.clear()
             lastLoggedVisibilities.putAll(newVisibilities)

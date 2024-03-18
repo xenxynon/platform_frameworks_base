@@ -146,6 +146,8 @@ import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
 import android.os.PersistableBundle;
 import android.os.Process;
+import android.os.ProfilingFrameworkInitializer;
+import android.os.ProfilingServiceManager;
 import android.os.RemoteCallback;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -236,7 +238,6 @@ import com.android.internal.util.Preconditions;
 import com.android.internal.util.function.pooled.PooledLambda;
 import com.android.org.conscrypt.TrustedCertificateStore;
 import com.android.server.am.MemInfoDumpProto;
-import com.android.window.flags.Flags;
 
 import dalvik.annotation.optimization.NeverCompile;
 import dalvik.system.AppSpecializationHooks;
@@ -304,7 +305,7 @@ public final class ActivityThread extends ClientTransactionHandler
     public static final boolean DEBUG_MEMORY_TRIM = false;
     private static final boolean DEBUG_PROVIDER = false;
     public static final boolean DEBUG_ORDER = false;
-    private static final boolean DEBUG_APP_INFO = true;
+    private static final boolean DEBUG_APP_INFO = false;
     private static final long MIN_TIME_BETWEEN_GCS = 5*1000;
     /**
      * The delay to release the provider when it has no more references. It reduces the number of
@@ -320,6 +321,10 @@ public final class ActivityThread extends ClientTransactionHandler
     public static final int SERVICE_DONE_EXECUTING_START = 1;
     /** Type for IActivityManager.serviceDoneExecuting: done stopping (destroying) service */
     public static final int SERVICE_DONE_EXECUTING_STOP = 2;
+    /** Type for IActivityManager.serviceDoneExecuting: done with an onRebind call */
+    public static final int SERVICE_DONE_EXECUTING_REBIND = 3;
+    /** Type for IActivityManager.serviceDoneExecuting: done with an onUnbind call */
+    public static final int SERVICE_DONE_EXECUTING_UNBIND = 4;
 
     /** Use foreground GC policy (less pause time) and higher JIT weight. */
     private static final int VM_PROCESS_STATE_JANK_PERCEPTIBLE = 0;
@@ -577,6 +582,7 @@ public final class ActivityThread extends ClientTransactionHandler
         public IBinder shareableActivityToken;
         // The token of the TaskFragment that embedded this activity.
         @Nullable public IBinder mTaskFragmentToken;
+        public IBinder initialCallerInfoAccessToken;
         int ident;
         @UnsupportedAppUsage
         Intent intent;
@@ -665,7 +671,7 @@ public final class ActivityThread extends ClientTransactionHandler
                 List<ReferrerIntent> pendingNewIntents, SceneTransitionInfo sceneTransitionInfo,
                 boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client,
                 IBinder assistToken, IBinder shareableActivityToken, boolean launchedFromBubble,
-                IBinder taskFragmentToken) {
+                IBinder taskFragmentToken, IBinder initialCallerInfoAccessToken) {
             this.token = token;
             this.assistToken = assistToken;
             this.shareableActivityToken = shareableActivityToken;
@@ -682,6 +688,7 @@ public final class ActivityThread extends ClientTransactionHandler
             this.profilerInfo = profilerInfo;
             this.overrideConfig = overrideConfig;
             this.packageInfo = client.getPackageInfoNoCheck(activityInfo.applicationInfo);
+            this.initialCallerInfoAccessToken = initialCallerInfoAccessToken;
             mSceneTransitionInfo = sceneTransitionInfo;
             mLaunchedFromBubble = launchedFromBubble;
             mTaskFragmentToken = taskFragmentToken;
@@ -1224,6 +1231,16 @@ public final class ActivityThread extends ClientTransactionHandler
         @Override
         public final void schedulePing(RemoteCallback pong) {
             sendMessage(H.PING, pong);
+        }
+
+        @Override
+        public final void scheduleTimeoutServiceForType(IBinder token, int startId,
+                @ServiceInfo.ForegroundServiceType int fgsType) {
+            if (Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
+                Trace.instant(Trace.TRACE_TAG_ACTIVITY_MANAGER,
+                        "scheduleTimeoutServiceForType. token=" + token);
+            }
+            sendMessage(H.TIMEOUT_SERVICE_FOR_TYPE, token, startId, fgsType);
         }
 
         @Override
@@ -2283,6 +2300,8 @@ public final class ActivityThread extends ClientTransactionHandler
         public static final int INSTRUMENT_WITHOUT_RESTART = 170;
         public static final int FINISH_INSTRUMENTATION_WITHOUT_RESTART = 171;
 
+        public static final int TIMEOUT_SERVICE_FOR_TYPE = 172;
+
         String codeToString(int code) {
             if (DEBUG_MESSAGES) {
                 switch (code) {
@@ -2336,6 +2355,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     case DUMP_RESOURCES: return "DUMP_RESOURCES";
                     case TIMEOUT_SERVICE: return "TIMEOUT_SERVICE";
                     case PING: return "PING";
+                    case TIMEOUT_SERVICE_FOR_TYPE: return "TIMEOUT_SERVICE_FOR_TYPE";
                 }
             }
             return Integer.toString(code);
@@ -2421,6 +2441,14 @@ public final class ActivityThread extends ClientTransactionHandler
                     break;
                 case PING:
                     ((RemoteCallback) msg.obj).sendResult(null);
+                    break;
+                case TIMEOUT_SERVICE_FOR_TYPE:
+                    if (Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
+                        Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER,
+                                "serviceTimeoutForType: " + msg.obj);
+                    }
+                    handleTimeoutServiceForType((IBinder) msg.obj, msg.arg1, msg.arg2);
+                    Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
                 case CONFIGURATION_CHANGED:
                     mConfigurationController.handleConfigurationChanged((Configuration) msg.obj);
@@ -3731,15 +3759,11 @@ public final class ActivityThread extends ClientTransactionHandler
         if (DEBUG_RESULTS) Slog.v(TAG, "sendActivityResult: id=" + id
                 + " req=" + requestCode + " res=" + resultCode + " data=" + data);
         final ArrayList<ResultInfo> list = new ArrayList<>();
-        list.add(new ResultInfo(id, requestCode, resultCode, data));
+        list.add(new ResultInfo(id, requestCode, resultCode, data, activityToken));
         final ClientTransaction clientTransaction = ClientTransaction.obtain(mAppThread);
         final ActivityResultItem activityResultItem = ActivityResultItem.obtain(
                 activityToken, list);
-        if (Flags.bundleClientTransactionFlag()) {
-            clientTransaction.addTransactionItem(activityResultItem);
-        } else {
-            clientTransaction.addCallback(activityResultItem);
-        }
+        clientTransaction.addTransactionItem(activityResultItem);
         try {
             mAppThread.scheduleTransaction(clientTransaction);
         } catch (RemoteException e) {
@@ -3911,7 +3935,7 @@ public final class ActivityThread extends ClientTransactionHandler
                         r.ident, app, r.intent, r.activityInfo, title, r.parent,
                         r.embeddedID, r.lastNonConfigurationInstances, config,
                         r.referrer, r.voiceInteractor, window, r.activityConfigCallback,
-                        r.assistToken, r.shareableActivityToken);
+                        r.assistToken, r.shareableActivityToken, r.initialCallerInfoAccessToken);
 
                 if (customIntent != null) {
                     activity.mIntent = customIntent;
@@ -4176,7 +4200,12 @@ public final class ActivityThread extends ClientTransactionHandler
             intent.prepareToEnterProcess(isProtectedComponent(r.activityInfo),
                     r.activity.getAttributionSource());
             r.activity.mFragments.noteStateNotSaved();
-            mInstrumentation.callActivityOnNewIntent(r.activity, intent);
+            if (android.security.Flags.contentUriPermissionApis()) {
+                ComponentCaller caller = new ComponentCaller(r.token, intent.mCallerToken);
+                mInstrumentation.callActivityOnNewIntent(r.activity, intent, caller);
+            } else {
+                mInstrumentation.callActivityOnNewIntent(r.activity, intent);
+            }
         }
     }
 
@@ -4521,11 +4550,7 @@ public final class ActivityThread extends ClientTransactionHandler
         final PauseActivityItem pauseActivityItem = PauseActivityItem.obtain(r.token,
                 r.activity.isFinishing(), /* userLeaving */ true, r.activity.mConfigChangeFlags,
                 /* dontReport */ false, /* autoEnteringPip */ false);
-        if (Flags.bundleClientTransactionFlag()) {
-            transaction.addTransactionItem(pauseActivityItem);
-        } else {
-            transaction.setLifecycleStateRequest(pauseActivityItem);
-        }
+        transaction.addTransactionItem(pauseActivityItem);
         executeTransaction(transaction);
     }
 
@@ -4533,11 +4558,7 @@ public final class ActivityThread extends ClientTransactionHandler
         final ClientTransaction transaction = ClientTransaction.obtain(mAppThread);
         final ResumeActivityItem resumeActivityItem = ResumeActivityItem.obtain(r.token,
                 /* isForward */ false, /* shouldSendCompatFakeFocus */ false);
-        if (Flags.bundleClientTransactionFlag()) {
-            transaction.addTransactionItem(resumeActivityItem);
-        } else {
-            transaction.setLifecycleStateRequest(resumeActivityItem);
-        }
+        transaction.addTransactionItem(resumeActivityItem);
         executeTransaction(transaction);
     }
 
@@ -4883,7 +4904,7 @@ public final class ActivityThread extends ClientTransactionHandler
             mServices.put(data.token, service);
             try {
                 ActivityManager.getService().serviceDoneExecuting(
-                        data.token, SERVICE_DONE_EXECUTING_ANON, 0, 0);
+                        data.token, SERVICE_DONE_EXECUTING_ANON, 0, 0, null);
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
             }
@@ -4914,7 +4935,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     } else {
                         s.onRebind(data.intent);
                         ActivityManager.getService().serviceDoneExecuting(
-                                data.token, SERVICE_DONE_EXECUTING_ANON, 0, 0);
+                                data.token, SERVICE_DONE_EXECUTING_REBIND, 0, 0, data.intent);
                     }
                 } catch (RemoteException ex) {
                     throw ex.rethrowFromSystemServer();
@@ -4944,7 +4965,7 @@ public final class ActivityThread extends ClientTransactionHandler
                                 data.token, data.intent, doRebind);
                     } else {
                         ActivityManager.getService().serviceDoneExecuting(
-                                data.token, SERVICE_DONE_EXECUTING_ANON, 0, 0);
+                                data.token, SERVICE_DONE_EXECUTING_UNBIND, 0, 0, data.intent);
                     }
                 } catch (RemoteException ex) {
                     throw ex.rethrowFromSystemServer();
@@ -5058,7 +5079,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
                 try {
                     ActivityManager.getService().serviceDoneExecuting(
-                            data.token, SERVICE_DONE_EXECUTING_START, data.startId, res);
+                            data.token, SERVICE_DONE_EXECUTING_START, data.startId, res, null);
                 } catch (RemoteException e) {
                     throw e.rethrowFromSystemServer();
                 }
@@ -5090,7 +5111,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
                 try {
                     ActivityManager.getService().serviceDoneExecuting(
-                            token, SERVICE_DONE_EXECUTING_STOP, 0, 0);
+                            token, SERVICE_DONE_EXECUTING_STOP, 0, 0, null);
                 } catch (RemoteException e) {
                     throw e.rethrowFromSystemServer();
                 }
@@ -5131,6 +5152,27 @@ public final class ActivityThread extends ClientTransactionHandler
             Slog.wtf(TAG, "handleTimeoutService: token=" + token + " not found.");
         }
     }
+
+    private void handleTimeoutServiceForType(IBinder token, int startId,
+            @ServiceInfo.ForegroundServiceType int fgsType) {
+        Service s = mServices.get(token);
+        if (s != null) {
+            try {
+                if (localLOGV) Slog.v(TAG, "Timeout service " + s);
+
+                s.callOnTimeLimitExceeded(startId, fgsType);
+            } catch (Exception e) {
+                if (!mInstrumentation.onException(s, e)) {
+                    throw new RuntimeException(
+                            "Unable to call onTimeLimitExceeded on service " + s + ": " + e, e);
+                }
+                Slog.i(TAG, "handleTimeoutServiceForType: exception for " + token, e);
+            }
+        } else {
+            Slog.wtf(TAG, "handleTimeoutServiceForType: token=" + token + " not found.");
+        }
+    }
+
     /**
      * Resume the activity.
      * @param r Target activity record.
@@ -5747,8 +5789,14 @@ public final class ActivityThread extends ClientTransactionHandler
                 }
                 if (DEBUG_RESULTS) Slog.v(TAG,
                         "Delivering result to activity " + r + " : " + ri);
-                r.activity.dispatchActivityResult(ri.mResultWho,
-                        ri.mRequestCode, ri.mResultCode, ri.mData, reason);
+                if (android.security.Flags.contentUriPermissionApis()) {
+                    ComponentCaller caller = new ComponentCaller(r.token, ri.mCallerToken);
+                    r.activity.dispatchActivityResult(ri.mResultWho,
+                            ri.mRequestCode, ri.mResultCode, ri.mData, caller, reason);
+                } else {
+                    r.activity.dispatchActivityResult(ri.mResultWho,
+                            ri.mRequestCode, ri.mResultCode, ri.mData, reason);
+                }
             } catch (Exception e) {
                 if (!mInstrumentation.onException(r.activity, e)) {
                     throw new RuntimeException(
@@ -6131,13 +6179,8 @@ public final class ActivityThread extends ClientTransactionHandler
                 TransactionExecutorHelper.getLifecycleRequestForCurrentState(r);
         // Schedule the transaction.
         final ClientTransaction transaction = ClientTransaction.obtain(mAppThread);
-        if (Flags.bundleClientTransactionFlag()) {
-            transaction.addTransactionItem(activityRelaunchItem);
-            transaction.addTransactionItem(lifecycleRequest);
-        } else {
-            transaction.addCallback(activityRelaunchItem);
-            transaction.setLifecycleStateRequest(lifecycleRequest);
-        }
+        transaction.addTransactionItem(activityRelaunchItem);
+        transaction.addTransactionItem(lifecycleRequest);
         executeTransaction(transaction);
     }
 
@@ -6793,6 +6836,7 @@ public final class ActivityThread extends ClientTransactionHandler
                             }
                         }
                         if (killApp) {
+                            // Keep in sync with "perhaps it was removed" case below.
                             mPackages.remove(packages[i]);
                             mResourcePackages.remove(packages[i]);
                         }
@@ -6835,23 +6879,24 @@ public final class ActivityThread extends ClientTransactionHandler
                                                 PackageManager.GET_SHARED_LIBRARY_FILES,
                                                 UserHandle.myUserId());
 
-                                if (mActivities.size() > 0) {
-                                    for (ActivityClientRecord ar : mActivities.values()) {
-                                        if (ar.activityInfo.applicationInfo.packageName
-                                                .equals(packageName)) {
-                                            ar.activityInfo.applicationInfo = aInfo;
-                                            ar.packageInfo = pkgInfo;
+                                if (aInfo != null) {
+                                    if (mActivities.size() > 0) {
+                                        for (ActivityClientRecord ar : mActivities.values()) {
+                                            if (ar.activityInfo.applicationInfo.packageName
+                                                    .equals(packageName)) {
+                                                ar.activityInfo.applicationInfo = aInfo;
+                                                ar.packageInfo = pkgInfo;
+                                            }
                                         }
                                     }
-                                }
 
-                                final String[] oldResDirs = { pkgInfo.getResDir() };
+                                    final String[] oldResDirs = {pkgInfo.getResDir()};
 
-                                final ArrayList<String> oldPaths = new ArrayList<>();
-                                LoadedApk.makePaths(this, pkgInfo.getApplicationInfo(), oldPaths);
-                                pkgInfo.updateApplicationInfo(aInfo, oldPaths);
+                                    final ArrayList<String> oldPaths = new ArrayList<>();
+                                    LoadedApk.makePaths(
+                                            this, pkgInfo.getApplicationInfo(), oldPaths);
+                                    pkgInfo.updateApplicationInfo(aInfo, oldPaths);
 
-                                synchronized (mResourcesManager) {
                                     // Update affected Resources objects to use new ResourcesImpl
                                     mResourcesManager.appendPendingAppInfoUpdate(oldResDirs,
                                             aInfo);
@@ -6859,6 +6904,12 @@ public final class ActivityThread extends ClientTransactionHandler
                                 }
                             } catch (RemoteException e) {
                             }
+                        } else {
+                            // No package, perhaps it was removed?
+                            Slog.e(TAG, "Package [" + packages[i] + "] reported as REPLACED,"
+                                    + " but missing application info. Assuming REMOVED.");
+                            mPackages.remove(packages[i]);
+                            mResourcePackages.remove(packages[i]);
                         }
                     }
                 }
@@ -8580,6 +8631,9 @@ public final class ActivityThread extends ClientTransactionHandler
         NfcFrameworkInitializer.setNfcServiceManager(new NfcServiceManager());
         DeviceConfigInitializer.setDeviceConfigServiceManager(new DeviceConfigServiceManager());
         SeFrameworkInitializer.setSeServiceManager(new SeServiceManager());
+        if (android.server.Flags.telemetryApisService()) {
+            ProfilingFrameworkInitializer.setProfilingServiceManager(new ProfilingServiceManager());
+        }
     }
 
     private void purgePendingResources() {

@@ -16,35 +16,31 @@
 
 package com.android.systemui.keyguard.ui.binder
 
-import android.animation.Animator
-import android.animation.ValueAnimator
-import android.transition.Transition
 import android.transition.TransitionManager
 import android.transition.TransitionSet
-import android.transition.TransitionValues
-import android.view.ViewGroup
+import android.view.View.INVISIBLE
 import androidx.annotation.VisibleForTesting
 import androidx.constraintlayout.helper.widget.Layer
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import com.android.app.animation.Interpolators
 import com.android.keyguard.KeyguardClockSwitch.LARGE
 import com.android.keyguard.KeyguardClockSwitch.SMALL
 import com.android.systemui.Flags.migrateClocksToBlueprint
 import com.android.systemui.keyguard.domain.interactor.KeyguardBlueprintInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
+import com.android.systemui.keyguard.ui.view.layout.blueprints.transitions.IntraBlueprintTransition.Type
 import com.android.systemui.keyguard.ui.view.layout.sections.ClockSection
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.plugins.clocks.ClockController
-import com.android.systemui.res.R
+import com.android.systemui.shared.clocks.DEFAULT_CLOCK_ID
 import kotlinx.coroutines.launch
 
-private const val KEYGUARD_STATUS_VIEW_CUSTOM_CLOCK_MOVE_DURATION_MS = 1000L
-
 object KeyguardClockViewBinder {
+    private val TAG = KeyguardClockViewBinder::class.simpleName!!
+
     @JvmStatic
     fun bind(
         clockSection: ClockSection,
@@ -67,24 +63,42 @@ object KeyguardClockViewBinder {
                         viewModel.clock = currentClock
                         addClockViews(currentClock, keyguardRootView)
                         updateBurnInLayer(keyguardRootView, viewModel)
-                        blueprintInteractor.refreshBlueprint()
+                        applyConstraints(clockSection, keyguardRootView, true)
                     }
                 }
                 launch {
                     if (!migrateClocksToBlueprint()) return@launch
                     viewModel.clockSize.collect {
                         updateBurnInLayer(keyguardRootView, viewModel)
-                        blueprintInteractor.refreshBlueprint()
+                        blueprintInteractor.refreshBlueprint(Type.ClockSize)
                     }
                 }
                 launch {
                     if (!migrateClocksToBlueprint()) return@launch
-                    viewModel.clockShouldBeCentered.collect {
+                    viewModel.clockShouldBeCentered.collect { clockShouldBeCentered ->
                         viewModel.clock?.let {
-                            if (it.largeClock.config.hasCustomPositionUpdatedAnimation) {
-                                playClockCenteringAnimation(clockSection, keyguardRootView, it)
+                            // Weather clock also has hasCustomPositionUpdatedAnimation as true
+                            // TODO(b/323020908): remove ID check
+                            if (
+                                it.largeClock.config.hasCustomPositionUpdatedAnimation &&
+                                    it.config.id == DEFAULT_CLOCK_ID
+                            ) {
+                                blueprintInteractor.refreshBlueprint(Type.DefaultClockStepping)
                             } else {
-                                blueprintInteractor.refreshBlueprint()
+                                blueprintInteractor.refreshBlueprint(Type.DefaultTransition)
+                            }
+                        }
+                    }
+                }
+                launch {
+                    if (!migrateClocksToBlueprint()) return@launch
+                    viewModel.isAodIconsVisible.collect { isAodIconsVisible ->
+                        viewModel.clock?.let {
+                            // Weather clock also has hasCustomPositionUpdatedAnimation as true
+                            if (
+                                viewModel.useLargeClock && it.config.id == "DIGITAL_CLOCK_WEATHER"
+                            ) {
+                                blueprintInteractor.refreshBlueprint(Type.DefaultTransition)
                             }
                         }
                     }
@@ -92,6 +106,7 @@ object KeyguardClockViewBinder {
             }
         }
     }
+
     @VisibleForTesting
     fun updateBurnInLayer(
         keyguardRootView: ConstraintLayout,
@@ -143,16 +158,15 @@ object KeyguardClockViewBinder {
         rootView: ConstraintLayout,
     ) {
         clockController?.let { clock ->
-            clock.smallClock.layout.views[0].id = R.id.lockscreen_clock_view
-            if (clock.largeClock.layout.views.size == 1) {
-                clock.largeClock.layout.views[0].id = R.id.lockscreen_clock_view_large
+            clock.smallClock.layout.views.forEach {
+                rootView.addView(it).apply { it.visibility = INVISIBLE }
             }
-            // small clock should either be a single view or container with id
-            // `lockscreen_clock_view`
-            clock.smallClock.layout.views.forEach { rootView.addView(it) }
-            clock.largeClock.layout.views.forEach { rootView.addView(it) }
+            clock.largeClock.layout.views.forEach {
+                rootView.addView(it).apply { it.visibility = INVISIBLE }
+            }
         }
     }
+
     fun applyConstraints(
         clockSection: ClockSection,
         rootView: ConstraintLayout,
@@ -166,75 +180,5 @@ object KeyguardClockViewBinder {
                 ?: run { TransitionManager.beginDelayedTransition(rootView) }
         }
         constraintSet.applyTo(rootView)
-    }
-
-    private fun playClockCenteringAnimation(
-        clockSection: ClockSection,
-        keyguardRootView: ConstraintLayout,
-        clock: ClockController,
-    ) {
-        // Find the clock, so we can exclude it from this transition.
-        val clockView = clock.largeClock.view
-        val set = TransitionSet()
-        val adapter = SplitShadeTransitionAdapter(clock)
-        adapter.setInterpolator(Interpolators.LINEAR)
-        adapter.setDuration(KEYGUARD_STATUS_VIEW_CUSTOM_CLOCK_MOVE_DURATION_MS)
-        adapter.addTarget(clockView)
-        set.addTransition(adapter)
-        applyConstraints(clockSection, keyguardRootView, true, set)
-    }
-
-    internal class SplitShadeTransitionAdapter
-    @VisibleForTesting
-    constructor(private val clock: ClockController) : Transition() {
-        private fun captureValues(transitionValues: TransitionValues) {
-            transitionValues.values[PROP_BOUNDS_LEFT] = transitionValues.view.left
-            val locationInWindowTmp = IntArray(2)
-            transitionValues.view.getLocationInWindow(locationInWindowTmp)
-            transitionValues.values[PROP_X_IN_WINDOW] = locationInWindowTmp[0]
-        }
-
-        override fun captureEndValues(transitionValues: TransitionValues) {
-            captureValues(transitionValues)
-        }
-
-        override fun captureStartValues(transitionValues: TransitionValues) {
-            captureValues(transitionValues)
-        }
-
-        override fun createAnimator(
-            sceneRoot: ViewGroup,
-            startValues: TransitionValues?,
-            endValues: TransitionValues?
-        ): Animator? {
-            if (startValues == null || endValues == null) {
-                return null
-            }
-            val anim = ValueAnimator.ofFloat(0f, 1f)
-            val fromLeft = startValues.values[PROP_BOUNDS_LEFT] as Int
-            val fromWindowX = startValues.values[PROP_X_IN_WINDOW] as Int
-            val toWindowX = endValues.values[PROP_X_IN_WINDOW] as Int
-            // Using windowX, to determine direction, instead of left, as in RTL the difference of
-            // toLeft - fromLeft is always positive, even when moving left.
-            val direction = if (toWindowX - fromWindowX > 0) 1 else -1
-            anim.addUpdateListener { animation: ValueAnimator ->
-                clock.largeClock.animations.onPositionUpdated(
-                    fromLeft,
-                    direction,
-                    animation.animatedFraction
-                )
-            }
-            return anim
-        }
-
-        override fun getTransitionProperties(): Array<String> {
-            return TRANSITION_PROPERTIES
-        }
-
-        companion object {
-            private const val PROP_BOUNDS_LEFT = "splitShadeTransitionAdapter:boundsLeft"
-            private const val PROP_X_IN_WINDOW = "splitShadeTransitionAdapter:xInWindow"
-            private val TRANSITION_PROPERTIES = arrayOf(PROP_BOUNDS_LEFT, PROP_X_IN_WINDOW)
-        }
     }
 }

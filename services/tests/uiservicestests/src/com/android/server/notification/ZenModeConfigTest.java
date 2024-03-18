@@ -49,6 +49,8 @@ import com.android.modules.utils.TypedXmlPullParser;
 import com.android.modules.utils.TypedXmlSerializer;
 import com.android.server.UiServiceTestCase;
 
+import com.google.common.collect.ImmutableSet;
+
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -86,7 +88,8 @@ public class ZenModeConfigTest extends UiServiceTestCase {
     private final int CREATION_TIME = 123;
 
     @Rule
-    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule();
+    public final SetFlagsRule mSetFlagsRule = new SetFlagsRule(
+            SetFlagsRule.DefaultInitValueType.DEVICE_DEFAULT);
 
     @Before
     public final void setUp() {
@@ -284,7 +287,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
                 actual.getPriorityConversationSenders());
         assertEquals(expected.getPriorityCallSenders(), actual.getPriorityCallSenders());
         assertEquals(expected.getPriorityMessageSenders(), actual.getPriorityMessageSenders());
-        assertEquals(expected.getPriorityChannels(), actual.getPriorityChannels());
+        assertEquals(expected.getPriorityChannelsAllowed(), actual.getPriorityChannelsAllowed());
     }
 
     @Test
@@ -496,6 +499,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
                 .setShouldDisableTouch(true)
                 .setShouldMinimizeRadioUsage(false)
                 .setShouldMaximizeDoze(true)
+                .setExtraEffects(ImmutableSet.of("one", "two"))
                 .build();
         rule.creationTime = CREATION_TIME;
 
@@ -540,6 +544,28 @@ public class ZenModeConfigTest extends UiServiceTestCase {
         assertEquals(rule.triggerDescription, fromXml.triggerDescription);
         assertEquals(rule.iconResName, fromXml.iconResName);
         assertEquals(rule.deletionInstant, fromXml.deletionInstant);
+    }
+
+    @Test
+    public void testRuleXml_weirdEffects() throws Exception {
+        ZenModeConfig.ZenRule rule = new ZenModeConfig.ZenRule();
+        rule.zenDeviceEffects = new ZenDeviceEffects.Builder()
+                .setShouldMaximizeDoze(true)
+                .addExtraEffect("one,stillOne,,andStillOne,,,andYetStill")
+                .addExtraEffect(",two,stillTwo,")
+                .addExtraEffect("three\\andThree")
+                .addExtraEffect("four\\,andFour")
+                .build();
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        writeRuleXml(rule, baos);
+        ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+        ZenModeConfig.ZenRule fromXml = readRuleXml(bais);
+
+        assertThat(fromXml.zenDeviceEffects.getExtraEffects()).isNotNull();
+        assertThat(fromXml.zenDeviceEffects.getExtraEffects())
+                .containsExactly("one,stillOne,,andStillOne,,,andYetStill", ",two,stillTwo,",
+                        "three\\andThree", "four\\,andFour");
     }
 
     @Test
@@ -596,6 +622,21 @@ public class ZenModeConfigTest extends UiServiceTestCase {
         ZenModeConfig.ZenRule fromXml = readRuleXml(bais);
 
         assertEquals(rule.condition, fromXml.condition);
+    }
+
+    @Test
+    public void testRuleXml_customInterruptionFilter() throws Exception {
+        ZenModeConfig.ZenRule rule = new ZenModeConfig.ZenRule();
+        rule.zenMode = Settings.Global.ZEN_MODE_ALARMS;
+        rule.conditionId = Uri.parse("condition://android/blah");
+        assertThat(Condition.isValidId(rule.conditionId, ZenModeConfig.SYSTEM_AUTHORITY)).isTrue();
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        writeRuleXml(rule, baos);
+        ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+        ZenModeConfig.ZenRule fromXml = readRuleXml(bais);
+
+        assertEquals(rule.zenMode, fromXml.zenMode);
     }
 
     @Test
@@ -716,7 +757,7 @@ public class ZenModeConfigTest extends UiServiceTestCase {
         assertEquals(policy.getPriorityCategorySystem(), fromXml.getPriorityCategorySystem());
         assertEquals(policy.getPriorityCategoryReminders(), fromXml.getPriorityCategoryReminders());
         assertEquals(policy.getPriorityCategoryEvents(), fromXml.getPriorityCategoryEvents());
-        assertEquals(policy.getPriorityChannels(), fromXml.getPriorityChannels());
+        assertEquals(policy.getPriorityChannelsAllowed(), fromXml.getPriorityChannelsAllowed());
 
         assertEquals(policy.getVisualEffectFullScreenIntent(),
                 fromXml.getVisualEffectFullScreenIntent());

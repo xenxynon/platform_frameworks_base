@@ -21,14 +21,15 @@ import android.content.res.Resources
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.res.R
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.onConfigChanged
 import com.android.systemui.volume.panel.dagger.VolumePanelComponent
 import com.android.systemui.volume.panel.dagger.factory.VolumePanelComponentFactory
 import com.android.systemui.volume.panel.domain.interactor.ComponentsInteractor
-import com.android.systemui.volume.panel.ui.model.ComponentState
-import com.android.systemui.volume.panel.ui.model.ComponentsLayout
-import com.android.systemui.volume.panel.ui.model.VolumePanelState
+import com.android.systemui.volume.panel.ui.composable.ComponentsFactory
+import com.android.systemui.volume.panel.ui.layout.ComponentsLayout
+import com.android.systemui.volume.panel.ui.layout.ComponentsLayoutManager
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -38,9 +39,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 class VolumePanelViewModel(
     resources: Resources,
@@ -56,6 +58,9 @@ class VolumePanelViewModel(
     private val componentsInteractor: ComponentsInteractor
         get() = volumePanelComponent.componentsInteractor()
 
+    private val componentsFactory: ComponentsFactory
+        get() = volumePanelComponent.componentsFactory()
+
     private val componentsLayoutManager: ComponentsLayoutManager
         get() = volumePanelComponent.componentsLayoutManager()
 
@@ -63,20 +68,27 @@ class VolumePanelViewModel(
 
     val volumePanelState: StateFlow<VolumePanelState> =
         combine(
-                configurationController.onConfigChanged.distinctUntilChanged(),
+                configurationController.onConfigChanged
+                    .onStart { emit(resources.configuration) }
+                    .distinctUntilChanged(),
                 mutablePanelVisibility,
             ) { configuration, isVisible ->
-                VolumePanelState(orientation = configuration.orientation, isVisible = isVisible)
+                VolumePanelState(
+                    orientation = configuration.orientation,
+                    isVisible = isVisible,
+                    isWideScreen = !resources.getBoolean(R.bool.config_edgeToEdgeBottomSheetDialog),
+                )
             }
             .stateIn(
-                volumePanelComponent.coroutineScope(),
+                scope,
                 SharingStarted.Eagerly,
                 VolumePanelState(
                     orientation = resources.configuration.orientation,
                     isVisible = mutablePanelVisibility.value,
+                    isWideScreen = !resources.getBoolean(R.bool.config_edgeToEdgeBottomSheetDialog)
                 ),
             )
-    val mComponentsLayout: Flow<ComponentsLayout> =
+    val componentsLayout: Flow<ComponentsLayout> =
         combine(
                 componentsInteractor.components,
                 volumePanelState,
@@ -85,19 +97,20 @@ class VolumePanelViewModel(
                     components.map { model ->
                         ComponentState(
                             model.key,
+                            componentsFactory.createComponent(model.key),
                             model.isAvailable,
                         )
                     }
                 componentsLayoutManager.layout(scope, componentStates)
             }
             .shareIn(
-                volumePanelComponent.coroutineScope(),
+                scope,
                 SharingStarted.Eagerly,
                 replay = 1,
             )
 
     fun dismissPanel() {
-        scope.launch { mutablePanelVisibility.emit(false) }
+        mutablePanelVisibility.update { false }
     }
 
     override fun onCleared() {

@@ -65,6 +65,7 @@ import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.SmartReplyController;
+import com.android.systemui.statusbar.notification.ColorUpdateLogger;
 import com.android.systemui.statusbar.notification.ConversationNotificationProcessor;
 import com.android.systemui.statusbar.notification.SourceType;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
@@ -569,7 +570,10 @@ public class NotificationTestHelper {
             throws Exception {
 
         LayoutInflater inflater = (LayoutInflater) mContext.getSystemService(
-                mContext.LAYOUT_INFLATER_SERVICE);
+                Context.LAYOUT_INFLATER_SERVICE);
+        if (com.android.systemui.Flags.notificationRowUserContext()) {
+            inflater.setFactory2(new RowInflaterTask.RowAsyncLayoutInflater(entry));
+        }
         mRow = (ExpandableNotificationRow) inflater.inflate(
                 R.layout.status_bar_notification_row,
                 null /* root */,
@@ -604,6 +608,7 @@ public class NotificationTestHelper {
                 mDismissibilityProvider,
                 mock(MetricsLogger.class),
                 new NotificationChildrenContainerLogger(logcatLogBuffer()),
+                mock(ColorUpdateLogger.class),
                 mock(SmartReplyConstants.class),
                 mock(SmartReplyController.class),
                 mFeatureFlags,

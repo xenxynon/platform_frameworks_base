@@ -685,17 +685,27 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     }
 
     @Override
-    public void onSwitchUser(@UserIdInt int newUserId) {
-        Message msg = mHandler.obtainMessage(MSG_SWITCH_USER, newUserId);
-        mHandler.sendMessage(msg);
+    public void onSwitchUser(@UserIdInt int newUserId, int userSerial, float newBrightness) {
+        Message msg = mHandler.obtainMessage(MSG_SWITCH_USER, newUserId, userSerial, newBrightness);
+        mHandler.sendMessageAtTime(msg, mClock.uptimeMillis());
     }
 
-    private void handleOnSwitchUser(@UserIdInt int newUserId) {
-        handleSettingsChange(true /* userSwitch */);
+    private void handleOnSwitchUser(@UserIdInt int newUserId, int userSerial, float newBrightness) {
+        Slog.i(mTag, "Switching user newUserId=" + newUserId + " userSerial=" + userSerial
+                + " newBrightness=" + newBrightness);
         handleBrightnessModeChange();
         if (mBrightnessTracker != null) {
             mBrightnessTracker.onSwitchUser(newUserId);
         }
+        setBrightness(newBrightness, userSerial);
+
+        // Don't treat user switches as user initiated change.
+        mDisplayBrightnessController.setAndNotifyCurrentScreenBrightness(newBrightness);
+
+        if (mAutomaticBrightnessController != null) {
+            mAutomaticBrightnessController.resetShortTermModel();
+        }
+        sendUpdatePowerState();
     }
 
     @Nullable
@@ -1628,21 +1638,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                     // SDR brightness is unchanged, so animate quickly as this is only impacting
                     // a likely minority amount of display content
                     // ie, the highlights of an HDR video or UltraHDR image
+                    // Ideally we'd do this as fast as possible (ie, skip the animation entirely),
+                    // but this requires display support and would need an entry in the
+                    // display configuration. For now just do the fast animation
                     slowChange = false;
-
-                    // Going from HDR to no HDR; visually this should be a "no-op" anyway
-                    // as the remaining SDR content's brightness should be holding steady
-                    // due to the sdr brightness not shifting
-                    if (BrightnessSynchronizer.floatEquals(sdrAnimateValue, animateValue)) {
-                        skipAnimation = true;
-                    }
-
-                    // Going from no HDR to HDR; visually this is a significant scene change
-                    // and the animation just prevents advanced clients from doing their own
-                    // handling of enter/exit animations if they would like to do such a thing
-                    if (BrightnessSynchronizer.floatEquals(sdrAnimateValue, currentBrightness)) {
-                        skipAnimation = true;
-                    }
                 }
                 if (skipAnimation) {
                     animateScreenBrightness(animateValue, sdrAnimateValue,
@@ -2394,20 +2393,11 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         MetricsLogger.action(log);
     }
 
-    private void handleSettingsChange(boolean userSwitch) {
+    private void handleSettingsChange() {
         mDisplayBrightnessController
                 .setPendingScreenBrightness(mDisplayBrightnessController
                         .getScreenBrightnessSetting());
-        mAutomaticBrightnessStrategy.updatePendingAutoBrightnessAdjustments(userSwitch);
-        if (userSwitch) {
-            // Don't treat user switches as user initiated change.
-            mDisplayBrightnessController
-                    .setAndNotifyCurrentScreenBrightness(mDisplayBrightnessController
-                            .getPendingScreenBrightness());
-            if (mAutomaticBrightnessController != null) {
-                mAutomaticBrightnessController.resetShortTermModel();
-            }
-        }
+        mAutomaticBrightnessStrategy.updatePendingAutoBrightnessAdjustments();
         sendUpdatePowerState();
     }
 
@@ -2416,11 +2406,8 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 mContext.getContentResolver(),
                 Settings.System.SCREEN_BRIGHTNESS_MODE,
                 Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL, UserHandle.USER_CURRENT);
-        mHandler.postAtTime(() -> {
-            mAutomaticBrightnessStrategy.setUseAutoBrightness(screenBrightnessModeSetting
-                    == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC);
-            updatePowerState();
-        }, mClock.uptimeMillis());
+        mAutomaticBrightnessStrategy.setUseAutoBrightness(screenBrightnessModeSetting
+                == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC);
     }
 
 
@@ -2430,9 +2417,13 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     }
 
     @Override
-    public void setBrightness(float brightnessValue, int userSerial) {
-        mDisplayBrightnessController.setBrightness(clampScreenBrightness(brightnessValue),
-                userSerial);
+    public void setBrightness(float brightness) {
+        mDisplayBrightnessController.setBrightness(clampScreenBrightness(brightness));
+    }
+
+    @Override
+    public void setBrightness(float brightness, int userSerial) {
+        mDisplayBrightnessController.setBrightness(clampScreenBrightness(brightness), userSerial);
     }
 
     @Override
@@ -2966,7 +2957,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                     if (mStopped) {
                         return;
                     }
-                    handleSettingsChange(false /*userSwitch*/);
+                    handleSettingsChange();
                     break;
 
                 case MSG_UPDATE_RBC:
@@ -2985,7 +2976,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                     break;
 
                 case MSG_SWITCH_USER:
-                    handleOnSwitchUser(msg.arg1);
+                    float newBrightness = msg.obj instanceof Float ? (float) msg.obj
+                            : PowerManager.BRIGHTNESS_INVALID_FLOAT;
+                    handleOnSwitchUser(msg.arg1, msg.arg2, newBrightness);
                     break;
 
                 case MSG_BOOT_COMPLETED:
@@ -3023,7 +3016,10 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
         @Override
         public void onChange(boolean selfChange, Uri uri) {
             if (uri.equals(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE))) {
-                handleBrightnessModeChange();
+                mHandler.postAtTime(() -> {
+                    handleBrightnessModeChange();
+                    updatePowerState();
+                }, mClock.uptimeMillis());
             } else if (uri.equals(Settings.System.getUriFor(
                     Settings.System.SCREEN_BRIGHTNESS_FOR_ALS))) {
                 int preset = Settings.System.getIntForUser(mContext.getContentResolver(),
@@ -3035,7 +3031,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 setUpAutoBrightness(mContext, mHandler);
                 sendUpdatePowerState();
             } else {
-                handleSettingsChange(false /* userSwitch */);
+                handleSettingsChange();
             }
         }
     }

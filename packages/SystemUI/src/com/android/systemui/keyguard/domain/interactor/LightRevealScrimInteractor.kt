@@ -21,7 +21,6 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.keyguard.data.repository.LightRevealScrimRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
-import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.shared.model.ScreenPowerState
 import com.android.systemui.statusbar.LightRevealEffect
@@ -42,7 +41,7 @@ constructor(
     private val lightRevealScrimRepository: LightRevealScrimRepository,
     @Application private val scope: CoroutineScope,
     private val scrimLogger: ScrimLogger,
-    powerInteractor: PowerInteractor,
+    private val powerInteractor: PowerInteractor,
 ) {
 
     init {
@@ -53,11 +52,9 @@ constructor(
         scope.launch {
             transitionInteractor.startedKeyguardTransitionStep.collect {
                 scrimLogger.d(TAG, "listenForStartedKeyguardTransitionStep", it)
-                if (willTransitionChangeEndState(it)) {
-                    lightRevealScrimRepository.startRevealAmountAnimator(
-                        willBeRevealedInState(it.to)
-                    )
-                }
+                lightRevealScrimRepository.startRevealAmountAnimator(
+                    willBeRevealedInState(it.to),
+                )
             }
         }
     }
@@ -83,40 +80,34 @@ constructor(
             // (invisible) jank. However, we need to still pass through 1f and 0f to ensure that the
             // correct end states are respected even if the screen turned off (or was still off)
             // when the animation finished
-            powerInteractor.screenPowerState.value != ScreenPowerState.SCREEN_OFF ||
-                it == 1f ||
-                it == 0f
+            screenIsShowingContent() || it == 1f || it == 0f
         }
+
+    private fun screenIsShowingContent() =
+        powerInteractor.screenPowerState.value != ScreenPowerState.SCREEN_OFF &&
+            powerInteractor.screenPowerState.value != ScreenPowerState.SCREEN_TURNING_ON
 
     companion object {
 
-        /**
-         * Whether the transition requires a change in the reveal amount of the light reveal scrim.
-         * If not, we don't care about the transition and don't need to listen to it.
-         */
-        fun willTransitionChangeEndState(transition: TransitionStep): Boolean {
-            return willBeRevealedInState(transition.from) != willBeRevealedInState(transition.to)
+    /**
+     * Whether the light reveal scrim will be fully revealed (revealAmount = 1.0f) in the given
+     * state after the transition is complete. If false, scrim will be fully hidden.
+     */
+    private fun willBeRevealedInState(state: KeyguardState): Boolean {
+        return when (state) {
+            KeyguardState.OFF -> false
+            KeyguardState.DOZING -> false
+            KeyguardState.AOD -> false
+            KeyguardState.DREAMING -> true
+            KeyguardState.DREAMING_LOCKSCREEN_HOSTED -> true
+            KeyguardState.GLANCEABLE_HUB -> true
+            KeyguardState.ALTERNATE_BOUNCER -> true
+            KeyguardState.PRIMARY_BOUNCER -> true
+            KeyguardState.LOCKSCREEN -> true
+            KeyguardState.GONE -> true
+            KeyguardState.OCCLUDED -> true
         }
-
-        /**
-         * Whether the light reveal scrim will be fully revealed (revealAmount = 1.0f) in the given
-         * state after the transition is complete. If false, scrim will be fully hidden.
-         */
-        fun willBeRevealedInState(state: KeyguardState): Boolean {
-            return when (state) {
-                KeyguardState.OFF -> false
-                KeyguardState.DOZING -> false
-                KeyguardState.AOD -> false
-                KeyguardState.DREAMING -> true
-                KeyguardState.DREAMING_LOCKSCREEN_HOSTED -> true
-                KeyguardState.GLANCEABLE_HUB -> true
-                KeyguardState.ALTERNATE_BOUNCER -> true
-                KeyguardState.PRIMARY_BOUNCER -> true
-                KeyguardState.LOCKSCREEN -> true
-                KeyguardState.GONE -> true
-                KeyguardState.OCCLUDED -> true
-            }
-        }
+    }
 
         val TAG = LightRevealScrimInteractor::class.simpleName!!
     }

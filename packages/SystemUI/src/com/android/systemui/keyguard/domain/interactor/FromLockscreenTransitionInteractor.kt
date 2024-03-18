@@ -17,16 +17,15 @@
 package com.android.systemui.keyguard.domain.interactor
 
 import android.animation.ValueAnimator
+import android.util.MathUtils
 import com.android.app.animation.Interpolators
-import com.android.systemui.communal.shared.model.CommunalSceneKey
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
+import com.android.systemui.keyguard.KeyguardWmStateRefactor
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
-import com.android.systemui.keyguard.shared.model.KeyguardSurfaceBehindModel
 import com.android.systemui.keyguard.shared.model.StatusBarState.KEYGUARD
 import com.android.systemui.keyguard.shared.model.TransitionInfo
 import com.android.systemui.keyguard.shared.model.TransitionModeOnCanceled
@@ -36,10 +35,10 @@ import com.android.systemui.shade.data.repository.ShadeRepository
 import com.android.systemui.util.kotlin.Utils.Companion.toQuad
 import com.android.systemui.util.kotlin.Utils.Companion.toTriple
 import com.android.systemui.util.kotlin.sample
-import dagger.Lazy
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -64,7 +63,7 @@ constructor(
     private val shadeRepository: ShadeRepository,
     private val powerInteractor: PowerInteractor,
     private val glanceableHubTransitions: GlanceableHubTransitions,
-    inWindowLauncherUnlockAnimationInteractor: Lazy<InWindowLauncherUnlockAnimationInteractor>,
+    private val swipeToDismissInteractor: SwipeToDismissInteractor,
 ) :
     TransitionInteractor(
         fromState = KeyguardState.LOCKSCREEN,
@@ -102,49 +101,7 @@ constructor(
                     return@map null
                 }
 
-                true // TODO(b/278086361): Implement continuous swipe to unlock.
-            }
-            .onStart {
-                // Default to null ("don't care, use a reasonable default").
-                emit(null)
-            }
-            .distinctUntilChanged()
-
-    /**
-     * The surface behind view params to use for the transition from LOCKSCREEN, or null if we don't
-     * care and should use a reasonable default.
-     */
-    val surfaceBehindModel: Flow<KeyguardSurfaceBehindModel?> =
-        combine(
-                transitionInteractor.startedKeyguardTransitionStep,
-                transitionInteractor.transitionStepsFromState(KeyguardState.LOCKSCREEN),
-                inWindowLauncherUnlockAnimationInteractor
-                    .get()
-                    .transitioningToGoneWithInWindowAnimation,
-            ) { startedStep, fromLockscreenStep, transitioningToGoneWithInWindowAnimation ->
-                if (startedStep.to != KeyguardState.GONE) {
-                    // Only LOCKSCREEN -> GONE has specific surface params (for the unlock
-                    // animation).
-                    return@combine null
-                } else if (transitioningToGoneWithInWindowAnimation) {
-                    // If we're prepared for the in-window unlock, we're going to play an animation
-                    // in the window. Make it fully visible.
-                    KeyguardSurfaceBehindModel(
-                        alpha = 1f,
-                    )
-                } else if (fromLockscreenStep.value > 0.5f) {
-                    // Start the animation once we're 50% transitioned to GONE.
-                    KeyguardSurfaceBehindModel(
-                        animateFromAlpha = 0f,
-                        alpha = 1f,
-                        animateFromTranslationY = 500f,
-                        translationY = 0f
-                    )
-                } else {
-                    KeyguardSurfaceBehindModel(
-                        alpha = 0f,
-                    )
-                }
+                true // Make the surface visible during LS -> GONE transitions.
             }
             .onStart {
                 // Default to null ("don't care, use a reasonable default").
@@ -230,7 +187,7 @@ constructor(
                     combine(
                         startedKeyguardTransitionStep,
                         keyguardInteractor.statusBarState,
-                        keyguardInteractor.isKeyguardUnlocked,
+                        keyguardInteractor.isKeyguardDismissible,
                         ::Triple
                     ),
                     ::toQuad
@@ -252,7 +209,10 @@ constructor(
                                     }
                                 transitionRepository.updateTransition(
                                     id,
-                                    1f - shadeExpansion,
+                                    // This maps the shadeExpansion to a much faster curve, to match
+                                    // the existing logic
+                                    1f -
+                                        MathUtils.constrainedMap(0f, 1f, 0.95f, 1f, shadeExpansion),
                                     nextState,
                                 )
 
@@ -307,7 +267,7 @@ constructor(
     }
 
     private fun listenForLockscreenToGone() {
-        if (flags.isEnabled(Flags.KEYGUARD_WM_STATE_REFACTOR)) {
+        if (KeyguardWmStateRefactor.isEnabled) {
             return
         }
 
@@ -324,7 +284,14 @@ constructor(
     }
 
     private fun listenForLockscreenToGoneDragging() {
-        if (flags.isEnabled(Flags.KEYGUARD_WM_STATE_REFACTOR)) {
+        if (KeyguardWmStateRefactor.isEnabled) {
+            // When the refactor is enabled, we no longer use isKeyguardGoingAway.
+            scope.launch {
+                swipeToDismissInteractor.dismissFling.collect { _ ->
+                    startTransitionTo(KeyguardState.GONE)
+                }
+            }
+
             return
         }
 
@@ -332,6 +299,7 @@ constructor(
             keyguardInteractor.isKeyguardGoingAway
                 .sample(startedKeyguardTransitionStep, ::Pair)
                 .collect { pair ->
+                    KeyguardWmStateRefactor.assertInLegacyMode()
                     val (isKeyguardGoingAway, lastStartedStep) = pair
                     if (isKeyguardGoingAway && lastStartedStep.to == KeyguardState.LOCKSCREEN) {
                         startTransitionTo(KeyguardState.GONE)
@@ -393,10 +361,11 @@ constructor(
             return
         }
 
-        glanceableHubTransitions.listenForLockscreenAndHubTransition(
+        glanceableHubTransitions.listenForGlanceableHubTransition(
             transitionName = "listenForLockscreenToGlanceableHub",
             transitionOwnerName = TAG,
-            toScene = CommunalSceneKey.Communal
+            fromState = KeyguardState.LOCKSCREEN,
+            toState = KeyguardState.GLANCEABLE_HUB,
         )
     }
 
@@ -405,11 +374,14 @@ constructor(
             interpolator = Interpolators.LINEAR
             duration =
                 when (toState) {
-                    KeyguardState.DREAMING -> TO_DREAMING_DURATION
+                    // Adds 100ms to the overall delay to workaround legacy setOccluded calls
+                    // being delayed in KeyguardViewMediator
+                    KeyguardState.DREAMING -> TO_DREAMING_DURATION + 100.milliseconds
                     KeyguardState.OCCLUDED -> TO_OCCLUDED_DURATION
                     KeyguardState.AOD -> TO_AOD_DURATION
                     KeyguardState.DOZING -> TO_DOZING_DURATION
                     KeyguardState.DREAMING_LOCKSCREEN_HOSTED -> TO_DREAMING_HOSTED_DURATION
+                    KeyguardState.GLANCEABLE_HUB -> TO_GLANCEABLE_HUB_DURATION
                     else -> DEFAULT_DURATION
                 }.inWholeMilliseconds
         }
@@ -425,6 +397,6 @@ constructor(
         val TO_AOD_DURATION = 500.milliseconds
         val TO_PRIMARY_BOUNCER_DURATION = DEFAULT_DURATION
         val TO_GONE_DURATION = DEFAULT_DURATION
-        val TO_GLANCEABLE_HUB_DURATION = DEFAULT_DURATION
+        val TO_GLANCEABLE_HUB_DURATION = 1.seconds
     }
 }

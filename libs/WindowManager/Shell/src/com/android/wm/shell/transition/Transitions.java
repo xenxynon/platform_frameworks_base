@@ -37,9 +37,9 @@ import static android.window.TransitionInfo.FLAG_NO_ANIMATION;
 import static android.window.TransitionInfo.FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT;
 
 import static com.android.wm.shell.common.ExecutorUtils.executeRemoteCallWithTaskPermission;
+import static com.android.wm.shell.shared.TransitionUtil.isClosingType;
+import static com.android.wm.shell.shared.TransitionUtil.isOpeningType;
 import static com.android.wm.shell.sysui.ShellSharedConstants.KEY_EXTRA_SHELL_SHELL_TRANSITIONS;
-import static com.android.wm.shell.util.TransitionUtil.isClosingType;
-import static com.android.wm.shell.util.TransitionUtil.isOpeningType;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -80,13 +80,13 @@ import com.android.wm.shell.common.TransactionPool;
 import com.android.wm.shell.common.annotations.ExternalThread;
 import com.android.wm.shell.keyguard.KeyguardTransitionHandler;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
+import com.android.wm.shell.shared.TransitionUtil;
 import com.android.wm.shell.sysui.ShellCommandHandler;
 import com.android.wm.shell.sysui.ShellController;
 import com.android.wm.shell.sysui.ShellInit;
 import com.android.wm.shell.transition.tracing.LegacyTransitionTracer;
 import com.android.wm.shell.transition.tracing.PerfettoTransitionTracer;
 import com.android.wm.shell.transition.tracing.TransitionTracer;
-import com.android.wm.shell.util.TransitionUtil;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -174,6 +174,9 @@ public class Transitions implements RemoteCallable<Transitions>,
 
     /** Transition to animate task to desktop. */
     public static final int TRANSIT_MOVE_TO_DESKTOP = WindowManager.TRANSIT_FIRST_CUSTOM + 15;
+
+    /** Transition to resize PiP task. */
+    public static final int TRANSIT_RESIZE_PIP = TRANSIT_FIRST_CUSTOM + 16;
 
     private final ShellTaskOrganizer mOrganizer;
     private final Context mContext;
@@ -490,11 +493,9 @@ public class Transitions implements RemoteCallable<Transitions>,
             final SurfaceControl leash = change.getLeash();
             final int mode = info.getChanges().get(i).getMode();
 
-            if (mode == TRANSIT_TO_FRONT
-                    && ((change.getStartAbsBounds().height() != change.getEndAbsBounds().height()
-                    || change.getStartAbsBounds().width() != change.getEndAbsBounds().width()))) {
-                // When the window is moved to front with a different size, make sure the crop is
-                // updated to prevent it from using the old crop.
+            if (mode == TRANSIT_TO_FRONT) {
+                // When the window is moved to front, make sure the crop is updated to prevent it
+                // from using the old crop.
                 t.setWindowCrop(leash, change.getEndAbsBounds().width(),
                         change.getEndAbsBounds().height());
             }
@@ -1167,7 +1168,11 @@ public class Transitions implements RemoteCallable<Transitions>,
         mPendingTransitions.add(0, active);
     }
 
-    /** Start a new transition directly. */
+    /**
+     * Start a new transition directly.
+     * @param handler if null, the transition will be dispatched to the registered set of transition
+     *                handlers to be handled
+     */
     public IBinder startTransition(@WindowManager.TransitionType int type,
             @NonNull WindowContainerTransaction wct, @Nullable TransitionHandler handler) {
         ProtoLog.v(ShellProtoLogGroup.WM_SHELL_TRANSITIONS, "Directly starting a new transition "

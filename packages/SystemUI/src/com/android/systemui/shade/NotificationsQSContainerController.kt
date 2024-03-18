@@ -27,13 +27,11 @@ import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
 import androidx.constraintlayout.widget.ConstraintSet.START
 import androidx.constraintlayout.widget.ConstraintSet.TOP
 import androidx.lifecycle.lifecycleScope
-import com.android.systemui.Flags.centralizedStatusBarDimensRefactor
+import com.android.systemui.Flags.centralizedStatusBarHeightFix
+import com.android.systemui.Flags.migrateClocksToBlueprint
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.fragments.FragmentService
-import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.navigationbar.NavigationModeController
 import com.android.systemui.plugins.qs.QS
@@ -59,18 +57,17 @@ internal const val INSET_DEBOUNCE_MILLIS = 500L
 
 @SysUISingleton
 class NotificationsQSContainerController @Inject constructor(
-        view: NotificationsQuickSettingsContainer,
-        private val navigationModeController: NavigationModeController,
-        private val overviewProxyService: OverviewProxyService,
-        private val shadeHeaderController: ShadeHeaderController,
-        private val shadeInteractor: ShadeInteractor,
-        private val fragmentService: FragmentService,
-        @Main private val delayableExecutor: DelayableExecutor,
-        private val featureFlags: FeatureFlags,
-        private val
-            notificationStackScrollLayoutController: NotificationStackScrollLayoutController,
-        private val splitShadeStateController: SplitShadeStateController,
-        private val largeScreenHeaderHelperLazy: Lazy<LargeScreenHeaderHelper>,
+    view: NotificationsQuickSettingsContainer,
+    private val navigationModeController: NavigationModeController,
+    private val overviewProxyService: OverviewProxyService,
+    private val shadeHeaderController: ShadeHeaderController,
+    private val shadeInteractor: ShadeInteractor,
+    private val fragmentService: FragmentService,
+    @Main private val delayableExecutor: DelayableExecutor,
+    private val
+    notificationStackScrollLayoutController: NotificationStackScrollLayoutController,
+    private val splitShadeStateController: SplitShadeStateController,
+    private val largeScreenHeaderHelperLazy: Lazy<LargeScreenHeaderHelper>,
 ) : ViewController<NotificationsQuickSettingsContainer>(view), QSContainerController {
 
     private var splitShadeEnabled = false
@@ -133,9 +130,6 @@ class NotificationsQSContainerController @Inject constructor(
         isGestureNavigation = QuickStepContract.isGesturalMode(currentMode)
 
         mView.setStackScroller(notificationStackScrollLayoutController.getView())
-        if (featureFlags.isEnabled(Flags.QS_CONTAINER_GRAPH_OPTIMIZER)){
-            mView.enableGraphOptimization()
-        }
     }
 
     public override fun onViewAttached() {
@@ -189,7 +183,7 @@ class NotificationsQSContainerController @Inject constructor(
     }
 
     private fun calculateLargeShadeHeaderHeight(): Int {
-        return if (centralizedStatusBarDimensRefactor()) {
+        return if (centralizedStatusBarHeightFix()) {
             largeScreenHeaderHelperLazy.get().getLargeScreenHeaderHeight()
         } else {
             resources.getDimensionPixelSize(R.dimen.large_screen_shade_header_height)
@@ -290,7 +284,7 @@ class NotificationsQSContainerController @Inject constructor(
     }
 
     private fun setNotificationsConstraints(constraintSet: ConstraintSet) {
-        if (KeyguardShadeMigrationNssl.isEnabled) {
+        if (migrateClocksToBlueprint()) {
             return
         }
         val startConstraintId = if (splitShadeEnabled) R.id.qs_edge_guideline else PARENT_ID

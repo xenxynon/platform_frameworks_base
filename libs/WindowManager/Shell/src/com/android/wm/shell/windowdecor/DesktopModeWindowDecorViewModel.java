@@ -21,6 +21,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
+import static android.view.InputDevice.SOURCE_TOUCHSCREEN;
 import static android.view.WindowInsets.Type.statusBars;
 
 import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSITION_BOTTOM_OR_RIGHT;
@@ -32,6 +33,7 @@ import static com.android.wm.shell.windowdecor.MoveToDesktopAnimator.DRAG_FREEFO
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
+import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.ActivityTaskManager;
@@ -60,7 +62,6 @@ import android.view.ViewConfiguration;
 import android.window.WindowContainerToken;
 import android.window.WindowContainerTransaction;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -211,6 +212,8 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
         mShellCommandHandler.addDumpCallback(this::dump, this);
         mDisplayInsetsController.addInsetsChangedListener(mContext.getDisplayId(),
                 new DesktopModeOnInsetsChangedListener());
+        mDesktopTasksController.ifPresent(c -> c.setOnTaskResizeAnimationListener(
+                new DeskopModeOnTaskResizeAnimationListener()));
     }
 
     @Override
@@ -337,7 +340,8 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
             final int id = v.getId();
             if (id == R.id.close_window) {
                 if (isTaskInSplitScreen(mTaskId)) {
-                    mSplitScreenController.moveTaskToFullscreen(getOtherSplitTask(mTaskId).taskId);
+                    mSplitScreenController.moveTaskToFullscreen(getOtherSplitTask(mTaskId).taskId,
+                            SplitScreenController.EXIT_REASON_DESKTOP_MODE);
                 } else {
                     mTaskOperations.closeTask(mTaskToken);
                 }
@@ -345,7 +349,7 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                 mTaskOperations.injectBackKey();
             } else if (id == R.id.caption_handle || id == R.id.open_menu_button) {
                 if (!decoration.isHandleMenuActive()) {
-                    moveTaskToFront(mTaskOrganizer.getRunningTaskInfo(mTaskId));
+                    moveTaskToFront(decoration.mTaskInfo);
                     decoration.createHandleMenu();
                 } else {
                     decoration.closeHandleMenu();
@@ -356,14 +360,15 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                     // App sometimes draws before the insets from WindowDecoration#relayout have
                     // been added, so they must be added here
                     mWindowDecorByTaskId.get(mTaskId).addCaptionInset(wct);
-                    mDesktopTasksController.get().moveToDesktop(decoration, mTaskId, wct);
+                    mDesktopTasksController.get().moveToDesktop(mTaskId, wct);
                     closeOtherSplitTask(mTaskId);
                 }
                 decoration.closeHandleMenu();
             } else if (id == R.id.fullscreen_button) {
                 decoration.closeHandleMenu();
                 if (isTaskInSplitScreen(mTaskId)) {
-                    mSplitScreenController.moveTaskToFullscreen(mTaskId);
+                    mSplitScreenController.moveTaskToFullscreen(mTaskId,
+                            SplitScreenController.EXIT_REASON_DESKTOP_MODE);
                 } else {
                     mDesktopTasksController.ifPresent(c ->
                             c.moveToFullscreen(mTaskId));
@@ -387,25 +392,23 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                     return;
                 }
                 final RunningTaskInfo taskInfo = decoration.mTaskInfo;
-                mDesktopTasksController.ifPresent(c -> c.toggleDesktopTaskSize(
-                        taskInfo, decoration));
+                mDesktopTasksController.ifPresent(c -> c.toggleDesktopTaskSize(taskInfo));
                 decoration.closeHandleMenu();
             } else if (id == R.id.maximize_menu_maximize_button) {
                 final RunningTaskInfo taskInfo = decoration.mTaskInfo;
-                mDesktopTasksController.ifPresent(c -> c.toggleDesktopTaskSize(
-                        taskInfo, mWindowDecorByTaskId.get(taskInfo.taskId)));
+                mDesktopTasksController.ifPresent(c -> c.toggleDesktopTaskSize(taskInfo));
                 decoration.closeHandleMenu();
                 decoration.closeMaximizeMenu();
             } else if (id == R.id.maximize_menu_snap_left_button) {
                 final RunningTaskInfo taskInfo = decoration.mTaskInfo;
                 mDesktopTasksController.ifPresent(c -> c.snapToHalfScreen(
-                        taskInfo, mWindowDecorByTaskId.get(taskInfo.taskId), SnapPosition.LEFT));
+                        taskInfo, SnapPosition.LEFT));
                 decoration.closeHandleMenu();
                 decoration.closeMaximizeMenu();
             } else if (id == R.id.maximize_menu_snap_right_button) {
                 final RunningTaskInfo taskInfo = decoration.mTaskInfo;
                 mDesktopTasksController.ifPresent(c -> c.snapToHalfScreen(
-                        taskInfo, mWindowDecorByTaskId.get(taskInfo.taskId), SnapPosition.RIGHT));
+                        taskInfo, SnapPosition.RIGHT));
                 decoration.closeHandleMenu();
                 decoration.closeMaximizeMenu();
             }
@@ -419,16 +422,19 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                     && id != R.id.maximize_window) {
                 return false;
             }
-            moveTaskToFront(mTaskOrganizer.getRunningTaskInfo(mTaskId));
+            final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(mTaskId);
+            moveTaskToFront(decoration.mTaskInfo);
 
             if (!mHasLongClicked && id != R.id.maximize_window) {
-                final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(mTaskId);
                 decoration.closeMaximizeMenuIfNeeded(e);
             }
 
             final long eventDuration = e.getEventTime() - e.getDownTime();
-            final boolean shouldLongClick = id == R.id.maximize_window && !mIsDragging
-                    && !mHasLongClicked && eventDuration >= ViewConfiguration.getLongPressTimeout();
+            final boolean isTouchScreen =
+                    (e.getSource() & SOURCE_TOUCHSCREEN) == SOURCE_TOUCHSCREEN;
+            final boolean shouldLongClick = isTouchScreen && id == R.id.maximize_window
+                    && !mIsDragging && !mHasLongClicked
+                    && eventDuration >= ViewConfiguration.getLongPressTimeout();
             if (shouldLongClick) {
                 v.performLongClick();
                 mHasLongClicked = true;
@@ -466,7 +472,8 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
          */
         @Override
         public boolean handleMotionEvent(@Nullable View v, MotionEvent e) {
-            final RunningTaskInfo taskInfo = mTaskOrganizer.getRunningTaskInfo(mTaskId);
+            final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(mTaskId);
+            final RunningTaskInfo taskInfo = decoration.mTaskInfo;
             if (DesktopModeStatus.isEnabled()
                     && taskInfo.getWindowingMode() == WINDOWING_MODE_FULLSCREEN) {
                 return false;
@@ -492,8 +499,6 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                 }
                 case MotionEvent.ACTION_MOVE: {
                     mShouldClick = false;
-                    final DesktopModeWindowDecoration decoration =
-                            mWindowDecorByTaskId.get(mTaskId);
                     // If a decor's resize drag zone is active, don't also try to reposition it.
                     if (decoration.isHandlingDragResize()) break;
                     decoration.closeMaximizeMenu();
@@ -544,11 +549,22 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
             return true;
         }
 
+        /**
+         * Perform a task size toggle on release of the double-tap, assuming no drag event
+         * was handled during the double-tap.
+         * @param e The motion event that occurred during the double-tap gesture.
+         * @return true if the event should be consumed, false if not
+         */
         @Override
-        public boolean onDoubleTap(@NonNull MotionEvent e) {
-            final RunningTaskInfo taskInfo = mTaskOrganizer.getRunningTaskInfo(mTaskId);
+        public boolean onDoubleTapEvent(@NonNull MotionEvent e) {
+            final int action = e.getActionMasked();
+            if (mIsDragging || (action != MotionEvent.ACTION_UP
+                    && action != MotionEvent.ACTION_CANCEL)) {
+                return false;
+            }
             mDesktopTasksController.ifPresent(c -> {
-                c.toggleDesktopTaskSize(taskInfo, mWindowDecorByTaskId.get(taskInfo.taskId));
+                final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(mTaskId);
+                c.toggleDesktopTaskSize(decoration.mTaskInfo);
             });
             return true;
         }
@@ -716,7 +732,7 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                     mTransitionDragActive = false;
                     final int statusBarHeight = getStatusBarHeight(
                             relevantDecor.mTaskInfo.displayId);
-                    if (ev.getY() > 2 * statusBarHeight) {
+                    if (ev.getRawY() > 2 * statusBarHeight) {
                         if (DesktopModeStatus.isEnabled()) {
                             animateToDesktop(relevantDecor, ev);
                         }
@@ -741,17 +757,17 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
                     mDesktopTasksController.ifPresent(
                             c -> c.updateVisualIndicator(
                                     relevantDecor.mTaskInfo,
-                                    relevantDecor.mTaskSurface, ev.getX(), ev.getY()));
+                                    relevantDecor.mTaskSurface, ev.getRawX(), ev.getRawY()));
                     final int statusBarHeight = getStatusBarHeight(
                             relevantDecor.mTaskInfo.displayId);
-                    if (ev.getY() > statusBarHeight) {
+                    if (ev.getRawY() > statusBarHeight) {
                         if (mMoveToDesktopAnimator == null) {
                             mMoveToDesktopAnimator = new MoveToDesktopAnimator(
                                     mContext, mDragToDesktopAnimationStartBounds,
                                     relevantDecor.mTaskInfo, relevantDecor.mTaskSurface);
                             mDesktopTasksController.ifPresent(
                                     c -> c.startDragToDesktop(relevantDecor.mTaskInfo,
-                                            mMoveToDesktopAnimator, relevantDecor));
+                                            mMoveToDesktopAnimator));
                         }
                     }
                     if (mMoveToDesktopAnimator != null) {
@@ -833,7 +849,18 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
 
     @Nullable
     private DesktopModeWindowDecoration getRelevantWindowDecor(MotionEvent ev) {
-        if (mSplitScreenController != null && mSplitScreenController.isSplitScreenVisible()) {
+        final DesktopModeWindowDecoration focusedDecor = getFocusedDecor();
+        if (focusedDecor == null) {
+            return null;
+        }
+        final boolean splitScreenVisible = mSplitScreenController != null
+                && mSplitScreenController.isSplitScreenVisible();
+        // It's possible that split tasks are visible but neither is focused, such as when there's
+        // a fullscreen translucent window on top of them. In that case, the relevant decor should
+        // just be that translucent focused window.
+        final boolean focusedTaskInSplit = mSplitScreenController != null
+                && mSplitScreenController.isTaskInSplitScreen(focusedDecor.mTaskInfo.taskId);
+        if (splitScreenVisible && focusedTaskInSplit) {
             // We can't look at focused task here as only one task will have focus.
             DesktopModeWindowDecoration splitTaskDecor = getSplitScreenDecor(ev);
             return splitTaskDecor == null ? getFocusedDecor() : splitTaskDecor;
@@ -867,7 +894,10 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
     private DesktopModeWindowDecoration getFocusedDecor() {
         final int size = mWindowDecorByTaskId.size();
         DesktopModeWindowDecoration focusedDecor = null;
-        for (int i = 0; i < size; i++) {
+        // TODO(b/323251951): We need to iterate this in reverse to avoid potentially getting
+        //  a decor for a closed task. This is a short term fix while the core issue is addressed,
+        //  which involves refactoring the window decor lifecycle to be visibility based.
+        for (int i = size - 1; i >= 0; i--) {
             final DesktopModeWindowDecoration decor = mWindowDecorByTaskId.valueAt(i);
             if (decor != null && decor.isFocused()) {
                 focusedDecor = decor;
@@ -995,6 +1025,34 @@ public class DesktopModeWindowDecorViewModel implements WindowDecorViewModel {
         pw.println(innerPrefix + "mEventReceiversByDisplay=" + mEventReceiversByDisplay);
         pw.println(innerPrefix + "mWindowDecorByTaskId=" + mWindowDecorByTaskId);
     }
+
+    private class DeskopModeOnTaskResizeAnimationListener
+            implements OnTaskResizeAnimationListener {
+        @Override
+        public void onAnimationStart(int taskId, Transaction t, Rect bounds) {
+            final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(taskId);
+            if (decoration == null)  {
+                t.apply();
+                return;
+            }
+            decoration.showResizeVeil(t, bounds);
+        }
+
+        @Override
+        public void onBoundsChange(int taskId, Transaction t, Rect bounds) {
+            final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(taskId);
+            if (decoration == null) return;
+            decoration.updateResizeVeil(t, bounds);
+        }
+
+        @Override
+        public void onAnimationEnd(int taskId) {
+            final DesktopModeWindowDecoration decoration = mWindowDecorByTaskId.get(taskId);
+            if (decoration == null) return;
+            decoration.hideResizeVeil();
+        }
+    }
+
 
     private class DragStartListenerImpl
             implements DragPositioningCallbackUtility.DragStartListener {

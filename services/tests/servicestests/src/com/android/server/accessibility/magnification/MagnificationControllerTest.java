@@ -42,6 +42,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.accessibilityservice.MagnificationConfig;
+import android.animation.TimeAnimator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -59,6 +60,7 @@ import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.accessibility.IRemoteMagnificationAnimationCallback;
 import android.view.accessibility.MagnificationAnimationCallback;
+import android.widget.Scroller;
 
 import androidx.annotation.NonNull;
 import androidx.test.InstrumentationRegistry;
@@ -119,6 +121,8 @@ public class MagnificationControllerTest {
     @Mock
     private ValueAnimator mValueAnimator;
     @Mock
+    private TimeAnimator mTimeAnimator;
+    @Mock
     private MessageCapturingHandler mMessageCapturingHandler;
 
     private FullScreenMagnificationController mScreenMagnificationController;
@@ -145,6 +149,9 @@ public class MagnificationControllerTest {
 
     @Mock
     private DisplayManagerInternal mDisplayManagerInternal;
+
+    @Mock
+    private Scroller mMockScroller;
 
     // To mock package-private class
     @Rule
@@ -195,14 +202,17 @@ public class MagnificationControllerTest {
         LocalServices.removeServiceForTest(DisplayManagerInternal.class);
         LocalServices.addService(DisplayManagerInternal.class, mDisplayManagerInternal);
 
-        mScreenMagnificationController = spy(new FullScreenMagnificationController(
-                mControllerCtx,
-                new Object(),
-                mScreenMagnificationInfoChangedCallbackDelegate,
-                mScaleProvider,
-                () -> null,
-                ConcurrentUtils.DIRECT_EXECUTOR
-        ));
+        mScreenMagnificationController =
+                spy(
+                        new FullScreenMagnificationController(
+                                mControllerCtx,
+                                new Object(),
+                                mScreenMagnificationInfoChangedCallbackDelegate,
+                                mScaleProvider,
+                                () -> null,
+                                ConcurrentUtils.DIRECT_EXECUTOR,
+                                () -> mMockScroller,
+                                () -> mTimeAnimator));
         mScreenMagnificationController.register(TEST_DISPLAY);
 
         mMagnificationConnectionManager = spy(

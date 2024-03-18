@@ -68,13 +68,14 @@ import com.android.wm.shell.ShellTaskOrganizer;
 import com.android.wm.shell.common.pip.PipBoundsAlgorithm;
 import com.android.wm.shell.common.pip.PipBoundsState;
 import com.android.wm.shell.common.pip.PipDisplayLayoutState;
+import com.android.wm.shell.common.pip.PipMenuController;
 import com.android.wm.shell.common.pip.PipUtils;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
+import com.android.wm.shell.shared.TransitionUtil;
 import com.android.wm.shell.splitscreen.SplitScreenController;
 import com.android.wm.shell.sysui.ShellInit;
 import com.android.wm.shell.transition.CounterRotatorHelper;
 import com.android.wm.shell.transition.Transitions;
-import com.android.wm.shell.util.TransitionUtil;
 
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
@@ -285,12 +286,6 @@ public class PipTransition extends PipTransitionController {
         // For transition that we don't animate, but contains the PIP leash, we need to update the
         // PIP surface, otherwise it will be reset after the transition.
         if (currentPipTaskChange != null) {
-            // Set the "end" bounds of pip. The default setup uses the start bounds. Since this is
-            // changing the *finish*Transaction, we need to use the end bounds. This will also
-            // make sure that the fade-in animation (below) uses the end bounds as well.
-            if (!currentPipTaskChange.getEndAbsBounds().isEmpty()) {
-                mPipBoundsState.setBounds(currentPipTaskChange.getEndAbsBounds());
-            }
             updatePipForUnhandledTransition(currentPipTaskChange, startTransaction,
                     finishTransaction);
         }

@@ -23,6 +23,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.systemui.Flags.migrateClocksToBlueprint
 import com.android.systemui.keyguard.domain.interactor.KeyguardBlueprintInteractor
+import com.android.systemui.keyguard.ui.view.layout.blueprints.transitions.IntraBlueprintTransition.Config
+import com.android.systemui.keyguard.ui.view.layout.blueprints.transitions.IntraBlueprintTransition.Type
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardClockViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardSmartspaceViewModel
 import com.android.systemui.lifecycle.repeatWhenAttached
@@ -49,14 +51,27 @@ object KeyguardSmartspaceViewBinder {
                             clockViewModel,
                             smartspaceViewModel
                         )
-                        blueprintInteractor.refreshBlueprint()
+                        blueprintInteractor.refreshBlueprint(
+                            Config(
+                                Type.SmartspaceVisibility,
+                                checkPriority = false,
+                                terminatePrevious = false,
+                            )
+                        )
                     }
                 }
 
                 launch {
+                    if (!migrateClocksToBlueprint()) return@launch
                     smartspaceViewModel.bcSmartspaceVisibility.collect {
                         updateBCSmartspaceInBurnInLayer(keyguardRootView, clockViewModel)
-                        blueprintInteractor.refreshBlueprint()
+                        blueprintInteractor.refreshBlueprint(
+                            Config(
+                                Type.SmartspaceVisibility,
+                                checkPriority = false,
+                                terminatePrevious = false,
+                            )
+                        )
                     }
                 }
             }

@@ -166,6 +166,7 @@ class TestPhoneWindowManager {
 
     @Mock
     private PhoneWindowManager.ButtonOverridePermissionChecker mButtonOverridePermissionChecker;
+    @Mock private WindowWakeUpPolicy mWindowWakeUpPolicy;
 
     @Mock private IBinder mInputToken;
     @Mock private IBinder mImeTargetWindowToken;
@@ -178,6 +179,8 @@ class TestPhoneWindowManager {
 
     private boolean mIsTalkBackEnabled;
     private boolean mIsTalkBackShortcutGestureEnabled;
+
+    private int mKeyEventPolicyFlags = FLAG_INTERACTIVE;
 
     private class TestTalkbackShortcutController extends TalkbackShortcutController {
         TestTalkbackShortcutController(Context context) {
@@ -229,6 +232,10 @@ class TestPhoneWindowManager {
 
         TalkbackShortcutController getTalkbackShortcutController() {
             return new TestTalkbackShortcutController(mContext);
+        }
+
+        WindowWakeUpPolicy getWindowWakeUpPolicy() {
+            return mWindowWakeUpPolicy;
         }
     }
 
@@ -374,12 +381,12 @@ class TestPhoneWindowManager {
     }
 
     int interceptKeyBeforeQueueing(KeyEvent event) {
-        return mPhoneWindowManager.interceptKeyBeforeQueueing(event, FLAG_INTERACTIVE);
+        return mPhoneWindowManager.interceptKeyBeforeQueueing(event, mKeyEventPolicyFlags);
     }
 
     long interceptKeyBeforeDispatching(KeyEvent event) {
         return mPhoneWindowManager.interceptKeyBeforeDispatching(mInputToken, event,
-                FLAG_INTERACTIVE);
+                mKeyEventPolicyFlags);
     }
 
     void dispatchUnhandledKey(KeyEvent event) {
@@ -583,12 +590,21 @@ class TestPhoneWindowManager {
                 .when(mButtonOverridePermissionChecker).canAppOverrideSystemKey(any(), anyInt());
     }
 
+    void overrideKeyEventPolicyFlags(int flags) {
+        mKeyEventPolicyFlags = flags;
+    }
+
     /**
      * Below functions will check the policy behavior could be invoked.
      */
     void assertTakeScreenshotCalled() {
         mTestLooper.dispatchAll();
         verify(mDisplayPolicy).takeScreenshot(anyInt(), anyInt());
+    }
+
+    void assertTakeScreenshotNotCalled() {
+        mTestLooper.dispatchAll();
+        verify(mDisplayPolicy, never()).takeScreenshot(anyInt(), anyInt());
     }
 
     void assertShowGlobalActionsCalled() {
@@ -620,7 +636,8 @@ class TestPhoneWindowManager {
 
     void assertPowerWakeUp() {
         mTestLooper.dispatchAll();
-        verify(mPowerManager).wakeUp(anyLong(), anyInt(), anyString());
+        verify(mWindowWakeUpPolicy)
+                .wakeUpFromKey(anyLong(), eq(KeyEvent.KEYCODE_POWER), anyBoolean());
     }
 
     void assertNoPowerSleep() {

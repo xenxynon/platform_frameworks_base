@@ -133,8 +133,10 @@ import org.junit.runner.RunWith;
 import org.mockito.MockitoSession;
 import org.mockito.quality.Strictness;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -412,6 +414,7 @@ public class ActivityStarterTests extends WindowTestsBase {
                 });
         doReturn(null).when(mMockPackageManager).getDefaultHomeActivity(anyInt());
         doReturn(mMockPackageManager).when(mAtm).getPackageManagerInternalLocked();
+        doReturn("packageName").when(mMockPackageManager).getNameForUid(anyInt());
         doReturn(false).when(mMockPackageManager).isInstantAppInstallerComponent(any());
         doReturn(null).when(mMockPackageManager).resolveIntent(any(), any(), anyLong(), anyLong(),
                 anyInt(), anyBoolean(), anyInt());
@@ -425,6 +428,12 @@ public class ActivityStarterTests extends WindowTestsBase {
                 anyInt(), any(), anyInt(), anyInt(), anyBoolean());
         doNothing().when(mMockPackageManager).notifyPackageUse(anyString(), anyInt());
         doReturn(mock(PackageArchiver.class)).when(mMockPackageManager).getPackageArchiver();
+
+        final AndroidPackage mockPackage = mock(AndroidPackage.class);
+        final SigningDetails signingDetails = mock(SigningDetails.class);
+        doReturn(mockPackage).when(mMockPackageManager).getPackage(anyInt());
+        doReturn(signingDetails).when(mockPackage).getSigningDetails();
+        doReturn(false).when(signingDetails).hasAncestorOrSelfWithDigest(any());
 
         final Intent intent = new Intent();
         intent.addFlags(launchFlags);
@@ -557,6 +566,86 @@ public class ActivityStarterTests extends WindowTestsBase {
         assertEquals(splitOrg.mPrimary, splitPrimaryActivity.getRootTask());
         assertEquals(splitOrg.mSecondary, splitSecondActivity.getRootTask());
         return Pair.create(splitPrimaryActivity, splitSecondActivity);
+    }
+
+    /**
+     * This test ensures that if the intent is being delivered to a desktop mode unfocused task
+     * while it is already on top, reports it as delivering to top.
+     */
+    @Test
+    public void testDesktopModeDeliverToTop() {
+        final ActivityStarter starter = prepareStarter(
+                FLAG_ACTIVITY_RESET_TASK_IF_NEEDED | FLAG_ACTIVITY_SINGLE_TOP,
+                false /* mockGetRootTask */);
+        final List<ActivityRecord> activities = createActivitiesInDesktopMode();
+
+        // Set focus back to the first task.
+        activities.get(0).moveFocusableActivityToTop("testDesktopModeDeliverToTop");
+
+        // Start activity and delivered new intent.
+        starter.getIntent().setComponent(activities.get(3).mActivityComponent);
+        doReturn(activities.get(3)).when(mRootWindowContainer).findTask(any(), any());
+        final int result = starter.setReason("testDesktopModeDeliverToTop").execute();
+
+        // Ensure result is delivering intent to top.
+        assertEquals(START_DELIVERED_TO_TOP, result);
+    }
+
+    /**
+     * This test ensures that if the intent is being delivered to a desktop mode unfocused task
+     * reports it is brought to front instead of delivering to top.
+     */
+    @Test
+    public void testDesktopModeTaskToFront() {
+        final ActivityStarter starter = prepareStarter(
+                FLAG_ACTIVITY_RESET_TASK_IF_NEEDED | FLAG_ACTIVITY_SINGLE_TOP, false);
+        final List<ActivityRecord> activities = createActivitiesInDesktopMode();
+        final ActivityRecord desktopModeFocusActivity = activities.get(0);
+        final ActivityRecord desktopModeReusableActivity = activities.get(1);
+        final ActivityRecord desktopModeTopActivity = new ActivityBuilder(mAtm).setCreateTask(true)
+                .setParentTask(desktopModeReusableActivity.getRootTask()).build();
+        assertTrue(desktopModeTopActivity.inMultiWindowMode());
+
+        // Let first stack has focus.
+        desktopModeFocusActivity.moveFocusableActivityToTop("testDesktopModeTaskToFront");
+
+        // Start activity and delivered new intent.
+        starter.getIntent().setComponent(desktopModeReusableActivity.mActivityComponent);
+        doReturn(desktopModeReusableActivity).when(mRootWindowContainer).findTask(any(), any());
+        final int result = starter.setReason("testDesktopModeMoveToFront").execute();
+
+        // Ensure result is moving task to front.
+        assertEquals(START_TASK_TO_FRONT, result);
+    }
+
+    /** Returns 4 activities. */
+    private List<ActivityRecord> createActivitiesInDesktopMode() {
+        final TestDesktopOrganizer desktopOrganizer = new TestDesktopOrganizer(mAtm);
+        List<ActivityRecord> activityRecords = new ArrayList<>();
+
+        for (int i = 0; i < 4; i++) {
+            Rect bounds = new Rect(desktopOrganizer.getDefaultDesktopTaskBounds());
+            bounds.offset(20 * i, 20 * i);
+            desktopOrganizer.createTask(bounds);
+        }
+
+        for (int i = 0; i < 4; i++) {
+            activityRecords.add(new TaskBuilder(mSupervisor)
+                    .setParentTask(desktopOrganizer.mTasks.get(i))
+                    .setCreateActivity(true)
+                    .build()
+                    .getTopMostActivity());
+        }
+
+        for (int i = 0; i < 4; i++) {
+            activityRecords.get(i).setVisibleRequested(true);
+        }
+
+        for (int i = 0; i < 4; i++) {
+            assertEquals(desktopOrganizer.mTasks.get(i), activityRecords.get(i).getRootTask());
+        }
+
+        return activityRecords;
     }
 
     @Test
@@ -1477,7 +1566,7 @@ public class ActivityStarterTests extends WindowTestsBase {
                 .build();
 
         final int result = starter.recycleTask(task, null, null, null,
-                BalVerdict.ALLOW_BY_DEFAULT);
+                BalVerdict.ALLOW_PRIVILEGED);
         assertThat(result == START_SUCCESS).isTrue();
         assertThat(starter.mAddingToTask).isTrue();
     }
@@ -1773,7 +1862,7 @@ public class ActivityStarterTests extends WindowTestsBase {
         startActivityInner(starter, targetRecord, sourceRecord, null /* options */,
                 null /* inTask */, null /* inTaskFragment */);
         verify(sourceRecord).sendResult(anyInt(), any(), anyInt(), eq(RESULT_CANCELED), any(),
-                any());
+                any(), any());
     }
 
     @Test
@@ -1991,7 +2080,7 @@ public class ActivityStarterTests extends WindowTestsBase {
         starter.startActivityInner(target, source, null /* voiceSession */,
                 null /* voiceInteractor */, 0 /* startFlags */,
                 options, inTask, inTaskFragment,
-                BalVerdict.ALLOW_BY_DEFAULT,
+                BalVerdict.ALLOW_PRIVILEGED,
                 null /* intentGrants */, -1 /* realCallingUid */);
     }
 }

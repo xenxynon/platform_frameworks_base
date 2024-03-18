@@ -39,10 +39,13 @@ import android.util.ArraySet;
 import android.util.BoostFramework.ScrollOptimizer;
 import android.util.Log;
 import android.util.Pair;
+import android.util.SparseArray;
 import android.view.inputmethod.InputMethodManager;
 import android.window.ITrustedPresentationListener;
+import android.window.InputTransferToken;
 import android.window.TrustedPresentationThresholds;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.util.FastPrintWriter;
 
 import java.io.FileDescriptor;
@@ -51,7 +54,6 @@ import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.WeakHashMap;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -157,8 +159,9 @@ public final class WindowManagerGlobal {
     private final TrustedPresentationListener mTrustedPresentationListener =
             new TrustedPresentationListener();
 
-    private final ConcurrentHashMap<IBinder, InputEventReceiver> mSurfaceControlInputReceivers =
-            new ConcurrentHashMap<>();
+    @GuardedBy("mSurfaceControlInputReceivers")
+    private final SparseArray<SurfaceControlInputReceiverInfo>
+            mSurfaceControlInputReceivers = new SparseArray<>();
 
     private WindowManagerGlobal() {
     }
@@ -178,9 +181,29 @@ public final class WindowManagerGlobal {
         }
     }
 
+    /**
+     * Sets {@link com.android.server.wm.WindowManagerService} for the system process.
+     * <p>
+     * It is needed to prevent possible deadlock. A possible scenario is:
+     * In system process, WMS holds {@link com.android.server.wm.WindowManagerGlobalLock} to call
+     * {@code WindowManagerGlobal} APIs and wait to lock {@code WindowManagerGlobal} itself
+     * (i.e. call {@link #getWindowManagerService()} in the global lock), while
+     * another component may lock {@code WindowManagerGlobal} and wait to lock
+     * {@link com.android.server.wm.WindowManagerGlobalLock}(i.e call {@link #addView} in the
+     * system process, which calls to {@link com.android.server.wm.WindowManagerService} API
+     * directly).
+     */
+    public static void setWindowManagerServiceForSystemProcess(@NonNull IWindowManager wms) {
+        sWindowManagerService = wms;
+    }
+
     @Nullable
     @UnsupportedAppUsage
     public static IWindowManager getWindowManagerService() {
+        if (sWindowManagerService != null) {
+            // Use WMS directly without locking WMGlobal to prevent deadlock.
+            return sWindowManagerService;
+        }
         synchronized (WindowManagerGlobal.class) {
             if (sWindowManagerService == null) {
                 sWindowManagerService = IWindowManager.Stub.asInterface(
@@ -844,72 +867,110 @@ public final class WindowManagerGlobal {
         mTrustedPresentationListener.removeListener(listener);
     }
 
-    IBinder registerBatchedSurfaceControlInputReceiver(int displayId,
-            @NonNull IBinder hostToken, @NonNull SurfaceControl surfaceControl,
+    InputTransferToken registerBatchedSurfaceControlInputReceiver(int displayId,
+            @NonNull InputTransferToken hostToken, @NonNull SurfaceControl surfaceControl,
             @NonNull Choreographer choreographer, @NonNull SurfaceControlInputReceiver receiver) {
         IBinder clientToken = new Binder();
+        InputTransferToken inputTransferToken = new InputTransferToken();
         InputChannel inputChannel = new InputChannel();
         try {
             WindowManagerGlobal.getWindowSession().grantInputChannel(displayId, surfaceControl,
-                    clientToken, hostToken, 0, 0, TYPE_APPLICATION, 0, null, null,
+                    clientToken, hostToken, 0, 0, TYPE_APPLICATION, 0, null, inputTransferToken,
                     surfaceControl.getName(), inputChannel);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to create input channel", e);
             e.rethrowAsRuntimeException();
         }
 
-        mSurfaceControlInputReceivers.put(clientToken,
-                new BatchedInputEventReceiver(inputChannel, choreographer.getLooper(),
-                        choreographer) {
-                    @Override
-                    public void onInputEvent(InputEvent event) {
-                        boolean handled = receiver.onInputEvent(event);
-                        finishInputEvent(event, handled);
-                    }
-                });
-        return clientToken;
+        synchronized (mSurfaceControlInputReceivers) {
+            mSurfaceControlInputReceivers.put(surfaceControl.getLayerId(),
+                    new SurfaceControlInputReceiverInfo(clientToken,
+                            new BatchedInputEventReceiver(inputChannel, choreographer.getLooper(),
+                                    choreographer) {
+                                @Override
+                                public void onInputEvent(InputEvent event) {
+                                    boolean handled = receiver.onInputEvent(event);
+                                    finishInputEvent(event, handled);
+                                }
+                            }));
+        }
+        return inputTransferToken;
     }
 
-    IBinder registerUnbatchedSurfaceControlInputReceiver(
-            int displayId, @NonNull IBinder hostToken, @NonNull SurfaceControl surfaceControl,
+    InputTransferToken registerUnbatchedSurfaceControlInputReceiver(int displayId,
+            @NonNull InputTransferToken hostToken, @NonNull SurfaceControl surfaceControl,
             @NonNull Looper looper, @NonNull SurfaceControlInputReceiver receiver) {
         IBinder clientToken = new Binder();
+        InputTransferToken inputTransferToken = new InputTransferToken();
         InputChannel inputChannel = new InputChannel();
         try {
             WindowManagerGlobal.getWindowSession().grantInputChannel(displayId, surfaceControl,
-                    clientToken, hostToken, 0, 0, TYPE_APPLICATION, 0, null, null,
+                    clientToken, hostToken, 0, 0, TYPE_APPLICATION, 0, null, inputTransferToken,
                     surfaceControl.getName(), inputChannel);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to create input channel", e);
             e.rethrowAsRuntimeException();
         }
 
-        mSurfaceControlInputReceivers.put(clientToken,
-                new InputEventReceiver(inputChannel, looper) {
-                    @Override
-                    public void onInputEvent(InputEvent event) {
-                        boolean handled = receiver.onInputEvent(event);
-                        finishInputEvent(event, handled);
-                    }
-                });
-
-        return clientToken;
+        synchronized (mSurfaceControlInputReceivers) {
+            mSurfaceControlInputReceivers.put(surfaceControl.getLayerId(),
+                    new SurfaceControlInputReceiverInfo(clientToken,
+                            new InputEventReceiver(inputChannel, looper) {
+                                @Override
+                                public void onInputEvent(InputEvent event) {
+                                    boolean handled = receiver.onInputEvent(event);
+                                    finishInputEvent(event, handled);
+                                }
+                            }));
+        }
+        return inputTransferToken;
     }
 
-    void unregisterSurfaceControlInputReceiver(IBinder token) {
-        InputEventReceiver inputEventReceiver = mSurfaceControlInputReceivers.get(token);
-        if (inputEventReceiver == null) {
-            Log.w(TAG, "No registered input event receiver with token: " + token);
+    void unregisterSurfaceControlInputReceiver(@NonNull SurfaceControl surfaceControl) {
+        SurfaceControlInputReceiverInfo surfaceControlInputReceiverInfo;
+        synchronized (mSurfaceControlInputReceivers) {
+            surfaceControlInputReceiverInfo = mSurfaceControlInputReceivers.removeReturnOld(
+                    surfaceControl.getLayerId());
+        }
+
+        if (surfaceControlInputReceiverInfo == null) {
+            Log.w(TAG, "No registered input event receiver with sc: " + surfaceControl);
             return;
         }
         try {
-            WindowManagerGlobal.getWindowSession().remove(token);
+            WindowManagerGlobal.getWindowSession().remove(
+                    surfaceControlInputReceiverInfo.mClientToken);
         } catch (RemoteException e) {
             Log.e(TAG, "Failed to remove input channel", e);
             e.rethrowAsRuntimeException();
         }
 
-        inputEventReceiver.dispose();
+        surfaceControlInputReceiverInfo.mInputEventReceiver.dispose();
+    }
+
+    IBinder getSurfaceControlInputClientToken(@NonNull SurfaceControl surfaceControl) {
+        SurfaceControlInputReceiverInfo surfaceControlInputReceiverInfo;
+        synchronized (mSurfaceControlInputReceivers) {
+            surfaceControlInputReceiverInfo = mSurfaceControlInputReceivers.get(
+                    surfaceControl.getLayerId());
+        }
+
+        if (surfaceControlInputReceiverInfo == null) {
+            Log.w(TAG, "No registered input event receiver with sc: " + surfaceControl);
+            return null;
+        }
+        return surfaceControlInputReceiverInfo.mClientToken;
+    }
+
+    boolean transferTouchGesture(@NonNull InputTransferToken transferFromToken,
+            @NonNull InputTransferToken transferToToken) {
+        try {
+            return getWindowManagerService().transferTouchGesture(transferFromToken,
+                    transferToToken);
+        } catch (RemoteException e) {
+            e.rethrowAsRuntimeException();
+        }
+        return false;
     }
 
     private final class TrustedPresentationListener extends
@@ -933,7 +994,7 @@ public final class WindowManagerGlobal {
                     WindowManagerGlobal.getWindowManagerService()
                             .registerTrustedPresentationListener(window, this, thresholds, id);
                 } catch (RemoteException e) {
-                    e.rethrowAsRuntimeException();
+                    e.rethrowFromSystemServer();
                 }
             }
         }
@@ -950,7 +1011,7 @@ public final class WindowManagerGlobal {
                     WindowManagerGlobal.getWindowManagerService()
                             .unregisterTrustedPresentationListener(this, removedListener.first);
                 } catch (RemoteException e) {
-                    e.rethrowAsRuntimeException();
+                    e.rethrowFromSystemServer();
                 }
             }
         }
@@ -1002,6 +1063,17 @@ public final class WindowManagerGlobal {
             getWindowManagerService().setRecentsAppBehindSystemBars(behindSystemBars);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
+        }
+    }
+
+    private static class SurfaceControlInputReceiverInfo {
+        final IBinder mClientToken;
+        final InputEventReceiver mInputEventReceiver;
+
+        private SurfaceControlInputReceiverInfo(IBinder clientToken,
+                InputEventReceiver inputEventReceiver) {
+            mClientToken = clientToken;
+            mInputEventReceiver = inputEventReceiver;
         }
     }
 }

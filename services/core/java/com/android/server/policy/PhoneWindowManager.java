@@ -77,6 +77,7 @@ import static android.view.WindowManagerGlobal.ADD_OKAY;
 import static android.view.WindowManagerGlobal.ADD_PERMISSION_DENIED;
 import static android.view.contentprotection.flags.Flags.createAccessibilityOverlayAppOpEnabled;
 
+import static com.android.hardware.input.Flags.emojiAndScreenshotKeycodesAvailable;
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.SCREENSHOT_KEYCHORD_DELAY;
 import static com.android.server.policy.WindowManagerPolicy.WindowManagerFuncs.CAMERA_LENS_COVERED;
 import static com.android.server.policy.WindowManagerPolicy.WindowManagerFuncs.CAMERA_LENS_COVER_ABSENT;
@@ -239,6 +240,7 @@ import com.android.server.policy.keyguard.KeyguardServiceDelegate.DrawnListener;
 import com.android.server.policy.keyguard.KeyguardStateMonitor.StateCallback;
 import com.android.server.statusbar.StatusBarManagerInternal;
 import com.android.server.vibrator.HapticFeedbackVibrationProvider;
+import com.android.server.vibrator.VibratorFrameworkStatsLogger;
 import com.android.server.vr.VrManagerInternal;
 import com.android.server.wallpaper.WallpaperManagerInternal;
 import com.android.server.wm.ActivityTaskManagerInternal;
@@ -2211,6 +2213,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         TalkbackShortcutController getTalkbackShortcutController() {
             return new TalkbackShortcutController(mContext);
         }
+
+        WindowWakeUpPolicy getWindowWakeUpPolicy() {
+            return new WindowWakeUpPolicy(mContext);
+        }
     }
 
     /** {@inheritDoc} */
@@ -2467,7 +2473,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 com.android.internal.R.integer.config_keyguardDrawnTimeout);
         mKeyguardDelegate = injector.getKeyguardServiceDelegate();
         mTalkbackShortcutController = injector.getTalkbackShortcutController();
-        mWindowWakeUpPolicy = new WindowWakeUpPolicy(mContext);
+        mWindowWakeUpPolicy = injector.getWindowWakeUpPolicy();
         initKeyCombinationRules();
         initSingleKeyGestureRules(injector.getLooper());
         mButtonOverridePermissionChecker = injector.getButtonOverridePermissionChecker();
@@ -3544,6 +3550,16 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     }
                 }
                 break;
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                if (firstDown && event.isMetaPressed() && event.isCtrlPressed()) {
+                    StatusBarManagerInternal statusbar = getStatusBarManagerInternal();
+                    if (statusbar != null) {
+                        statusbar.enterDesktop(event.getDisplayId());
+                        logKeyboardSystemsEvent(event, KeyboardLogEvent.DESKTOP_MODE);
+                        return true;
+                    }
+                }
+                break;
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 if (firstDown && event.isMetaPressed()) {
                     if (event.isCtrlPressed()) {
@@ -3815,6 +3831,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     sendSystemKeyToStatusBarAsync(event);
                     return true;
                 }
+            case KeyEvent.KEYCODE_SCREENSHOT:
+                if (emojiAndScreenshotKeycodesAvailable() && down && repeatCount == 0) {
+                    interceptScreenshotChord(SCREENSHOT_KEY_OTHER, 0 /*pressDelay*/);
+                }
+                return true;
         }
         if (isValidGlobalKey(keyCode)
                 && mGlobalKeyManager.handleGlobalKey(mContext, keyCode, event)) {
@@ -4087,15 +4108,17 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case KeyEvent.KEYCODE_SYSRQ:
                 if (down && repeatCount == 0) {
                     interceptScreenshotChord(SCREENSHOT_KEY_OTHER, 0 /*pressDelay*/);
+                    return true;
                 }
-                return true;
+                break;
             case KeyEvent.KEYCODE_ESCAPE:
                 if (down
                         && KeyEvent.metaStateHasNoModifiers(metaState)
                         && repeatCount == 0) {
                     mContext.closeSystemDialogs();
+                    return true;
                 }
-                return true;
+                break;
             case KeyEvent.KEYCODE_STEM_PRIMARY:
                 handleUnhandledSystemKey(event);
                 sendSystemKeyToStatusBarAsync(event);
@@ -4740,6 +4763,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case KeyEvent.KEYCODE_BACK: {
                 logKeyboardSystemsEventOnActionUp(event, KeyboardLogEvent.BACK);
                 if (down) {
+                    // There may have other embedded activities on the same Task. Try to move the
+                    // focus before processing the back event.
+                    mWindowManagerInternal.moveFocusToTopEmbeddedWindowIfNeeded();
                     mBackKeyHandled = false;
                 } else {
                     if (!hasLongPressOnBackBehavior()) {
@@ -5024,6 +5050,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 }
                 break;
             }
+            case KeyEvent.KEYCODE_STEM_PRIMARY: {
+                if (down && event.getRepeatCount() == 0 && (result & ACTION_PASS_TO_USER) == 0) {
+                    // We've decided not to pass key to user at queueing stage. Make the gesture
+                    // executable.
+                    setDeferredKeyActionsExecutableAsync(keyCode, event.getDownTime());
+                }
+                break;
+            }
             case KeyEvent.KEYCODE_VIDEO_APP_1:
             case KeyEvent.KEYCODE_VIDEO_APP_2:
             case KeyEvent.KEYCODE_VIDEO_APP_3:
@@ -5048,6 +5082,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case KeyEvent.KEYCODE_STYLUS_BUTTON_SECONDARY:
             case KeyEvent.KEYCODE_STYLUS_BUTTON_TERTIARY:
             case KeyEvent.KEYCODE_STYLUS_BUTTON_TAIL: {
+                Slog.i(TAG, "Stylus buttons event: " + keyCode + " received. Should handle event? "
+                        + mStylusButtonsEnabled);
                 if (mStylusButtonsEnabled) {
                     sendSystemKeyToStatusBarAsync(event);
                 }
@@ -5059,6 +5095,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case KeyEvent.KEYCODE_MACRO_3:
             case KeyEvent.KEYCODE_MACRO_4:
                 result &= ~ACTION_PASS_TO_USER;
+                break;
+            case KeyEvent.KEYCODE_EMOJI_PICKER:
+                if (!emojiAndScreenshotKeycodesAvailable()) {
+                    // Don't allow EMOJI_PICKER key to be dispatched until flag is released.
+                    result &= ~ACTION_PASS_TO_USER;
+                }
                 break;
         }
 
@@ -5676,7 +5718,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             Trace.asyncTraceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "screenTurningOn",
                     0 /* cookie */);
             updateScreenOffSleepToken(false /* acquire */, false /* isSwappingDisplay */);
-            mDefaultDisplayPolicy.screenTurnedOn(screenOnListener);
+            mDefaultDisplayPolicy.screenTurningOn(screenOnListener);
             mBootAnimationDismissable = false;
 
             synchronized (mLock) {
@@ -5718,6 +5760,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 mKeyguardDelegate.onScreenTurnedOn();
             }
         }
+        mDefaultDisplayPolicy.screenTurnedOn();
         reportScreenStateToVrManager(true);
     }
 
@@ -6431,6 +6474,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         VibrationAttributes attrs =
                 mHapticFeedbackVibrationProvider.getVibrationAttributesForHapticFeedback(
                         effectId, /* bypassVibrationIntensitySetting= */ always);
+        VibratorFrameworkStatsLogger.logPerformHapticsFeedbackIfKeyboard(uid, effectId);
         mVibrator.vibrate(uid, packageName, effect, reason, attrs);
         return true;
     }

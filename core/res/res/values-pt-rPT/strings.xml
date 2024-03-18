@@ -154,6 +154,16 @@
     <string name="cfTemplateForwardedTime" msgid="735042369233323609">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: <xliff:g id="DIALING_NUMBER">{1}</xliff:g> após <xliff:g id="TIME_DELAY">{2}</xliff:g> segundos"</string>
     <string name="cfTemplateRegistered" msgid="5619930473441550596">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: Não reencaminhado"</string>
     <string name="cfTemplateRegisteredTime" msgid="5222794399642525045">"<xliff:g id="BEARER_SERVICE_CODE">{0}</xliff:g>: Não reencaminhado"</string>
+    <string name="scCellularNetworkSecurityTitle" msgid="90330018476923559">"Segurança da rede móvel"</string>
+    <string name="scCellularNetworkSecuritySummary" msgid="8659128412709908263">"Reveja as definições"</string>
+    <string name="scIdentifierDisclosureIssueTitle" msgid="3737384845335568193">"Identificador do dispositivo acedido"</string>
+    <string name="scIdentifierDisclosureIssueSummary" msgid="3870743771498510600">"Uma rede na ligação <xliff:g id="DISCLOSURE_NETWORK">%4$s</xliff:g> registou o identificador único (IMSI) do seu dispositivo <xliff:g id="DISCLOSURE_COUNT">%1$d</xliff:g> vezes no período entre a(s) <xliff:g id="DISCLOSURE_WINDOW_START_TIME">%2$tr</xliff:g> e a(s) <xliff:g id="DISCLOSURE_WINDOW_END_TIME">%3$tr</xliff:g>."</string>
+    <string name="scNullCipherIssueEncryptedTitle" msgid="8426373579673205292">"Ligação encriptada a <xliff:g id="NETWORK_NAME">%1$s</xliff:g>"</string>
+    <string name="scNullCipherIssueEncryptedSummary" msgid="6437468449554283998">"O dispositivo está agora ligado a uma rede móvel mais segura."</string>
+    <string name="scNullCipherIssueNonEncryptedTitle" msgid="2069674849204163569">"Ligação não encriptada à rede <xliff:g id="NETWORK_NAME">%1$s</xliff:g>"</string>
+    <string name="scNullCipherIssueNonEncryptedSummary" msgid="3577092996366374833">"O dispositivo está ligado a uma rede móvel não encriptada. As suas chamadas, mensagens e dados estão vulneráveis a uma interceção."</string>
+    <string name="scNullCipherIssueActionSettings" msgid="8378372959891478470">"Definições de segurança da rede móvel"</string>
+    <string name="scNullCipherIssueActionLearnMore" msgid="7896642417214757769">"Saber mais"</string>
     <string name="fcComplete" msgid="1080909484660507044">"Código de funcionalidade completo."</string>
     <string name="fcError" msgid="5325116502080221346">"Problema de ligação ou código de funcionalidade inválido."</string>
     <string name="httpErrorOk" msgid="6206751415788256357">"OK"</string>
@@ -371,6 +381,8 @@
     <string name="permdesc_bindCellBroadcastService" msgid="6540910200973641606">"Permite que a app se vincule ao módulo de difusão celular para encaminhar mensagens de difusão celular à medida que são recebidas. Os alertas de difusão celular são fornecidos em algumas localizações para avisar sobre situações de emergência. As aplicações maliciosas podem interferir com o desempenho ou funcionamento do seu dispositivo quando for recebida uma difusão celular de emergência."</string>
     <string name="permlab_manageOngoingCalls" msgid="281244770664231782">"Gerir chamadas em curso"</string>
     <string name="permdesc_manageOngoingCalls" msgid="7003138133829915265">"Permite que uma app veja detalhes acerca das chamadas em curso no seu dispositivo e controle essas chamadas."</string>
+    <string name="permlab_accessLastKnownCellId" msgid="7638226620825665130">"Acesso à última identidade do telemóvel conhecida."</string>
+    <string name="permdesc_accessLastKnownCellId" msgid="6664621339249308857">"Permite que uma app aceda à última identidade do telemóvel conhecida fornecida pela telefonia."</string>
     <string name="permlab_readCellBroadcasts" msgid="5869884450872137693">"ler mensagens de transmissão celular"</string>
     <string name="permdesc_readCellBroadcasts" msgid="672513437331980168">"Permite que a app leia mensagens de transmissão celular recebidas pelo seu dispositivo. Os alertas de transmissão celular são fornecidos em algumas localizações para avisá-lo sobre situações de emergência. As aplicações maliciosas podem interferir com o desempenho ou funcionamento do seu dispositivo quando for recebida uma transmissão celular de emergência."</string>
     <string name="permlab_subscribedFeedsRead" msgid="217624769238425461">"ler feeds subscritos"</string>
@@ -542,6 +554,8 @@
     <string name="permdesc_transmitIr" product="default" msgid="8484193849295581808">"Permite que a app utilize o transmissor de infravermelhos do telemóvel."</string>
     <string name="permlab_setWallpaper" msgid="6959514622698794511">"definir imagem de fundo"</string>
     <string name="permdesc_setWallpaper" msgid="2973996714129021397">"Permite à app definir a imagem de fundo do sistema."</string>
+    <string name="permlab_accessHiddenProfile" msgid="8607094418491556823">"Aceder a perfis ocultos"</string>
+    <string name="permdesc_accessHiddenProfile" msgid="1543153202481009676">"Permite que a app aceda a perfis ocultos."</string>
     <string name="permlab_setWallpaperHints" msgid="1153485176642032714">"ajustar o tamanho da imagem de fundo"</string>
     <string name="permdesc_setWallpaperHints" msgid="6257053376990044668">"Permite que a app defina as sugestões de tamanho da imagem de fundo do sistema."</string>
     <string name="permlab_setTimeZone" msgid="7922618798611542432">"definir fuso horário"</string>
@@ -635,8 +649,7 @@
     <string name="screen_lock_app_setting_name" msgid="6054944352976789228">"Usar o bloqueio de ecrã"</string>
     <string name="screen_lock_dialog_default_subtitle" msgid="120359538048533695">"Introduza o bloqueio de ecrã para continuar"</string>
     <string name="fingerprint_acquired_partial" msgid="4323789264604479684">"Prima firmemente o sensor"</string>
-    <!-- no translation found for fingerprint_acquired_insufficient (2410176550915730974) -->
-    <skip />
+    <string name="fingerprint_acquired_insufficient" msgid="2410176550915730974">"Impressão digital não reconhecida. Tente novamente."</string>
     <string name="fingerprint_acquired_imager_dirty" msgid="1770676120848224250">"Limpe o sensor de impressões digitais e tente novamente"</string>
     <string name="fingerprint_acquired_imager_dirty_alt" msgid="9169582140486372897">"Limpe o sensor e tente novamente"</string>
     <string name="fingerprint_acquired_too_fast" msgid="1628459767349116104">"Prima firmemente o sensor"</string>
@@ -654,18 +667,24 @@
     <string name="fingerprint_authenticated" msgid="2024862866860283100">"A impressão digital foi autenticada."</string>
     <string name="face_authenticated_no_confirmation_required" msgid="8867889115112348167">"Rosto autenticado."</string>
     <string name="face_authenticated_confirmation_required" msgid="6872632732508013755">"Rosto autenticado. Prima Confirmar."</string>
-    <string name="fingerprint_error_hw_not_available" msgid="4571700896929561202">"Hardware de impressão digital não disponível."</string>
+    <!-- no translation found for fingerprint_error_hw_not_available (7755729484334001137) -->
+    <skip />
     <string name="fingerprint_error_no_space" msgid="7285481581905967580">"Não é possível configurar a impressão digital"</string>
     <string name="fingerprint_error_timeout" msgid="7361192266621252164">"A configuração da impressão digital expirou. Tente novamente."</string>
-    <string name="fingerprint_error_canceled" msgid="540026881380070750">"Operação de impressão digital cancelada."</string>
-    <string name="fingerprint_error_user_canceled" msgid="7685676229281231614">"Operação de impressão digital cancelada pelo utilizador."</string>
+    <!-- no translation found for fingerprint_error_canceled (5541771463159727513) -->
+    <skip />
+    <!-- no translation found for fingerprint_error_user_canceled (2017941773466506863) -->
+    <skip />
     <string name="fingerprint_error_lockout" msgid="6626753679019351368">"Demasiadas tentativas. Em alternativa, use o bloqueio de ecrã."</string>
     <string name="fingerprint_error_lockout_permanent" msgid="9060651300306264843">"Demasiadas tentativas. Em alternativa, use o bloqueio de ecrã."</string>
     <string name="fingerprint_error_unable_to_process" msgid="2446280592818621224">"Não é possível processar a impressão digital. Tente novamente."</string>
-    <string name="fingerprint_error_no_fingerprints" msgid="8671811719699072411">"Nenhuma impressão digital registada."</string>
-    <string name="fingerprint_error_hw_not_present" msgid="578914350967423382">"Este dispositivo não tem sensor de impressões digitais."</string>
-    <string name="fingerprint_error_security_update_required" msgid="7750187320640856433">"Sensor temporariamente desativado."</string>
-    <string name="fingerprint_error_bad_calibration" msgid="4385512597740168120">"Não é possível usar o sensor de impressões digitais. Visite um fornecedor de serviços de reparação"</string>
+    <!-- no translation found for fingerprint_error_no_fingerprints (3144806556204061862) -->
+    <skip />
+    <string name="fingerprint_error_hw_not_present" msgid="5898827259419366359">"Este dispositivo não tem sensor de impressões digitais."</string>
+    <!-- no translation found for fingerprint_error_security_update_required (8440349108169661934) -->
+    <skip />
+    <!-- no translation found for fingerprint_error_bad_calibration (6770614925736183528) -->
+    <skip />
     <string name="fingerprint_error_power_pressed" msgid="5479524500542129414">"Botão ligar/desligar premido"</string>
     <string name="fingerprint_name_template" msgid="8941662088160289778">"Dedo <xliff:g id="FINGERID">%d</xliff:g>"</string>
     <string name="fingerprint_app_setting_name" msgid="4253767877095495844">"Usar a impressão digital"</string>
@@ -700,8 +719,7 @@
     <string name="face_acquired_not_detected" msgid="1057966913397548150">"Rosto não detetado. Segure o telemóvel ao nível dos olhos"</string>
     <string name="face_acquired_too_much_motion" msgid="8199691445085189528">"Demasiado movimento. Mantenha o telemóvel firme."</string>
     <string name="face_acquired_recalibrate" msgid="8724013080976469746">"Volte a inscrever o rosto."</string>
-    <!-- no translation found for face_acquired_too_different (4505278456634706967) -->
-    <skip />
+    <string name="face_acquired_too_different" msgid="4505278456634706967">"Rosto não reconhecido. Tente novamente."</string>
     <string name="face_acquired_too_similar" msgid="8882920552674125694">"Altere ligeiramente a posição da sua cabeça"</string>
     <string name="face_acquired_pan_too_extreme" msgid="5417928604710621088">"Olhe mais diretamente para o telemóvel"</string>
     <string name="face_acquired_tilt_too_extreme" msgid="5715715666540716620">"Olhe mais diretamente para o telemóvel"</string>
@@ -812,6 +830,8 @@
     <string name="permdesc_highSamplingRateSensors" msgid="8430061978931155995">"Permite que a app obtenha uma amostra dos dados de sensores a uma taxa superior a 200 Hz."</string>
     <string name="permlab_updatePackagesWithoutUserAction" msgid="3363272609642618551">"atualizar a app sem a ação do utilizador"</string>
     <string name="permdesc_updatePackagesWithoutUserAction" msgid="4567739631260526366">"Permite que o proprietário atualize a app que instalou anteriormente sem a ação do utilizador"</string>
+    <string name="permlab_writeVerificationStateE2eeContactKeys" msgid="3990742344778360457">"atualizar os estados de validação das chaves de contacto E2EE pertencentes a outras apps"</string>
+    <string name="permdesc_writeVerificationStateE2eeContactKeys" msgid="8453156829747427041">"Permite que a app atualize os estados de validação das chaves de contacto E2EE pertencentes a outras apps"</string>
     <string name="policylab_limitPassword" msgid="4851829918814422199">"Definir regras de palavra-passe"</string>
     <string name="policydesc_limitPassword" msgid="4105491021115793793">"Controlar o comprimento e os carateres permitidos nos PINs e nas palavras-passe do bloqueio de ecrã."</string>
     <string name="policylab_watchLogin" msgid="7599669460083719504">"Monitorizar tentativas de desbloqueio do ecrã"</string>
@@ -1931,6 +1951,8 @@
     <string name="notification_verified_content_description" msgid="6401483602782359391">"Validada"</string>
     <string name="expand_button_content_description_collapsed" msgid="3873368935659010279">"Expandir"</string>
     <string name="expand_button_content_description_expanded" msgid="7484217944948667489">"Reduzir"</string>
+    <string name="content_description_collapsed" msgid="2827748787566489401">"Reduzido"</string>
+    <string name="content_description_expanded" msgid="2159348812972413703">"Expandido"</string>
     <string name="expand_action_accessibility" msgid="1947657036871746627">"ativar/desativar expansão"</string>
     <string name="usb_midi_peripheral_name" msgid="490523464968655741">"Porta periférica USB para Android"</string>
     <string name="usb_midi_peripheral_manufacturer_name" msgid="7557148557088787741">"Android"</string>
@@ -2371,4 +2393,8 @@
     <string name="profile_label_test" msgid="9168641926186071947">"Teste"</string>
     <string name="profile_label_communal" msgid="8743921499944800427">"Comum"</string>
     <string name="redacted_notification_action_title" msgid="6942924973335920935"></string>
+    <string name="satellite_notification_title" msgid="4026338973463121526">"Ligação de satélite estabelecida automaticamente"</string>
+    <string name="satellite_notification_summary" msgid="5207364139430767162">"Pode enviar e receber mensagens sem uma rede móvel ou Wi-Fi"</string>
+    <string name="satellite_notification_open_message" msgid="4149234979688273729">"Abre a app Mensagens"</string>
+    <string name="satellite_notification_how_it_works" msgid="3132069321977520519">"Como funciona"</string>
 </resources>

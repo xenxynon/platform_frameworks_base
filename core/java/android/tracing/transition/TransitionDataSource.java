@@ -16,7 +16,6 @@
 
 package android.tracing.transition;
 
-import android.tracing.perfetto.CreateTlsStateArgs;
 import android.tracing.perfetto.DataSource;
 import android.tracing.perfetto.DataSourceInstance;
 import android.tracing.perfetto.FlushCallbackArguments;
@@ -24,14 +23,11 @@ import android.tracing.perfetto.StartCallbackArguments;
 import android.tracing.perfetto.StopCallbackArguments;
 import android.util.proto.ProtoInputStream;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * @hide
  */
 public class TransitionDataSource
-        extends DataSource<DataSourceInstance, TransitionDataSource.TlsState, Void> {
+        extends DataSource<DataSourceInstance, Void, Void> {
     public static String DATA_SOURCE_NAME = "com.android.wm.shell.transition";
 
     private final Runnable mOnStartStaticCallback;
@@ -43,15 +39,6 @@ public class TransitionDataSource
         this.mOnStartStaticCallback = onStart;
         this.mOnFlushStaticCallback = onFlush;
         this.mOnStopStaticCallback = onStop;
-    }
-
-    @Override
-    protected TlsState createTlsState(CreateTlsStateArgs<DataSourceInstance> args) {
-        return new TlsState();
-    }
-
-    public class TlsState {
-        public final Map<String, Integer> handlerMapping = new HashMap<>();
     }
 
     @Override

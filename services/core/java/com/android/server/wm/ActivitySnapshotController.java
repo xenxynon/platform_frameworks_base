@@ -21,6 +21,7 @@ import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
+import android.graphics.Rect;
 import android.os.Environment;
 import android.os.SystemProperties;
 import android.os.Trace;
@@ -31,8 +32,6 @@ import android.util.SparseArray;
 import android.window.TaskSnapshot;
 
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.server.LocalServices;
-import com.android.server.pm.UserManagerInternal;
 import com.android.server.wm.BaseAppSnapshotPersister.PersistInfoProvider;
 import com.android.window.flags.Flags;
 
@@ -104,7 +103,7 @@ class ActivitySnapshotController extends AbsAppSnapshotController<ActivityRecord
                 Environment::getDataSystemCeDirectory);
         mPersister = new TaskSnapshotPersister(persistQueue, mPersistInfoProvider);
         mSnapshotLoader = new AppSnapshotLoader(mPersistInfoProvider);
-        initialize(new ActivitySnapshotCache(service));
+        initialize(new ActivitySnapshotCache());
 
         final boolean snapshotEnabled =
                 !service.mContext
@@ -163,18 +162,12 @@ class ActivitySnapshotController extends AbsAppSnapshotController<ActivityRecord
     private void cleanUpUserFiles(int userId) {
         synchronized (mSnapshotPersistQueue.getLock()) {
             mSnapshotPersistQueue.sendToQueueLocked(
-                    new SnapshotPersistQueue.WriteQueueItem(mPersistInfoProvider) {
-                        @Override
-                        boolean isReady() {
-                            final UserManagerInternal mUserManagerInternal =
-                                    LocalServices.getService(UserManagerInternal.class);
-                            return mUserManagerInternal.isUserUnlocked(userId);
-                        }
+                    new SnapshotPersistQueue.WriteQueueItem(mPersistInfoProvider, userId) {
 
                         @Override
                         void write() {
                             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "cleanUpUserFiles");
-                            final File file = mPersistInfoProvider.getDirectory(userId);
+                            final File file = mPersistInfoProvider.getDirectory(mUserId);
                             if (file.exists()) {
                                 final File[] contents = file.listFiles();
                                 if (contents != null) {
@@ -263,15 +256,13 @@ class ActivitySnapshotController extends AbsAppSnapshotController<ActivityRecord
 
     class LoadActivitySnapshotItem extends SnapshotPersistQueue.WriteQueueItem {
         private final int mCode;
-        private final int mUserId;
         private final ActivityRecord[] mActivities;
 
         LoadActivitySnapshotItem(@NonNull ActivityRecord[] activities, int code, int userId,
                 @NonNull PersistInfoProvider persistInfoProvider) {
-            super(persistInfoProvider);
+            super(persistInfoProvider, userId);
             mActivities = activities;
             mCode = code;
-            mUserId = userId;
         }
 
         @Override
@@ -304,6 +295,11 @@ class ActivitySnapshotController extends AbsAppSnapshotController<ActivityRecord
             final LoadActivitySnapshotItem other = (LoadActivitySnapshotItem) o;
             return mCode == other.mCode && mUserId == other.mUserId
                     && mPersistInfoProvider == other.mPersistInfoProvider;
+        }
+
+        @Override
+        public String toString() {
+            return "LoadActivitySnapshotItem{code=" + mCode + ", UserId=" + mUserId + "}";
         }
     }
 
@@ -622,6 +618,12 @@ class ActivitySnapshotController extends AbsAppSnapshotController<ActivityRecord
         return mPersistInfoProvider.use16BitFormat();
     }
 
+    @Override
+    protected Rect getLetterboxInsets(ActivityRecord topActivity) {
+        // Do not capture letterbox for ActivityRecord
+        return Letterbox.EMPTY_RECT;
+    }
+
     @NonNull
     private SparseArray<UserSavedFile> getUserFiles(int userId) {
         if (mUserSavedFiles.get(userId) == null) {
@@ -714,24 +716,9 @@ class ActivitySnapshotController extends AbsAppSnapshotController<ActivityRecord
             }
             removeTargets.add(usf);
         }
-        removeSnapshotFiles(removeTargets);
-    }
-
-    private void removeSnapshotFiles(@NonNull ArrayList<UserSavedFile> files) {
-        synchronized (mSnapshotPersistQueue.getLock()) {
-            mSnapshotPersistQueue.sendToQueueLocked(
-                    new SnapshotPersistQueue.WriteQueueItem(mPersistInfoProvider) {
-                        @Override
-                        void write() {
-                            Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "activity_remove_files");
-                            for (int i = files.size() - 1; i >= 0; --i) {
-                                final UserSavedFile usf = files.get(i);
-                                mSnapshotPersistQueue.deleteSnapshot(
-                                        usf.mFileId, usf.mUserId, mPersistInfoProvider);
-                            }
-                            Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
-                        }
-                    });
+        for (int i = removeTargets.size() - 1; i >= 0; --i) {
+            final UserSavedFile usf = removeTargets.get(i);
+            mPersister.removeSnapshot(usf.mFileId, usf.mUserId);
         }
     }
 

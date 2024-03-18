@@ -44,6 +44,8 @@ import static com.android.wm.shell.common.split.SplitScreenConstants.SPLIT_POSIT
 import static com.android.wm.shell.common.split.SplitScreenConstants.splitPositionToString;
 import static com.android.wm.shell.common.split.SplitScreenUtils.reverseSplitPosition;
 import static com.android.wm.shell.common.split.SplitScreenUtils.splitFailureMessage;
+import static com.android.wm.shell.shared.TransitionUtil.isClosingType;
+import static com.android.wm.shell.shared.TransitionUtil.isOpeningType;
 import static com.android.wm.shell.splitscreen.SplitScreen.STAGE_TYPE_MAIN;
 import static com.android.wm.shell.splitscreen.SplitScreen.STAGE_TYPE_SIDE;
 import static com.android.wm.shell.splitscreen.SplitScreen.STAGE_TYPE_UNDEFINED;
@@ -64,8 +66,6 @@ import static com.android.wm.shell.splitscreen.SplitScreenController.exitReasonT
 import static com.android.wm.shell.transition.Transitions.ENABLE_SHELL_TRANSITIONS;
 import static com.android.wm.shell.transition.Transitions.TRANSIT_SPLIT_SCREEN_OPEN_TO_SIDE;
 import static com.android.wm.shell.transition.Transitions.TRANSIT_SPLIT_SCREEN_PAIR_OPEN;
-import static com.android.wm.shell.util.TransitionUtil.isClosingType;
-import static com.android.wm.shell.util.TransitionUtil.isOpeningType;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -136,13 +136,13 @@ import com.android.wm.shell.common.split.SplitScreenUtils;
 import com.android.wm.shell.common.split.SplitWindowManager;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
 import com.android.wm.shell.recents.RecentTasksController;
+import com.android.wm.shell.shared.TransitionUtil;
 import com.android.wm.shell.splitscreen.SplitScreen.StageType;
 import com.android.wm.shell.splitscreen.SplitScreenController.ExitReason;
 import com.android.wm.shell.transition.DefaultMixedHandler;
 import com.android.wm.shell.transition.LegacyTransitions;
 import com.android.wm.shell.transition.Transitions;
 import com.android.wm.shell.util.SplitBounds;
-import com.android.wm.shell.util.TransitionUtil;
 import com.android.wm.shell.windowdecor.WindowDecorViewModel;
 
 import dalvik.annotation.optimization.NeverCompile;
@@ -2960,17 +2960,21 @@ public class StageCoordinator implements SplitLayout.SplitLayoutHandler,
     }
 
     public void goToFullscreenFromSplit() {
-        boolean leftOrTop;
-        if (mSideStage.isFocused()) {
-            leftOrTop = (mSideStagePosition == SPLIT_POSITION_TOP_OR_LEFT);
+        // If main stage is focused, toEnd = true if
+        // mSideStagePosition = SPLIT_POSITION_BOTTOM_OR_RIGHT. Otherwise toEnd = false
+        // If side stage is focused, toEnd = true if
+        // mSideStagePosition = SPLIT_POSITION_TOP_OR_LEFT. Otherwise toEnd = false
+        final boolean toEnd;
+        if (mMainStage.isFocused()) {
+            toEnd = (mSideStagePosition == SPLIT_POSITION_BOTTOM_OR_RIGHT);
         } else {
-            leftOrTop = (mSideStagePosition == SPLIT_POSITION_BOTTOM_OR_RIGHT);
+            toEnd = (mSideStagePosition == SPLIT_POSITION_TOP_OR_LEFT);
         }
-        mSplitLayout.flingDividerToDismiss(!leftOrTop, EXIT_REASON_FULLSCREEN_SHORTCUT);
+        mSplitLayout.flingDividerToDismiss(toEnd, EXIT_REASON_FULLSCREEN_SHORTCUT);
     }
 
     /** Move the specified task to fullscreen, regardless of focus state. */
-    public void moveTaskToFullscreen(int taskId) {
+    public void moveTaskToFullscreen(int taskId, int exitReason) {
         boolean leftOrTop;
         if (mMainStage.containsTask(taskId)) {
             leftOrTop = (mSideStagePosition == SPLIT_POSITION_TOP_OR_LEFT);
@@ -2979,8 +2983,27 @@ public class StageCoordinator implements SplitLayout.SplitLayoutHandler,
         } else {
             return;
         }
-        mSplitLayout.flingDividerToDismiss(!leftOrTop, EXIT_REASON_FULLSCREEN_SHORTCUT);
+        mSplitLayout.flingDividerToDismiss(!leftOrTop, exitReason);
 
+    }
+
+    /**
+     * Performs previous child eviction and such to prepare for the pip task expending into one of
+     * the split stages
+     *
+     * @param taskInfo TaskInfo of the pip task
+     */
+    public void onPipExpandToSplit(WindowContainerTransaction wct,
+            ActivityManager.RunningTaskInfo taskInfo) {
+        prepareEnterSplitScreen(wct, taskInfo, getActivateSplitPosition(taskInfo),
+                false /*resizeAnim*/);
+
+        if (!isSplitScreenVisible() || mSplitRequest == null) {
+            return;
+        }
+
+        boolean replacingMainStage = getMainStagePosition() == mSplitRequest.mActivatePosition;
+        (replacingMainStage ? mMainStage : mSideStage).evictOtherChildren(wct, taskInfo.taskId);
     }
 
     boolean isLaunchToSplit(TaskInfo taskInfo) {

@@ -44,7 +44,6 @@ import com.android.systemui.flags.Flags.TRACKPAD_GESTURE_FEATURES
 import com.android.systemui.keyevent.domain.interactor.SysUIKeyEventHandler
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
-import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.keyguard.ui.viewmodel.AlternateBouncerDependencies
 import com.android.systemui.res.R
@@ -74,10 +73,12 @@ import com.android.systemui.util.time.FakeSystemClock
 import com.google.common.truth.Truth.assertThat
 import java.util.Optional
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.ArgumentCaptor
@@ -376,7 +377,7 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
 
     @Test
     fun handleDispatchTouchEvent_nsslMigrationOff_userActivity_not_called() {
-        mSetFlagsRule.disableFlags(Flags.FLAG_KEYGUARD_SHADE_MIGRATION_NSSL)
+        mSetFlagsRule.disableFlags(Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
         underTest.setStatusBarViewController(phoneStatusBarViewController)
 
         interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
@@ -386,7 +387,7 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
 
     @Test
     fun handleDispatchTouchEvent_nsslMigrationOn_userActivity() {
-        mSetFlagsRule.enableFlags(Flags.FLAG_KEYGUARD_SHADE_MIGRATION_NSSL)
+        mSetFlagsRule.enableFlags(Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
         underTest.setStatusBarViewController(phoneStatusBarViewController)
 
         interactionEventHandler.handleDispatchTouchEvent(DOWN_EVENT)
@@ -428,7 +429,7 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
         // AND the lock icon wants the touch
         whenever(lockIconViewController.willHandleTouchWhileDozing(DOWN_EVENT)).thenReturn(true)
 
-        mSetFlagsRule.enableFlags(KeyguardShadeMigrationNssl.FLAG_NAME)
+        mSetFlagsRule.enableFlags(Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
 
         // THEN touch should NOT be intercepted by NotificationShade
         assertThat(interactionEventHandler.shouldInterceptTouchEvent(DOWN_EVENT)).isFalse()
@@ -447,9 +448,9 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
         whenever(quickSettingsController.shouldQuickSettingsIntercept(any(), any(), any()))
             .thenReturn(false)
 
-        mSetFlagsRule.enableFlags(KeyguardShadeMigrationNssl.FLAG_NAME)
+        mSetFlagsRule.enableFlags(Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
 
-        // THEN touch should NOT be intercepted by NotificationShade
+        // THEN touch should be intercepted by NotificationShade
         assertThat(interactionEventHandler.shouldInterceptTouchEvent(DOWN_EVENT)).isTrue()
     }
 
@@ -466,9 +467,37 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
         whenever(quickSettingsController.shouldQuickSettingsIntercept(any(), any(), any()))
             .thenReturn(true)
 
-        mSetFlagsRule.enableFlags(KeyguardShadeMigrationNssl.FLAG_NAME)
+        mSetFlagsRule.enableFlags(Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
 
-        // THEN touch should NOT be intercepted by NotificationShade
+        // THEN touch should be intercepted by NotificationShade
+        assertThat(interactionEventHandler.shouldInterceptTouchEvent(DOWN_EVENT)).isTrue()
+    }
+
+    @Test
+    fun shouldInterceptTouchEvent_dozingAndPulsing_touchIntercepted() {
+        // GIVEN dozing
+        whenever(sysuiStatusBarStateController.isDozing).thenReturn(true)
+        // AND pulsing
+        whenever(dozeServiceHost.isPulsing()).thenReturn(true)
+        // AND status bar doesn't want it
+        whenever(statusBarKeyguardViewManager.shouldInterceptTouchEvent(DOWN_EVENT))
+            .thenReturn(false)
+        // AND shade is not fully expanded
+        whenever(notificationPanelViewController.isFullyExpanded()).thenReturn(false)
+        // AND the lock icon does NOT want the touch
+        whenever(lockIconViewController.willHandleTouchWhileDozing(DOWN_EVENT)).thenReturn(false)
+        // AND quick settings controller DOES want it
+        whenever(quickSettingsController.shouldQuickSettingsIntercept(any(), any(), any()))
+            .thenReturn(true)
+        // AND bouncer is not showing
+        whenever(centralSurfaces.isBouncerShowing()).thenReturn(false)
+        // AND panel view controller wants it
+        whenever(notificationPanelViewController.handleExternalInterceptTouch(DOWN_EVENT))
+            .thenReturn(true)
+
+        mSetFlagsRule.enableFlags(Flags.FLAG_MIGRATE_CLOCKS_TO_BLUEPRINT)
+
+        // THEN touch should be intercepted by NotificationShade
         assertThat(interactionEventHandler.shouldInterceptTouchEvent(DOWN_EVENT)).isTrue()
     }
 
@@ -480,12 +509,14 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
         }
 
     @Test
+    @Ignore("b/321332798")
     fun setsUpCommunalHubLayout_whenFlagEnabled() {
         if (!isComposeAvailable()) {
             return
         }
 
-        whenever(mGlanceableHubContainerController.isEnabled()).thenReturn(true)
+        whenever(mGlanceableHubContainerController.communalAvailable())
+            .thenReturn(MutableStateFlow(true))
 
         val mockCommunalView = mock(View::class.java)
         whenever(mGlanceableHubContainerController.initView(any<Context>()))
@@ -510,7 +541,8 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
             return
         }
 
-        whenever(mGlanceableHubContainerController.isEnabled()).thenReturn(false)
+        whenever(mGlanceableHubContainerController.communalAvailable())
+            .thenReturn(MutableStateFlow(false))
 
         val mockCommunalPlaceholder = mock(View::class.java)
         val fakeViewIndex = 20
@@ -520,8 +552,7 @@ class NotificationShadeWindowViewControllerTest : SysuiTestCase() {
 
         underTest.setupCommunalHubLayout()
 
-        // No adding or removing of views occurs.
-        verify(view, times(0)).removeView(mockCommunalPlaceholder)
+        // No adding of views occurs.
         verify(view, times(0)).addView(any(), eq(fakeViewIndex))
     }
 

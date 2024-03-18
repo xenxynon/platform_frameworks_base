@@ -4425,10 +4425,12 @@ class Task extends TaskFragment {
 
     void setHasBeenVisible(boolean hasBeenVisible) {
         mHasBeenVisible = hasBeenVisible;
-        if (!hasBeenVisible || mDeferTaskAppear) {
+        if (!hasBeenVisible) {
             return;
         }
-        sendTaskAppeared();
+        if (!mDeferTaskAppear) {
+            sendTaskAppeared();
+        }
         for (WindowContainer<?> parent = getParent(); parent != null; parent = parent.getParent()) {
             final Task parentTask = parent.asTask();
             if (parentTask == null) {
@@ -5109,7 +5111,7 @@ class Task extends TaskFragment {
             mHandler.removeMessages(TRANSLUCENT_TIMEOUT_MSG);
 
             if (waitingActivity != null) {
-                mWmService.setWindowOpaqueLocked(waitingActivity.token, false);
+                waitingActivity.setMainWindowOpaque(false);
                 if (waitingActivity.attachedToProcess()) {
                     try {
                         waitingActivity.app.getThread().scheduleTranslucentConversionComplete(

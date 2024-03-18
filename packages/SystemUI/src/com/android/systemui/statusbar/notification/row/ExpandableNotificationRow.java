@@ -21,6 +21,7 @@ import static android.service.notification.NotificationListenerService.REASON_CA
 
 import static com.android.systemui.statusbar.notification.collection.NotificationEntry.DismissState.PARENT_DISMISSED;
 import static com.android.systemui.statusbar.notification.row.NotificationContentView.VISIBLE_TYPE_HEADSUP;
+import static com.android.systemui.util.ColorUtilKt.hexColorString;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -40,6 +41,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemProperties;
 import android.os.Trace;
+import android.os.UserHandle;
 import android.util.AttributeSet;
 import android.util.FloatProperty;
 import android.util.IndentingPrintWriter;
@@ -84,10 +86,11 @@ import com.android.systemui.statusbar.RemoteInputController;
 import com.android.systemui.statusbar.SmartReplyController;
 import com.android.systemui.statusbar.StatusBarIconView;
 import com.android.systemui.statusbar.notification.AboveShelfChangedListener;
+import com.android.systemui.statusbar.notification.ColorUpdateLogger;
 import com.android.systemui.statusbar.notification.FeedbackIcon;
 import com.android.systemui.statusbar.notification.LaunchAnimationParameters;
 import com.android.systemui.statusbar.notification.NotificationFadeAware;
-import com.android.systemui.statusbar.notification.NotificationLaunchAnimatorController;
+import com.android.systemui.statusbar.notification.NotificationTransitionAnimatorController;
 import com.android.systemui.statusbar.notification.NotificationUtils;
 import com.android.systemui.statusbar.notification.SourceType;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
@@ -171,6 +174,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     private Optional<BubblesManager> mBubblesManagerOptional;
     private MetricsLogger mMetricsLogger;
     private NotificationChildrenContainerLogger mChildrenContainerLogger;
+    private ColorUpdateLogger mColorUpdateLogger;
     private NotificationDismissibilityProvider mDismissibilityProvider;
     private FeatureFlags mFeatureFlags;
     private int mIconTransformContentShift;
@@ -382,7 +386,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     private boolean mUseIncreasedHeadsUpHeight;
     private float mTranslationWhenRemoved;
     private boolean mWasChildInGroupWhenRemoved;
-    private NotificationInlineImageResolver mImageResolver;
+    private final NotificationInlineImageResolver mImageResolver;
     private BigPictureIconManager mBigPictureIconManager;
     @Nullable
     private OnExpansionChangedListener mExpansionChangedListener;
@@ -444,6 +448,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     /**
      * Sets animations running in the layouts of this row, including public, private, and children.
+     *
      * @param running whether the animations should be started running or stopped.
      */
     public void setAnimationRunning(boolean running) {
@@ -610,6 +615,12 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     private void updateBackgroundColorsOfSelf() {
         super.updateBackgroundColors();
+        if (mColorUpdateLogger.isEnabled()) {
+            mColorUpdateLogger.logNotificationEvent("ENR.updateBackgroundColorsOfSelf()",
+                    mLoggingKey,
+                    "normalBgColor=" + hexColorString(getNormalBgColor())
+                            + " background=" + mBackgroundNormal.toDumpString());
+        }
     }
 
     @Override
@@ -1388,7 +1399,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     public void setContentBackground(int customBackgroundColor, boolean animate,
-                                     NotificationContentView notificationContentView) {
+            NotificationContentView notificationContentView) {
         if (getShowingLayout() == notificationContentView) {
             setTintColor(customBackgroundColor, animate);
         }
@@ -1457,7 +1468,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     /**
-     * @return  if this entry should be kept in its parent during removal.
+     * @return if this entry should be kept in its parent during removal.
      */
     public boolean keepInParentForDismissAnimation() {
         return mKeepInParentForDismissAnimation;
@@ -1700,13 +1711,43 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     /**
-     * Constructs an ExpandableNotificationRow.
-     * @param context context passed to image resolver
+     * Constructs an ExpandableNotificationRow. Used by layout inflation.
+     *
+     * @param context passed to image resolver
      * @param attrs attributes used to initialize parent view
      */
     public ExpandableNotificationRow(Context context, AttributeSet attrs) {
-        super(context, attrs);
-        mImageResolver = new NotificationInlineImageResolver(context,
+        this(context, attrs, context);
+        if (com.android.systemui.Flags.notificationRowUserContext()) {
+            Log.wtf(TAG, "This constructor shouldn't be called");
+        }
+    }
+
+    /**
+     * Constructs an ExpandableNotificationRow. Used by layout inflation (with a custom {@code
+     * AsyncLayoutFactory} in {@link RowInflaterTask}.
+     *
+     * @param context context context of the view
+     * @param attrs attributes used to initialize parent view
+     * @param entry notification that the row will be associated to (determines the user for the
+     *              ImageResolver)
+     */
+    public ExpandableNotificationRow(Context context, AttributeSet attrs, NotificationEntry entry) {
+        this(context, attrs, userContextForEntry(context, entry));
+    }
+
+    private static Context userContextForEntry(Context base, NotificationEntry entry) {
+        if (base.getUserId() == entry.getSbn().getNormalizedUserId()) {
+            return base;
+        }
+        return base.createContextAsUser(
+                UserHandle.of(entry.getSbn().getNormalizedUserId()), /* flags= */ 0);
+    }
+
+    private ExpandableNotificationRow(Context sysUiContext, AttributeSet attrs,
+            Context userContext) {
+        super(sysUiContext, attrs);
+        mImageResolver = new NotificationInlineImageResolver(userContext,
                 new NotificationInlineImageCache());
         float radius = getResources().getDimension(R.dimen.notification_corner_radius_small);
         mSmallRoundness = radius / getMaxRadius();
@@ -1738,6 +1779,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             NotificationDismissibilityProvider dismissibilityProvider,
             MetricsLogger metricsLogger,
             NotificationChildrenContainerLogger childrenContainerLogger,
+            ColorUpdateLogger colorUpdateLogger,
             SmartReplyConstants smartReplyConstants,
             SmartReplyController smartReplyController,
             FeatureFlags featureFlags,
@@ -1776,6 +1818,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
         mNotificationGutsManager = gutsManager;
         mMetricsLogger = metricsLogger;
         mChildrenContainerLogger = childrenContainerLogger;
+        mColorUpdateLogger = colorUpdateLogger;
         mDismissibilityProvider = dismissibilityProvider;
         mFeatureFlags = featureFlags;
     }
@@ -2234,7 +2277,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
     }
 
     public Animator getTranslateViewAnimator(final float leftTarget,
-                                             AnimatorUpdateListener listener) {
+            AnimatorUpdateListener listener) {
         if (mTranslateAnim != null) {
             mTranslateAnim.cancel();
         }
@@ -2343,7 +2386,8 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             // top. Otherwise, we just take the top directly.
             float expandProgress = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
                     params.getProgress(0,
-                            NotificationLaunchAnimatorController.ANIMATION_DURATION_TOP_ROUNDING));
+                            NotificationTransitionAnimatorController
+                                    .ANIMATION_DURATION_TOP_ROUNDING));
             int startTop = params.getStartNotificationTop();
             top = (int) Math.min(MathUtils.lerp(startTop, params.getTop(), expandProgress),
                     startTop);
@@ -2632,6 +2676,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
             return getCollapsedHeight();
         }
     }
+
     /**
      * @return {@code true} if the notification can show it's heads up layout. This is mostly true
      * except for legacy use cases.
@@ -2801,7 +2846,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
 
     @Override
     public void setHideSensitive(boolean hideSensitive, boolean animated, long delay,
-                                 long duration) {
+            long duration) {
         if (getVisibility() == GONE) {
             // If we are GONE, the hideSensitive parameter will not be calculated and always be
             // false, which is incorrect, let's wait until a real call comes in later.

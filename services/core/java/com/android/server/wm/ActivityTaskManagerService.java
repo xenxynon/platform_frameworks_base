@@ -102,6 +102,9 @@ import static com.android.server.wm.ActivityInterceptorCallback.MAINLINE_FIRST_O
 import static com.android.server.wm.ActivityInterceptorCallback.MAINLINE_LAST_ORDERED_ID;
 import static com.android.server.wm.ActivityInterceptorCallback.SYSTEM_FIRST_ORDERED_ID;
 import static com.android.server.wm.ActivityInterceptorCallback.SYSTEM_LAST_ORDERED_ID;
+import static com.android.server.wm.ActivityRecord.State.DESTROYED;
+import static com.android.server.wm.ActivityRecord.State.DESTROYING;
+import static com.android.server.wm.ActivityRecord.State.FINISHING;
 import static com.android.server.wm.ActivityRecord.State.PAUSING;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
 import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_ACTIVITY_STARTS;
@@ -279,6 +282,7 @@ import com.android.server.am.PendingIntentController;
 import com.android.server.am.PendingIntentRecord;
 import com.android.server.am.UserState;
 import com.android.server.firewall.IntentFirewall;
+import com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal;
 import com.android.server.pm.UserManagerService;
 import com.android.server.policy.PermissionPolicyInternal;
 import com.android.server.sdksandbox.SdkSandboxManagerLocal;
@@ -320,7 +324,6 @@ import java.util.Set;
  * {@hide}
  */
 public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
-    private static final String GRAMMATICAL_GENDER_PROPERTY = "persist.sys.grammatical_gender";
     private static final String TAG = TAG_WITH_CLASS_NAME ? "ActivityTaskManagerService" : TAG_ATM;
     static final String TAG_ROOT_TASK = TAG + POSTFIX_ROOT_TASK;
     static final String TAG_SWITCH = TAG + POSTFIX_SWITCH;
@@ -384,6 +387,7 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
     private PowerManagerInternal mPowerManagerInternal;
     private UsageStatsManagerInternal mUsageStatsInternal;
 
+    GrammaticalInflectionManagerInternal mGrammaticalManagerInternal;
     PendingIntentController mPendingIntentController;
     IntentFirewall mIntentFirewall;
 
@@ -892,7 +896,9 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             mTaskSupervisor.onSystemReady();
             mActivityClientController.onSystemReady();
             // TODO(b/258792202) Cleanup once ASM is ready to launch
-            ActivitySecurityModelFeatureFlags.initialize(mContext.getMainExecutor(), pm);
+            ActivitySecurityModelFeatureFlags.initialize(mContext.getMainExecutor());
+            mGrammaticalManagerInternal = LocalServices.getService(
+                    GrammaticalInflectionManagerInternal.class);
         }
     }
 
@@ -954,13 +960,8 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             configuration.setLayoutDirection(configuration.locale);
         }
 
-        // Retrieve the grammatical gender from system property, set it into configuration which
-        // will get updated later if the grammatical gender raw value of current configuration is
-        // {@link Configuration#GRAMMATICAL_GENDER_UNDEFINED}.
-        if (configuration.getGrammaticalGenderRaw() == Configuration.GRAMMATICAL_GENDER_UNDEFINED) {
-            configuration.setGrammaticalGender(SystemProperties.getInt(GRAMMATICAL_GENDER_PROPERTY,
-                    Configuration.GRAMMATICAL_GENDER_UNDEFINED));
-        }
+        configuration.setGrammaticalGender(
+                mGrammaticalManagerInternal.retrieveSystemGrammaticalGender(configuration));
 
         synchronized (mGlobalLock) {
             mForceResizableActivities = forceResizable;
@@ -1156,22 +1157,13 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
      * Return the global configuration used by the process corresponding to the input pid. This is
      * usually the global configuration with some overrides specific to that process.
      */
-    Configuration getGlobalConfigurationForCallingPid() {
+    private Configuration getGlobalConfigurationForCallingPid() {
         final int pid = Binder.getCallingPid();
-        return getGlobalConfigurationForPid(pid);
-    }
-
-    /**
-     * Return the global configuration used by the process corresponding to the given pid.
-     */
-    Configuration getGlobalConfigurationForPid(int pid) {
         if (pid == MY_PID || pid < 0) {
             return getGlobalConfiguration();
         }
-        synchronized (mGlobalLock) {
-            final WindowProcessController app = mProcessMap.getProcess(pid);
-            return app != null ? app.getConfiguration() : getGlobalConfiguration();
-        }
+        final WindowProcessController app = mProcessMap.getProcess(pid);
+        return app != null ? app.getConfiguration() : getGlobalConfiguration();
     }
 
     /**
@@ -1339,9 +1331,13 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             IBinder allowlistToken, Intent fillInIntent, String resolvedType, IBinder resultTo,
             String resultWho, int requestCode, int flagsMask, int flagsValues, Bundle bOptions) {
         enforceNotIsolatedCaller("startActivityIntentSender");
-        // Refuse possible leaked file descriptors
-        if (fillInIntent != null && fillInIntent.hasFileDescriptors()) {
-            throw new IllegalArgumentException("File descriptors passed in Intent");
+        if (fillInIntent != null) {
+            // Refuse possible leaked file descriptors
+            if (fillInIntent.hasFileDescriptors()) {
+                throw new IllegalArgumentException("File descriptors passed in Intent");
+            }
+            // Remove existing mismatch flag so it can be properly updated later
+            fillInIntent.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH);
         }
 
         if (!(target instanceof PendingIntentRecord)) {
@@ -1385,6 +1381,8 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
                 return false;
             }
             intent = new Intent(intent);
+            // Remove existing mismatch flag so it can be properly updated later
+            intent.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH);
             // The caller is not allowed to change the data.
             intent.setDataAndType(r.intent.getData(), r.intent.getType());
             // And we are resetting to find the next component...
@@ -1525,7 +1523,8 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
         a.configChanges = 0xffffffff;
 
         if (homePanelDream()) {
-            a.launchMode = ActivityInfo.LAUNCH_SINGLE_TASK;
+            a.launchMode = ActivityInfo.LAUNCH_MULTIPLE;
+            a.documentLaunchMode = ActivityInfo.DOCUMENT_LAUNCH_ALWAYS;
         } else {
             a.resizeMode = RESIZE_MODE_UNRESIZEABLE;
             a.launchMode = ActivityInfo.LAUNCH_SINGLE_INSTANCE;
@@ -3525,8 +3524,9 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
     }
 
     @Override
-    public boolean isAssistDataAllowedOnCurrentActivity() {
+    public boolean isAssistDataAllowed() {
         int userId;
+        boolean hasRestrictedWindow;
         synchronized (mGlobalLock) {
             final Task focusedRootTask = getTopDisplayFocusedRootTask();
             if (focusedRootTask == null || focusedRootTask.isActivityTypeAssistant()) {
@@ -3538,8 +3538,25 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
                 return false;
             }
             userId = activity.mUserId;
+            DisplayContent displayContent = activity.getDisplayContent();
+            if (displayContent == null) {
+                return false;
+            }
+            final long callingIdentity = Binder.clearCallingIdentity();
+            try {
+                hasRestrictedWindow = displayContent.forAllWindows(
+                        windowState -> windowState.isOnScreen() && (
+                                UserManager.isUserTypePrivateProfile(
+                                        getUserManager().getProfileType(windowState.mShowUserId))
+                                        || hasUserRestriction(
+                                        UserManager.DISALLOW_ASSIST_CONTENT,
+                                        windowState.mShowUserId)), true /* traverseTopToBottom */);
+            } finally {
+                Binder.restoreCallingIdentity(callingIdentity);
+            }
         }
-        return DevicePolicyCache.getInstance().isScreenCaptureAllowed(userId);
+        return DevicePolicyCache.getInstance().isScreenCaptureAllowed(userId)
+                && !hasRestrictedWindow;
     }
 
     private void onLocalVoiceInteractionStartedLocked(IBinder activity,
@@ -4168,13 +4185,21 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
     }
 
     @Override
-    public void onPictureInPictureStateChanged(PictureInPictureUiState pipState) {
-        enforceTaskPermission("onPictureInPictureStateChanged");
-        final Task rootPinnedTask = mRootWindowContainer.getDefaultTaskDisplayArea()
-                .getRootPinnedTask();
-        if (rootPinnedTask != null && rootPinnedTask.getTopMostActivity() != null) {
-            mWindowManager.mAtmService.mActivityClientController.onPictureInPictureStateChanged(
-                    rootPinnedTask.getTopMostActivity(), pipState);
+    public void onPictureInPictureUiStateChanged(PictureInPictureUiState pipState) {
+        enforceTaskPermission("onPictureInPictureUiStateChanged");
+        // The PictureInPictureUiState is sent to current pip task if there is any
+        // -or- the top standard task (state like entering PiP does not require a pinned task).
+        final Task task;
+        if (mRootWindowContainer.getDefaultTaskDisplayArea().hasPinnedTask()) {
+            task = mRootWindowContainer.getDefaultTaskDisplayArea().getRootPinnedTask();
+        } else {
+            task = mRootWindowContainer.getDefaultTaskDisplayArea().getRootTask(
+                    t -> t.isActivityTypeStandard());
+        }
+        if (task != null && task.getTopMostActivity() != null
+                && !task.getTopMostActivity().isState(FINISHING, DESTROYING, DESTROYED)) {
+            mWindowManager.mAtmService.mActivityClientController.onPictureInPictureUiStateChanged(
+                    task.getTopMostActivity(), pipState);
         }
     }
 
@@ -5571,7 +5596,7 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
      * Saves the current activity manager state and includes the saved state in the next dump of
      * activity manager.
      */
-    void saveANRState(String reason) {
+    void saveANRState(ActivityRecord activity, String reason) {
         final StringWriter sw = new StringWriter();
         final PrintWriter pw = new FastPrintWriter(sw, false, 1024);
         pw.println("  ANR time: " + DateFormat.getDateTimeInstance().format(new Date()));
@@ -5579,14 +5604,25 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             pw.println("  Reason: " + reason);
         }
         pw.println();
-        getActivityStartController().dump(pw, "  ", null);
-        pw.println();
+        if (activity != null) {
+            final Task rootTask = activity.getRootTask();
+            if (rootTask != null) {
+                rootTask.forAllTaskFragments(
+                        tf -> tf.dumpInner("  ", pw, true /* dumpAll */, null /* dumpPackage */));
+                pw.println();
+            }
+            mActivityStartController.dump(pw, "  ", activity.packageName);
+            if (mActivityStartController.getLastStartActivity() != activity) {
+                activity.dump(pw, "  ", true /* dumpAll */);
+            }
+        }
+        ActivityTaskSupervisor.printThisActivity(pw, mRootWindowContainer.getTopResumedActivity(),
+                null /* dumpPackage */, INVALID_DISPLAY, true /* needSep */,
+                "  ResumedActivity: ", /* header= */ null /* header */);
+        mLockTaskController.dump(pw, "  ");
+        mKeyguardController.dump(pw, "  ");
         pw.println("-------------------------------------------------------------------"
                 + "------------");
-        dumpActivitiesLocked(null /* fd */, pw, null /* args */, 0 /* opti */,
-                true /* dumpAll */, false /* dumpClient */, null /* dumpPackage */,
-                INVALID_DISPLAY, "" /* header */);
-        pw.println();
         pw.close();
 
         mLastANRState = sw.toString();
@@ -6354,7 +6390,8 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
             final NeededUriGrants dataGrants = collectGrants(data, r);
 
             synchronized (mGlobalLock) {
-                r.sendResult(callingUid, resultWho, requestCode, resultCode, data, dataGrants);
+                r.sendResult(callingUid, resultWho, requestCode, resultCode, data, new Binder(),
+                        dataGrants);
             }
         }
 
@@ -7317,6 +7354,18 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
         @Override
         public void unregisterTaskStackListener(ITaskStackListener listener) {
             ActivityTaskManagerService.this.unregisterTaskStackListener(listener);
+        }
+
+        @Override
+        public void registerCompatScaleProvider(@CompatScaleProvider.CompatScaleModeOrderId int id,
+                @NonNull CompatScaleProvider provider) {
+            ActivityTaskManagerService.this.registerCompatScaleProvider(id, provider);
+        }
+
+        @Override
+        public void unregisterCompatScaleProvider(
+                @CompatScaleProvider.CompatScaleModeOrderId int id) {
+            ActivityTaskManagerService.this.unregisterCompatScaleProvider(id);
         }
     }
 

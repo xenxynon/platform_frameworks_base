@@ -84,6 +84,7 @@ import static com.android.server.wm.WindowManagerService.UPDATE_FOCUS_WILL_PLACE
 import static com.android.server.wm.WindowManagerService.WINDOWS_FREEZING_SCREENS_NONE;
 import static com.android.server.wm.WindowSurfacePlacer.SET_UPDATE_ROTATION;
 import static com.android.server.wm.WindowSurfacePlacer.SET_WALLPAPER_ACTION_PENDING;
+import static com.android.systemui.shared.Flags.enableHomeDelay;
 
 import static java.lang.Integer.MAX_VALUE;
 
@@ -258,6 +259,8 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
     /** Reference to default display so we can quickly look it up. */
     private DisplayContent mDefaultDisplay;
     private final SparseArray<IntArray> mDisplayAccessUIDs = new SparseArray<>();
+    private final SparseArray<SurfaceControl.Transaction> mDisplayTransactions =
+            new SparseArray<>();
 
     /** The current user */
     int mCurrentUser;
@@ -578,22 +581,6 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
         }, true /* traverseTopToBottom */);
     }
 
-    /**
-     * Returns the app window token for the input binder if it exist in the system.
-     * NOTE: Only one AppWindowToken is allowed to exist in the system for a binder token, since
-     * AppWindowToken represents an activity which can only exist on one display.
-     */
-    ActivityRecord getActivityRecord(IBinder binder) {
-        for (int i = mChildren.size() - 1; i >= 0; --i) {
-            final DisplayContent dc = mChildren.get(i);
-            final ActivityRecord activity = dc.getActivityRecord(binder);
-            if (activity != null) {
-                return activity;
-            }
-        }
-        return null;
-    }
-
     /** Returns the window token for the input binder if it exist in the system. */
     WindowToken getWindowToken(IBinder binder) {
         for (int i = mChildren.size() - 1; i >= 0; --i) {
@@ -634,10 +621,8 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
     }
 
     void refreshSecureSurfaceState() {
-        forAllWindows((w) -> {
-            if (w.mHasSurface) {
-                w.setSecureLocked(w.isSecureLocked());
-            }
+        forAllWindows(w -> {
+            w.setSecureLocked(w.isSecureLocked());
         }, true /* traverseTopToBottom */);
     }
 
@@ -1000,11 +985,13 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
         for (int j = 0; j < count; ++j) {
             final DisplayContent dc = mChildren.get(j);
             dc.applySurfaceChangesTransaction();
+            mDisplayTransactions.append(dc.mDisplayId, dc.getSyncTransaction());
         }
 
         // Give the display manager a chance to adjust properties like display rotation if it needs
         // to.
-        mWmService.mDisplayManagerInternal.performTraversal(t);
+        mWmService.mDisplayManagerInternal.performTraversal(t, mDisplayTransactions);
+        mDisplayTransactions.clear();
     }
 
     /**
@@ -1465,11 +1452,17 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             aInfo = info.first;
             homeIntent = info.second;
         }
+
         if (aInfo == null || homeIntent == null) {
             return false;
         }
 
         if (!canStartHomeOnDisplayArea(aInfo, taskDisplayArea, allowInstrumenting)) {
+            return false;
+        }
+
+        if (enableHomeDelay() && !mService.mAmInternal.isThemeOverlayReady(userId)) {
+            Slog.d(TAG, "ThemeHomeDelay: Home launch was deferred.");
             return false;
         }
 
@@ -2612,6 +2605,7 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             if (displayShouldSleep == display.isSleeping()) {
                 continue;
             }
+            final boolean wasSleeping = display.isSleeping();
             display.setIsSleeping(displayShouldSleep);
 
             if (display.mTransitionController.isShellTransitionsEnabled()
@@ -2637,9 +2631,7 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
                 // Use NONE if keyguard is not showing.
                 int transit = TRANSIT_NONE;
                 Task startTask = null;
-                if (!display.getDisplayPolicy().isAwake()) {
-                    // Note that currently this only happens on default display because non-default
-                    // display is always awake.
+                if (wasSleeping) {
                     transit = TRANSIT_WAKE;
                 } else if (display.isKeyguardOccluded()) {
                     // The display was awake so this is resuming activity for occluding keyguard.
@@ -2906,6 +2898,9 @@ public class RootWindowContainer extends WindowContainer<DisplayContent>
             ProtoLog.d(WM_DEBUG_STATES, "Create sleep token: tag=%s, displayId=%d", tag, displayId);
         } else {
             throw new RuntimeException("Create the same sleep token twice: " + token);
+        }
+        if (isSwappingDisplay) {
+            display.mWallpaperController.onDisplaySwitchStarted();
         }
         return token;
     }

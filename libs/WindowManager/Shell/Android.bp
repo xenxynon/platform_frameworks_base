@@ -19,6 +19,7 @@ package {
     // to get the below license kinds:
     //   SPDX-license-identifier-Apache-2.0
     default_applicable_licenses: ["frameworks_base_license"],
+    default_team: "trendy_team_multitasking_windowing",
 }
 
 // Begin ProtoLog
@@ -39,6 +40,7 @@ filegroup {
 }
 
 // Sources that have no dependencies that can be used directly downstream of this library
+// TODO(b/322791067): move these sources to WindowManager-Shell-shared
 filegroup {
     name: "wm_shell_util-sources",
     srcs: [
@@ -137,6 +139,12 @@ java_library {
     },
 }
 
+java_library {
+    name: "WindowManager-Shell-shared",
+
+    srcs: ["shared/**/*.java"],
+}
+
 android_library {
     name: "WindowManager-Shell",
     srcs: [
@@ -162,6 +170,7 @@ android_library {
         "com_android_wm_shell_flags_lib",
         "com.android.window.flags.window-aconfig-java",
         "WindowManager-Shell-proto",
+        "WindowManager-Shell-shared",
         "perfetto_trace_java_protos",
         "dagger2",
         "jsr330",
@@ -197,6 +206,8 @@ android_robolectric_test {
     srcs: [
         "multivalentTests/src/**/*.kt",
     ],
+    // TODO(b/323188766): Include BubbleStackViewTest once the robolectric issue is fixed.
+    exclude_srcs: ["multivalentTests/src/com/android/wm/shell/bubbles/BubbleStackViewTest.kt"],
     static_libs: [
         "junit",
         "androidx.test.runner",

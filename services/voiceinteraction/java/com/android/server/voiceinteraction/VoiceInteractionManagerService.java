@@ -16,16 +16,15 @@
 
 package com.android.server.voiceinteraction;
 
+
 import android.Manifest;
 import android.annotation.CallbackExecutor;
-import android.annotation.EnforcePermission;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
 import android.app.AppGlobals;
-import android.app.AppOpsManager;
 import android.app.role.OnRoleHoldersChangedListener;
 import android.app.role.RoleManager;
 import android.content.ComponentName;
@@ -76,6 +75,7 @@ import android.service.voice.IMicrophoneHotwordDetectionVoiceInteractionCallback
 import android.service.voice.IVisualQueryDetectionVoiceInteractionCallback;
 import android.service.voice.IVoiceInteractionSession;
 import android.service.voice.VoiceInteractionManagerInternal;
+import android.service.voice.VoiceInteractionManagerInternal.WearableHotwordDetectionCallback;
 import android.service.voice.VoiceInteractionService;
 import android.service.voice.VoiceInteractionServiceInfo;
 import android.service.voice.VoiceInteractionSession;
@@ -91,6 +91,7 @@ import com.android.internal.app.IHotwordRecognitionStatusCallback;
 import com.android.internal.app.IVisualQueryDetectionAttentionListener;
 import com.android.internal.app.IVisualQueryRecognitionStatusListener;
 import com.android.internal.app.IVoiceActionCheckCallback;
+import com.android.internal.app.IVoiceInteractionAccessibilitySettingsListener;
 import com.android.internal.app.IVoiceInteractionManagerService;
 import com.android.internal.app.IVoiceInteractionSessionListener;
 import com.android.internal.app.IVoiceInteractionSessionShowCallback;
@@ -320,6 +321,46 @@ public class VoiceInteractionManagerService extends SystemService {
                     userId);
             mServiceStub.mRoleObserver.onRoleHoldersChanged(RoleManager.ROLE_ASSISTANT,
                                                 UserHandle.of(userId));
+        }
+
+        @Override
+        public void startListeningFromWearable(
+                ParcelFileDescriptor audioStreamFromWearable,
+                AudioFormat audioFormatFromWearable,
+                PersistableBundle options,
+                ComponentName targetVisComponentName,
+                int userId,
+                WearableHotwordDetectionCallback callback) {
+            Slog.d(TAG, "#startListeningFromWearable");
+            VoiceInteractionManagerServiceImpl impl = mServiceStub.mImpl;
+            if (impl == null) {
+                callback.onError(
+                        "Unable to start listening from wearable because the service impl is"
+                                + " null.");
+                return;
+            }
+            if (targetVisComponentName != null && !targetVisComponentName.equals(impl.mComponent)) {
+                callback.onError(
+                        TextUtils.formatSimple(
+                                "Unable to start listening from wearable because the target"
+                                    + " VoiceInteractionService %s is different from the current"
+                                    + " VoiceInteractionService %s",
+                                targetVisComponentName, impl.mComponent));
+                return;
+            }
+            if (userId != impl.mUser) {
+                callback.onError(
+                        TextUtils.formatSimple(
+                                "Unable to start listening from wearable because the target userId"
+                                    + " %s is different from the current"
+                                    + " VoiceInteractionManagerServiceImpl's userId %s",
+                                userId, impl.mUser));
+                return;
+            }
+            synchronized (mServiceStub) {
+                impl.startListeningFromWearableLocked(
+                        audioStreamFromWearable, audioFormatFromWearable, options, callback);
+            }
         }
     }
 
@@ -652,8 +693,8 @@ public class VoiceInteractionManagerService extends SystemService {
         }
 
         private String getForceVoiceInteractionServicePackage(Resources res) {
-            String interactorPackage =
-                    res.getString(com.android.internal.R.string.config_forceVoiceInteractionServicePackage);
+            String interactorPackage = res.getString(
+                    com.android.internal.R.string.config_forceVoiceInteractionServicePackage);
             return TextUtils.isEmpty(interactorPackage) ? null : interactorPackage;
         }
 
@@ -1544,57 +1585,6 @@ public class VoiceInteractionManagerService extends SystemService {
             }
         }
 
-        @Override
-        @android.annotation.EnforcePermission(
-                android.Manifest.permission.RESET_HOTWORD_TRAINING_DATA_EGRESS_COUNT)
-        public void resetHotwordTrainingDataEgressCountForTest() {
-            super.resetHotwordTrainingDataEgressCountForTest_enforcePermission();
-            synchronized (this) {
-                enforceIsCurrentVoiceInteractionService();
-
-                if (mImpl == null) {
-                    Slog.w(TAG, "resetHotwordTrainingDataEgressCountForTest without running"
-                            + " voice interaction service");
-                    return;
-                }
-                final long caller = Binder.clearCallingIdentity();
-                try {
-                    mImpl.resetHotwordTrainingDataEgressCountForTest();
-                } finally {
-                    Binder.restoreCallingIdentity(caller);
-                }
-
-            }
-        }
-
-        @Override
-        @EnforcePermission(android.Manifest.permission.MANAGE_HOTWORD_DETECTION)
-        public void setShouldReceiveSandboxedTrainingData(boolean allowed) {
-            super.setShouldReceiveSandboxedTrainingData_enforcePermission();
-
-            synchronized (this) {
-                if (mImpl == null) {
-                    throw new IllegalStateException(
-                            "setShouldReceiveSandboxedTrainingData without running voice "
-                                    + "interaction service");
-                }
-
-                enforceIsCallerPreinstalledAssistant();
-
-                int callingUid = Binder.getCallingUid();
-                final long caller = Binder.clearCallingIdentity();
-                try {
-                    AppOpsManager appOpsManager = (AppOpsManager)
-                            mContext.getSystemService(Context.APP_OPS_SERVICE);
-                    appOpsManager.setUidMode(
-                            AppOpsManager.OP_RECEIVE_SANDBOXED_DETECTION_TRAINING_DATA,
-                            callingUid, allowed ? AppOpsManager.MODE_ALLOWED :
-                                    AppOpsManager.MODE_ERRORED);
-                } finally {
-                    Binder.restoreCallingIdentity(caller);
-                }
-            }
-        }
 
       //----------------- Model management APIs --------------------------------//
 
@@ -1759,7 +1749,10 @@ public class VoiceInteractionManagerService extends SystemService {
                     if (keyphrase.equals(phrase.getText())) {
                         ArraySet<Locale> locales = new ArraySet<>();
                         locales.add(phrase.getLocale());
-                        return new KeyphraseMetadata(phrase.getId(), phrase.getText(), locales,
+                        return new KeyphraseMetadata(
+                                phrase.getId(),
+                                phrase.getText(),
+                                locales,
                                 phrase.getRecognitionModes());
                     }
                 }
@@ -1807,7 +1800,8 @@ public class VoiceInteractionManagerService extends SystemService {
                     enforceIsCurrentVoiceInteractionService();
 
                     if (callback == null || recognitionConfig == null || bcp47Locale == null) {
-                        throw new IllegalArgumentException("Illegal argument(s) in startRecognition");
+                        throw new IllegalArgumentException(
+                                "Illegal argument(s) in startRecognition");
                     }
                     if (runInBatterySaverMode) {
                         enforceCallingPermission(
@@ -2186,6 +2180,44 @@ public class VoiceInteractionManagerService extends SystemService {
             }
         }
 
+        public boolean getAccessibilityDetectionEnabled() {
+            synchronized (this) {
+                if (mImpl == null) {
+                    Slog.w(TAG, "registerAccessibilityDetectionSettingsListener called without"
+                            + " running voice interaction service");
+                    return false;
+                }
+                return mImpl.getAccessibilityDetectionEnabled();
+            }
+        }
+
+        @Override
+        public void registerAccessibilityDetectionSettingsListener(
+                IVoiceInteractionAccessibilitySettingsListener listener) {
+            synchronized (this) {
+                if (mImpl == null) {
+                    Slog.w(TAG, "registerAccessibilityDetectionSettingsListener called without"
+                            + " running voice interaction service");
+                    return;
+                }
+                mImpl.registerAccessibilityDetectionSettingsListenerLocked(listener);
+            }
+        }
+
+        @Override
+        public void unregisterAccessibilityDetectionSettingsListener(
+                IVoiceInteractionAccessibilitySettingsListener listener) {
+            synchronized (this) {
+                if (mImpl == null) {
+                    Slog.w(TAG, "unregisterAccessibilityDetectionSettingsListener called "
+                            + "without running voice interaction service");
+                    return;
+                }
+                mImpl.unregisterAccessibilityDetectionSettingsListenerLocked(listener);
+            }
+        }
+
+
         @Override
         public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
             if (!DumpUtils.checkDumpPermission(mContext, TAG, pw)) return;
@@ -2413,7 +2445,8 @@ public class VoiceInteractionManagerService extends SystemService {
                         UserHandle.USER_ALL);
             }
 
-            @Override public void onChange(boolean selfChange) {
+            @Override
+            public void onChange(boolean selfChange) {
                 synchronized (VoiceInteractionManagerServiceStub.this) {
                     switchImplementationIfNeededLocked(false);
                 }
@@ -2446,7 +2479,8 @@ public class VoiceInteractionManagerService extends SystemService {
         PackageMonitor mPackageMonitor = new PackageMonitor() {
 
             @Override
-            public boolean onHandleForceStop(Intent intent, String[] packages, int uid, boolean doit) {
+            public boolean onHandleForceStop(Intent intent, String[] packages, int uid,
+                    boolean doit) {
                 if (DEBUG) Slog.d(TAG, "onHandleForceStop uid=" + uid + " doit=" + doit);
 
                 int userHandle = UserHandle.getUserId(uid);

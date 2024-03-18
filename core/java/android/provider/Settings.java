@@ -138,6 +138,20 @@ public final class Settings {
     public static final String ACTION_SETTINGS = "android.settings.SETTINGS";
 
     /**
+     * Activity Action: Show settings to provide guide about carrier satellite messaging.
+     * <p>
+     * In some cases, a matching Activity may not exist, so ensure you
+     * safeguard against this.
+     * <p>
+     * Input: Nothing.
+     * <p>
+     * Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    @FlaggedApi(com.android.internal.telephony.flags.Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
+    public static final String ACTION_SATELLITE_SETTING = "android.settings.SATELLITE_SETTING";
+
+    /**
      * Activity Action: Show settings to allow configuration of APNs.
      * <p>
      * Input: Nothing.
@@ -430,6 +444,18 @@ public final class Settings {
             "android.settings.ACCESSIBILITY_DETAILS_SETTINGS";
 
     /**
+     * Activity Action: Show settings to allow configuration of an accessibility
+     * shortcut belonging to an accessibility feature or features.
+     * <p>
+     * Input: ":settings:show_fragment_args" must contain "targets" denoting the services to edit.
+     * <p>
+     * Output: Nothing.
+     * @hide
+     **/
+    public static final String ACTION_ACCESSIBILITY_SHORTCUT_SETTINGS =
+            "android.settings.ACCESSIBILITY_SHORTCUT_SETTINGS";
+
+    /**
      * Activity Action: Show settings to allow configuration of accessibility color and motion.
      * <p>
      * In some cases, a matching Activity may not exist, so ensure you
@@ -640,6 +666,23 @@ public final class Settings {
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_MANAGE_APP_LONG_RUNNING_JOBS =
             "android.settings.MANAGE_APP_LONG_RUNNING_JOBS";
+
+    /**
+     * Activity Action: Show settings to allow configuration of
+     * {@link Manifest.permission#RUN_BACKUP_JOBS} permission.
+     *
+     * Input: Optionally, the Intent's data URI can specify the application package name to
+     * directly invoke the management GUI specific to the package name. For example
+     * "package:com.my.app".
+     * <p>
+     * Output: When a package data uri is passed as input, the activity result is set to
+     * {@link android.app.Activity#RESULT_OK} if the permission was granted to the app. Otherwise,
+     * the result is set to {@link android.app.Activity#RESULT_CANCELED}.
+     */
+    @FlaggedApi(Flags.FLAG_BACKUP_TASKS_SETTINGS_SCREEN)
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_REQUEST_RUN_BACKUP_JOBS =
+            "android.settings.REQUEST_RUN_BACKUP_JOBS";
 
     /**
      * Activity Action: Show settings to allow configuration of cross-profile access for apps
@@ -1506,6 +1549,23 @@ public final class Settings {
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS =
             "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS";
+
+    /**
+     * Activity Action: Show screen for controlling any background restrictions imposed on
+     * an app. If the system returns true for
+     * {@link android.app.ActivityManager#isBackgroundRestricted()}, and the app is not able to
+     * satisfy user requests due to being restricted in the background, then this intent can be
+     * used to request the user to unrestrict the app.
+     * <p>
+     * Input: The Intent's data URI must specify the application package name
+     *        to be shown, with the "package" scheme, such as "package:com.my.app".
+     * <p>
+     * Output: Nothing.
+     */
+    @FlaggedApi(android.app.Flags.FLAG_APP_RESTRICTIONS_API)
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_BACKGROUND_RESTRICTIONS_SETTINGS =
+            "android.settings.BACKGROUND_RESTRICTIONS_SETTINGS";
 
     /**
      * Activity Action: Open the advanced power usage details page of an associated app.
@@ -3243,8 +3303,16 @@ public final class Settings {
 
         private static final String NAME_EQ_PLACEHOLDER = "name=?";
 
+        // Cached values of queried settings.
+        // Key is the setting's name, value is the setting's value.
         // Must synchronize on 'this' to access mValues and mValuesVersion.
         private final ArrayMap<String, String> mValues = new ArrayMap<>();
+
+        // Cached values for queried prefixes.
+        // Key is the prefix, value is all of the settings under the prefix, mapped from a setting's
+        // name to a setting's value. The name string doesn't include the prefix.
+        // Must synchronize on 'this' to access.
+        private final ArrayMap<String, ArrayMap<String, String>> mPrefixToValues = new ArrayMap<>();
 
         private final Uri mUri;
         @UnsupportedAppUsage
@@ -3592,15 +3660,13 @@ public final class Settings {
                     || applicationInfo.isSignedWithPlatformKey();
         }
 
-        private ArrayMap<String, String> getStringsForPrefixStripPrefix(
-                ContentResolver cr, String prefix, String[] names) {
+        private Map<String, String> getStringsForPrefixStripPrefix(
+                ContentResolver cr, String prefix, List<String> names) {
             String namespace = prefix.substring(0, prefix.length() - 1);
             ArrayMap<String, String> keyValues = new ArrayMap<>();
             int substringLength = prefix.length();
-
             int currentGeneration = -1;
             boolean needsGenerationTracker = false;
-
             synchronized (NameValueCache.this) {
                 final GenerationTracker generationTracker = mGenerationTrackers.get(prefix);
                 if (generationTracker != null) {
@@ -3614,40 +3680,24 @@ public final class Settings {
                         // generation tracker and request a new one
                         generationTracker.destroy();
                         mGenerationTrackers.remove(prefix);
-                        for (int i = mValues.size() - 1; i >= 0; i--) {
-                            String key = mValues.keyAt(i);
-                            if (key.startsWith(prefix)) {
-                                mValues.remove(key);
-                            }
-                        }
+                        mPrefixToValues.remove(prefix);
                         needsGenerationTracker = true;
                     } else {
-                        boolean prefixCached = mValues.containsKey(prefix);
-                        if (prefixCached) {
-                            if (DEBUG) {
-                                Log.i(TAG, "Cache hit for prefix:" + prefix);
-                            }
-                            if (names.length > 0) {
+                        final ArrayMap<String, String> cachedSettings = mPrefixToValues.get(prefix);
+                        if (cachedSettings != null) {
+                            if (!names.isEmpty()) {
                                 for (String name : names) {
-                                    // mValues can contain "null" values, need to use containsKey.
-                                    if (mValues.containsKey(name)) {
+                                    // The cache can contain "null" values, need to use containsKey.
+                                    if (cachedSettings.containsKey(name)) {
                                         keyValues.put(
-                                                name.substring(substringLength),
-                                                mValues.get(name));
+                                                name,
+                                                cachedSettings.get(name));
                                     }
                                 }
                             } else {
-                                for (int i = 0; i < mValues.size(); ++i) {
-                                    String key = mValues.keyAt(i);
-                                    // Explicitly exclude the prefix as it is only there to
-                                    // signal that the prefix has been cached.
-                                    if (key.startsWith(prefix) && !key.equals(prefix)) {
-                                        String value = mValues.valueAt(i);
-                                        keyValues.put(
-                                                key.substring(substringLength),
-                                                value);
-                                    }
-                                }
+                                keyValues.putAll(cachedSettings);
+                                // Remove the hack added for the legacy behavior.
+                                keyValues.remove("");
                             }
                             return keyValues;
                         }
@@ -3657,7 +3707,6 @@ public final class Settings {
                     needsGenerationTracker = true;
                 }
             }
-
             if (mCallListCommand == null) {
                 // No list command specified, return empty map
                 return keyValues;
@@ -3702,20 +3751,23 @@ public final class Settings {
                 }
 
                 // All flags for the namespace
-                Map<String, String> flagsToValues =
+                HashMap<String, String> flagsToValues =
                         (HashMap) b.getSerializable(Settings.NameValueTable.VALUE, java.util.HashMap.class);
+                if (flagsToValues == null) {
+                    return keyValues;
+                }
                 // Only the flags requested by the caller
-                if (names.length > 0) {
+                if (!names.isEmpty()) {
                     for (String name : names) {
                         // flagsToValues can contain "null" values, need to use containsKey.
-                        if (flagsToValues.containsKey(name)) {
+                        final String key = Config.createCompositeName(namespace, name);
+                        if (flagsToValues.containsKey(key)) {
                             keyValues.put(
-                                    name.substring(substringLength),
-                                    flagsToValues.get(name));
+                                    name,
+                                    flagsToValues.get(key));
                         }
                     }
                 } else {
-                    keyValues.ensureCapacity(keyValues.size() + flagsToValues.size());
                     for (Map.Entry<String, String> flag : flagsToValues.entrySet()) {
                         keyValues.put(
                                 flag.getKey().substring(substringLength),
@@ -3751,10 +3803,18 @@ public final class Settings {
                         if (DEBUG) {
                             Log.i(TAG, "Updating cache for prefix:" + prefix);
                         }
-                        // cache the complete list of flags for the namespace
-                        mValues.putAll(flagsToValues);
-                        // Adding the prefix as a signal that the prefix is cached.
-                        mValues.put(prefix, null);
+                        // Cache the complete list of flags for the namespace for bulk queries.
+                        // In this cached list, the setting's name doesn't include the prefix.
+                        ArrayMap<String, String> namesToValues =
+                                new ArrayMap<>(flagsToValues.size() + 1);
+                        for (Map.Entry<String, String> flag : flagsToValues.entrySet()) {
+                            namesToValues.put(
+                                    flag.getKey().substring(substringLength),
+                                    flag.getValue());
+                        }
+                        // Legacy behavior, we return <"", null> when queried with name = ""
+                        namesToValues.put("", null);
+                        mPrefixToValues.put(prefix, namesToValues);
                     }
                 }
                 return keyValues;
@@ -4501,10 +4561,11 @@ public final class Settings {
         /** @hide */
         public static void adjustConfigurationForUser(ContentResolver cr, Configuration outConfig,
                 int userHandle, boolean updateSettingsIfEmpty) {
+            final float defaultFontScale = getDefaultFontScale(cr, userHandle);
             outConfig.fontScale = Settings.System.getFloatForUser(
-                    cr, FONT_SCALE, DEFAULT_FONT_SCALE, userHandle);
+                    cr, FONT_SCALE, defaultFontScale, userHandle);
             if (outConfig.fontScale < 0) {
-                outConfig.fontScale = DEFAULT_FONT_SCALE;
+                outConfig.fontScale = defaultFontScale;
             }
             outConfig.fontWeightAdjustment = Settings.Secure.getIntForUser(
                     cr, Settings.Secure.FONT_WEIGHT_ADJUSTMENT, DEFAULT_FONT_WEIGHT, userHandle);
@@ -4527,6 +4588,12 @@ public final class Settings {
                             userHandle, DEFAULT_OVERRIDEABLE_BY_RESTORE);
                 }
             }
+        }
+
+        private static float getDefaultFontScale(ContentResolver cr, int userHandle) {
+            return com.android.window.flags.Flags.configurableFontScaleDefault()
+                    ? Settings.System.getFloatForUser(cr, DEFAULT_DEVICE_FONT_SCALE,
+                    DEFAULT_FONT_SCALE, userHandle) : DEFAULT_FONT_SCALE;
         }
 
         /**
@@ -4893,6 +4960,16 @@ public final class Settings {
          */
         @Readable
         public static final String FONT_SCALE = "font_scale";
+
+        /**
+         * Default scaling factor for fonts for the specific device, float.
+         * The value is read from the {@link R.dimen.def_device_font_scale}
+         * configuration property.
+         *
+         * @hide
+         */
+        @Readable
+        public static final String DEFAULT_DEVICE_FONT_SCALE = "device_font_scale";
 
         /**
          * The serialized system locale value.
@@ -5981,8 +6058,10 @@ public final class Settings {
          *   +7 = fastest
          * @hide
          */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"}) // TestApi without associated feature.
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         @Readable
+        @TestApi
         public static final String POINTER_SPEED = "pointer_speed";
 
         /**
@@ -6013,6 +6092,13 @@ public final class Settings {
          * @hide
          */
         public static final String TOUCHPAD_TAP_TO_CLICK = "touchpad_tap_to_click";
+
+        /**
+         * Whether to enable tap dragging on touchpads.
+         *
+         * @hide
+         */
+        public static final String TOUCHPAD_TAP_DRAGGING = "touchpad_tap_dragging";
 
         /**
          * Whether to enable a right-click zone on touchpads.
@@ -6236,10 +6322,12 @@ public final class Settings {
             PRIVATE_SETTINGS.add(TOUCHPAD_POINTER_SPEED);
             PRIVATE_SETTINGS.add(TOUCHPAD_NATURAL_SCROLLING);
             PRIVATE_SETTINGS.add(TOUCHPAD_TAP_TO_CLICK);
+            PRIVATE_SETTINGS.add(TOUCHPAD_TAP_DRAGGING);
             PRIVATE_SETTINGS.add(TOUCHPAD_RIGHT_CLICK_ZONE);
             PRIVATE_SETTINGS.add(CAMERA_FLASH_NOTIFICATION);
             PRIVATE_SETTINGS.add(SCREEN_FLASH_NOTIFICATION);
             PRIVATE_SETTINGS.add(SCREEN_FLASH_NOTIFICATION_COLOR);
+            PRIVATE_SETTINGS.add(DEFAULT_DEVICE_FONT_SCALE);
             PRIVATE_SETTINGS.add(CALL_CONNECTED_TONE_ENABLED);
         }
 
@@ -7876,6 +7964,17 @@ public final class Settings {
          * @hide
          */
         public static final String ACCESSIBILITY_BOUNCE_KEYS = "accessibility_bounce_keys";
+
+        /**
+         * Whether to enable slow keys for Physical Keyboard accessibility.
+         *
+         * If set to non-zero value, any key press on physical keyboard needs to be pressed and
+         * held for the provided threshold duration (in milliseconds) to be registered in the
+         * system.
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_SLOW_KEYS = "accessibility_slow_keys";
 
         /**
          * Whether to enable sticky keys for Physical Keyboard accessibility.
@@ -10173,7 +10272,9 @@ public final class Settings {
         public static final int HUB_MODE_TUTORIAL_STARTED = 1;
 
         /**
-         * Indicates that the user has completed the hub mode tutorial.
+         * Any value greater than or equal to this value is considered that the user has
+         * completed the hub mode tutorial.
+         *
          * One of the possible states for {@link #HUB_MODE_TUTORIAL_STATE}.
          *
          * @hide
@@ -10192,8 +10293,11 @@ public final class Settings {
 
         /**
          * Defines the user's current state of navigating through the hub mode tutorial.
-         * The possible states are defined in {@link HubModeTutorialState}.
+         * Some possible states are defined in {@link HubModeTutorialState}.
          *
+         * Any value greater than or equal to {@link HUB_MODE_TUTORIAL_COMPLETED} indicates that
+         * the user has completed that version of the hub mode tutorial. And tutorial may be
+         * shown again when a new version becomes available.
          * @hide
          */
         public static final String HUB_MODE_TUTORIAL_STATE = "hub_mode_tutorial_state";
@@ -10985,6 +11089,15 @@ public final class Settings {
         public static final String SEARCH_LONG_PRESS_HOME_ENABLED =
                 "search_long_press_home_enabled";
 
+
+        /**
+         * Whether or not the accessibility data streaming is enbled for the
+         * {@link VisualQueryDetectedResult#setAccessibilityDetectionData}.
+         * @hide
+         */
+        public static final String VISUAL_QUERY_ACCESSIBILITY_DETECTION_ENABLED =
+                "visual_query_accessibility_detection_enabled";
+
         /**
          * Control whether Night display is currently activated.
          * @hide
@@ -11771,6 +11884,13 @@ public final class Settings {
         public static final String MEDIA_CONTROLS_LOCK_SCREEN = "media_controls_lock_screen";
 
         /**
+         * Whether to enable camera extensions software fallback.
+         * @hide
+         */
+        @Readable
+        public static final String CAMERA_EXTENSIONS_FALLBACK = "camera_extensions_fallback";
+
+        /**
          * Controls whether contextual suggestions can be shown in the media controls.
          * @hide
          */
@@ -11848,6 +11968,16 @@ public final class Settings {
          */
         public static final String ACCESSIBILITY_MAGNIFICATION_TWO_FINGER_TRIPLE_TAP_ENABLED =
                 "accessibility_magnification_two_finger_triple_tap_enabled";
+
+        /**
+         * For pinch to zoom anywhere feature.
+         *
+         * If true, you should be able to pinch to magnify the window anywhere.
+         *
+         * @hide
+         */
+        public static final String ACCESSIBILITY_PINCH_TO_ZOOM_ANYWHERE_ENABLED =
+                "accessibility_pinch_to_zoom_anywhere_enabled";
 
         /**
          * Controls magnification capability. Accessibility magnification is capable of at least one
@@ -12193,6 +12323,14 @@ public final class Settings {
                 "extra_automatic_power_save_mode";
 
         /**
+         * Whether contextual screen timeout is enabled.
+         *
+         * @hide
+         */
+        public static final String CONTEXTUAL_SCREEN_TIMEOUT_ENABLED =
+                "contextual_screen_timeout_enabled";
+
+        /**
          * Whether lockscreen weather is enabled.
          *
          * @hide
@@ -12253,6 +12391,16 @@ public final class Settings {
         public static final String PRIVATE_SPACE_AUTO_LOCK = "private_space_auto_lock";
 
         /**
+         * Toggle for enabling stylus pointer icon. Pointer icons for styluses will only be be shown
+         * when this is enabled. Enabling this alone won't enable the stylus pointer;
+         * config_enableStylusPointerIcon needs to be true as well.
+         *
+         * @hide
+         */
+        @Readable
+        public static final String STYLUS_POINTER_ICON_ENABLED = "stylus_pointer_icon_enabled";
+
+        /**
          * These entries are considered common between the personal and the managed profile,
          * since the managed profile doesn't get to change them.
          */
@@ -12268,6 +12416,8 @@ public final class Settings {
             CLONE_TO_MANAGED_PROFILE.add(LOCATION_MODE);
             CLONE_TO_MANAGED_PROFILE.add(SHOW_IME_WITH_HARD_KEYBOARD);
             CLONE_TO_MANAGED_PROFILE.add(ACCESSIBILITY_BOUNCE_KEYS);
+            CLONE_TO_MANAGED_PROFILE.add(ACCESSIBILITY_SLOW_KEYS);
+            CLONE_TO_MANAGED_PROFILE.add(ACCESSIBILITY_STICKY_KEYS);
             CLONE_TO_MANAGED_PROFILE.add(NOTIFICATION_BUBBLES);
             CLONE_TO_MANAGED_PROFILE.add(NOTIFICATION_HISTORY_ENABLED);
         }
@@ -18112,6 +18262,16 @@ public final class Settings {
                 "show_notification_channel_warnings";
 
         /**
+         * Whether to disable app and notification screen share protections.
+         *
+         * The value 1 - enable, 0 - disable
+         * @hide
+         */
+        @Readable
+        public static final String DISABLE_SCREEN_SHARE_PROTECTIONS_FOR_APPS_AND_NOTIFICATIONS =
+                "disable_screen_share_protections_for_apps_and_notifications";
+
+        /**
          * Whether cell is enabled/disabled
          * @hide
          */
@@ -19971,16 +20131,9 @@ public final class Settings {
         @RequiresPermission(Manifest.permission.READ_DEVICE_CONFIG)
         public static Map<String, String> getStrings(@NonNull ContentResolver resolver,
                 @NonNull String namespace, @NonNull List<String> names) {
-            String[] compositeNames = new String[names.size()];
-            for (int i = 0, size = names.size(); i < size; ++i) {
-                compositeNames[i] = createCompositeName(namespace, names.get(i));
-            }
-
             String prefix = createPrefix(namespace);
 
-            ArrayMap<String, String> keyValues = sNameValueCache.getStringsForPrefixStripPrefix(
-                    resolver, prefix, compositeNames);
-            return keyValues;
+            return sNameValueCache.getStringsForPrefixStripPrefix(resolver, prefix, names);
         }
 
         /**
@@ -20302,7 +20455,7 @@ public final class Settings {
             }
         }
 
-        private static String createCompositeName(@NonNull String namespace, @NonNull String name) {
+        static String createCompositeName(@NonNull String namespace, @NonNull String name) {
             Preconditions.checkNotNull(namespace);
             Preconditions.checkNotNull(name);
             var sb = new StringBuilder(namespace.length() + 1 + name.length());

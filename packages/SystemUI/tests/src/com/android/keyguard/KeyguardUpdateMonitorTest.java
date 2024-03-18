@@ -121,7 +121,6 @@ import com.android.internal.widget.LockPatternUtils;
 import com.android.keyguard.KeyguardUpdateMonitor.BiometricAuthenticated;
 import com.android.keyguard.logging.KeyguardUpdateMonitorLogger;
 import com.android.settingslib.fuelgauge.BatteryStatus;
-import com.android.systemui.Flags;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.biometrics.FingerprintInteractiveToAuthProvider;
@@ -930,7 +929,8 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
     @Test
     public void trustAgentHasTrust() {
         // WHEN user has trust
-        givenSelectedUserCanSkipBouncerFromTrustedState();
+        mKeyguardUpdateMonitor.onTrustChanged(true, true,
+                mSelectedUserInteractor.getSelectedUserId(), 0, null);
 
         // THEN user is considered as "having trust" and bouncer can be skipped
         Assert.assertTrue(mKeyguardUpdateMonitor.getUserHasTrust(
@@ -954,7 +954,8 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
     @Test
     public void trustAgentHasTrust_fingerprintLockout() {
         // GIVEN user has trust
-        givenSelectedUserCanSkipBouncerFromTrustedState();
+        mKeyguardUpdateMonitor.onTrustChanged(true, true,
+                mSelectedUserInteractor.getSelectedUserId(), 0, null);
         Assert.assertTrue(mKeyguardUpdateMonitor.getUserHasTrust(
                 mSelectedUserInteractor.getSelectedUserId()));
 
@@ -1477,7 +1478,6 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
 
         verify(mHandler).postDelayed(mKeyguardUpdateMonitor.mFpCancelNotReceived,
                 DEFAULT_CANCEL_SIGNAL_TIMEOUT);
-
         mKeyguardUpdateMonitor.onFingerprintAuthenticated(0, true);
         mTestableLooper.processAllMessages();
 
@@ -1695,6 +1695,24 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
         verify(mTrustManager).reportUserRequestedUnlock(
                 eq(mSelectedUserInteractor.getSelectedUserId()),
                 eq(true));
+    }
+
+    @Test
+    public void assistantVisible_sendEventToFaceAuthInteractor() {
+        // WHEN the assistant is visible
+        mKeyguardUpdateMonitor.setAssistantVisible(true);
+
+        // THEN send event to face auth interactor
+        verify(mFaceAuthInteractor).onAssistantTriggeredOnLockScreen();
+    }
+
+    @Test
+    public void assistantNotVisible_doesNotSendEventToFaceAuthInteractor() {
+        // WHEN the assistant is visible
+        mKeyguardUpdateMonitor.setAssistantVisible(false);
+
+        // THEN never send event to face auth interactor
+        verify(mFaceAuthInteractor, never()).onAssistantTriggeredOnLockScreen();
     }
 
     @Test
@@ -1975,39 +1993,30 @@ public class KeyguardUpdateMonitorTest extends SysuiTestCase {
     }
 
     @Test
-    public void runFpDetectFlagDisabled_sideFps_keyguardDismissible_fingerprintAuthenticateRuns() {
-        mSetFlagsRule.disableFlags(Flags.FLAG_RUN_FINGERPRINT_DETECT_ON_DISMISSIBLE_KEYGUARD);
-
-        // Clear invocations, since previous setup (e.g. registering BiometricManager callbacks)
-        // will trigger updateBiometricListeningState();
-        clearInvocations(mFingerprintManager);
-        mKeyguardUpdateMonitor.resetBiometricListeningState();
-
-        // GIVEN the user can skip the bouncer
-        givenSelectedUserCanSkipBouncerFromTrustedState();
-        when(mStrongAuthTracker.isUnlockingWithBiometricAllowed(anyBoolean())).thenReturn(true);
+    public void authenticateFingerprint_onFaceLockout_detectFingerprint() throws RemoteException {
+        // GIVEN fingerprintAuthenticate
         mKeyguardUpdateMonitor.dispatchStartedGoingToSleep(0 /* why */);
         mTestableLooper.processAllMessages();
-
-        // WHEN verify authenticate runs
         verifyFingerprintAuthenticateCall();
-    }
-
-    @Test
-    public void sideFps_keyguardDismissible_fingerprintDetectRuns() {
-        mSetFlagsRule.enableFlags(Flags.FLAG_RUN_FINGERPRINT_DETECT_ON_DISMISSIBLE_KEYGUARD);
-        // Clear invocations, since previous setup (e.g. registering BiometricManager callbacks)
-        // will trigger updateBiometricListeningState();
+        verifyFingerprintDetectNeverCalled();
         clearInvocations(mFingerprintManager);
-        mKeyguardUpdateMonitor.resetBiometricListeningState();
 
-        // GIVEN the user can skip the bouncer
-        givenSelectedUserCanSkipBouncerFromTrustedState();
-        when(mStrongAuthTracker.isUnlockingWithBiometricAllowed(anyBoolean())).thenReturn(true);
-        mKeyguardUpdateMonitor.dispatchStartedGoingToSleep(0 /* why */);
+        // WHEN class 3 face is locked out
+        when(mFaceAuthInteractor.isFaceAuthStrong()).thenReturn(true);
+        when(mFaceAuthInteractor.isFaceAuthEnabledAndEnrolled()).thenReturn(true);
+        setupFingerprintAuth(/* isClass3 */ true);
+        // GIVEN primary auth is not required by StrongAuthTracker
+        primaryAuthNotRequiredByStrongAuthTracker();
+
+        // WHEN face (class 3) is locked out
+        faceAuthLockOut();
         mTestableLooper.processAllMessages();
 
-        // WHEN verify detect runs
+        // THEN unlocking with fingerprint is not allowed
+        Assert.assertFalse(mKeyguardUpdateMonitor.isUnlockingWithBiometricAllowed(
+                BiometricSourceType.FINGERPRINT));
+
+        // THEN fingerprint detect gets called
         verifyFingerprintDetectCall();
     }
 

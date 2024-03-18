@@ -24,9 +24,11 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.keyguard.shared.ComposeLockscreen
 import com.android.systemui.keyguard.shared.model.SettingsClockSize
 import com.android.systemui.plugins.clocks.ClockController
 import com.android.systemui.res.R
+import com.android.systemui.statusbar.notification.domain.interactor.NotificationsKeyguardInteractor
 import com.android.systemui.statusbar.policy.SplitShadeStateController
 import com.android.systemui.util.Utils
 import javax.inject.Inject
@@ -44,6 +46,7 @@ constructor(
     private val keyguardClockInteractor: KeyguardClockInteractor,
     @Application private val applicationScope: CoroutineScope,
     private val splitShadeStateController: SplitShadeStateController,
+    notifsKeyguardInteractor: NotificationsKeyguardInteractor,
 ) {
     var burnInLayer: Layer? = null
     val useLargeClock: Boolean
@@ -91,12 +94,30 @@ constructor(
             initialValue = false
         )
 
-    // Needs to use a non application context to get display cutout.
-    fun getSmallClockTopMargin(context: Context) =
+    val isAodIconsVisible: StateFlow<Boolean> =
+        notifsKeyguardInteractor.areNotificationsFullyHidden.stateIn(
+            scope = applicationScope,
+            started = SharingStarted.WhileSubscribed(),
+            initialValue = false
+        )
+
+    /** Calculates the top margin for the small clock. */
+    fun getSmallClockTopMargin(context: Context): Int {
+        var topMargin: Int
+        val statusBarHeight = Utils.getStatusBarHeaderHeightKeyguard(context)
+
         if (splitShadeStateController.shouldUseSplitNotificationShade(context.resources)) {
-            context.resources.getDimensionPixelSize(R.dimen.keyguard_split_shade_top_margin)
+            topMargin =
+                context.resources.getDimensionPixelSize(R.dimen.keyguard_split_shade_top_margin)
+            if (ComposeLockscreen.isEnabled) {
+                topMargin -= statusBarHeight
+            }
         } else {
-            context.resources.getDimensionPixelSize(R.dimen.keyguard_clock_top_margin) +
-                Utils.getStatusBarHeaderHeightKeyguard(context)
+            topMargin = context.resources.getDimensionPixelSize(R.dimen.keyguard_clock_top_margin)
+            if (!ComposeLockscreen.isEnabled) {
+                topMargin += statusBarHeight
+            }
         }
+        return topMargin
+    }
 }

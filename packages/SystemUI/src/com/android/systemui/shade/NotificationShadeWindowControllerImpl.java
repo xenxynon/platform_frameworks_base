@@ -50,6 +50,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.systemui.Dumpable;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.colorextraction.SysuiColorExtractor;
+import com.android.systemui.communal.domain.interactor.CommunalInteractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
@@ -59,6 +60,7 @@ import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController.StateListener;
 import com.android.systemui.res.R;
+import com.android.systemui.scene.shared.flag.SceneContainerFlag;
 import com.android.systemui.scene.shared.flag.SceneContainerFlags;
 import com.android.systemui.scene.ui.view.WindowRootViewComponent;
 import com.android.systemui.settings.UserTracker;
@@ -118,6 +120,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     private final Lazy<SelectedUserInteractor> mUserInteractor;
     private final Lazy<ShadeInteractor> mShadeInteractorLazy;
     private final SceneContainerFlags mSceneContainerFlags;
+    private final Lazy<CommunalInteractor> mCommunalInteractor;
     private ViewGroup mWindowRootView;
     private LayoutParams mLp;
     private boolean mHasTopUi;
@@ -165,7 +168,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             ShadeWindowLogger logger,
             Lazy<SelectedUserInteractor> userInteractor,
             UserTracker userTracker,
-            SceneContainerFlags sceneContainerFlags) {
+            SceneContainerFlags sceneContainerFlags,
+            Lazy<CommunalInteractor> communalInteractor) {
         mContext = context;
         mWindowRootViewComponentFactory = windowRootViewComponentFactory;
         mWindowManager = windowManager;
@@ -180,10 +184,12 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
         mBackgroundExecutor = backgroundExecutor;
         mColorExtractor = colorExtractor;
         mScreenOffAnimationController = screenOffAnimationController;
-        dumpManager.registerDumpable(this);
+        // prefix with {slow} to make sure this dumps at the END of the critical section.
+        dumpManager.registerCriticalDumpable("{slow}NotificationShadeWindowControllerImpl", this);
         mAuthController = authController;
         mUserInteractor = userInteractor;
         mSceneContainerFlags = sceneContainerFlags;
+        mCommunalInteractor = communalInteractor;
         mLastKeyguardRotationAllowed = mKeyguardStateController.isKeyguardScreenRotationAllowed();
         mLockScreenDisplayTimeout = context.getResources()
                 .getInteger(R.integer.config_lockScreenDisplayTimeout);
@@ -324,6 +330,11 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                 mWindowRootView,
                 mShadeInteractorLazy.get().isQsExpanded(),
                 this::onQsExpansionChanged
+        );
+        collectFlow(
+                mWindowRootView,
+                mCommunalInteractor.get().isCommunalVisible(),
+                this::onCommunalVisibleChanged
         );
     }
 
@@ -466,6 +477,9 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
             }
             visible = true;
             mLogger.d("Visibility forced to be true");
+        } else if (state.communalVisible) {
+            visible = true;
+            mLogger.d("Visibility forced to be true by communal");
         }
         if (mWindowRootView != null) {
             if (visible) {
@@ -493,7 +507,7 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
 
     private void applyFitsSystemWindows(NotificationShadeWindowState state) {
         boolean fitsSystemWindows = !state.isKeyguardShowingAndNotOccluded();
-        if (mWindowRootView != null
+        if (!SceneContainerFlag.isEnabled() && mWindowRootView != null
                 && mWindowRootView.getFitsSystemWindows() != fitsSystemWindows) {
             mWindowRootView.setFitsSystemWindows(fitsSystemWindows);
             mWindowRootView.requestApplyInsets();
@@ -501,14 +515,21 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
     }
 
     private void applyUserActivityTimeout(NotificationShadeWindowState state) {
-        if (state.isKeyguardShowingAndNotOccluded()
+        final Boolean communalVisible = state.isCommunalVisibleAndNotOccluded();
+        final Boolean keyguardShowing = state.isKeyguardShowingAndNotOccluded();
+        long timeout = -1;
+        if ((communalVisible || keyguardShowing)
                 && state.statusBarState == StatusBarState.KEYGUARD
                 && !state.qsExpanded) {
-            mLpChanged.userActivityTimeout = state.bouncerShowing
-                    ? KeyguardViewMediator.AWAKE_INTERVAL_BOUNCER_MS : mLockScreenDisplayTimeout;
-        } else {
-            mLpChanged.userActivityTimeout = -1;
+            if (state.bouncerShowing) {
+                timeout = KeyguardViewMediator.AWAKE_INTERVAL_BOUNCER_MS;
+            } else if (communalVisible) {
+                timeout = CommunalInteractor.AWAKE_INTERVAL_MS;
+            } else if (keyguardShowing) {
+                timeout = mLockScreenDisplayTimeout;
+            }
         }
+        mLpChanged.userActivityTimeout = timeout;
     }
 
     private void applyInputFeatures(NotificationShadeWindowState state) {
@@ -607,7 +628,8 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
                 state.forcePluginOpen,
                 state.dozing,
                 state.scrimsVisibility,
-                state.backgroundBlurRadius
+                state.backgroundBlurRadius,
+                state.communalVisible
         );
     }
 
@@ -728,6 +750,12 @@ public class NotificationShadeWindowControllerImpl implements NotificationShadeW
 
     private void onQsExpansionChanged(Boolean expanded) {
         mCurrentState.qsExpanded = expanded;
+        apply(mCurrentState);
+    }
+
+    @VisibleForTesting
+    void onCommunalVisibleChanged(Boolean visible) {
+        mCurrentState.communalVisible = visible;
         apply(mCurrentState);
     }
 

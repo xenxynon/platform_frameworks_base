@@ -22,6 +22,7 @@ import static android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREG
 import static android.app.WallpaperManager.COMMAND_REAPPLY;
 import static android.app.WallpaperManager.FLAG_LOCK;
 import static android.app.WallpaperManager.FLAG_SYSTEM;
+import static android.app.WallpaperManager.ORIENTATION_UNKNOWN;
 import static android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AUTO;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.ParcelFileDescriptor.MODE_CREATE;
@@ -51,6 +52,7 @@ import android.app.ApplicationExitInfo;
 import android.app.ILocalWallpaperColorConsumer;
 import android.app.IWallpaperManager;
 import android.app.IWallpaperManagerCallback;
+import android.app.KeyguardManager;
 import android.app.PendingIntent;
 import android.app.UidObserver;
 import android.app.UserSwitchObserver;
@@ -74,6 +76,7 @@ import android.content.pm.ServiceInfo;
 import android.content.pm.UserInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.hardware.display.DisplayManager;
@@ -103,12 +106,15 @@ import android.service.wallpaper.IWallpaperService;
 import android.service.wallpaper.WallpaperService;
 import android.system.ErrnoException;
 import android.system.Os;
+import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.IntArray;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.view.Display;
+import android.view.View;
+import android.view.WindowManager;
 
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
@@ -137,9 +143,9 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -189,8 +195,6 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
     }
 
     private final Object mLock = new Object();
-    /** True to support different crops for different display dimensions */
-    private final boolean mIsMultiCropEnabled;
     /** Tracks wallpaper being migrated from system+lock to lock when setting static wp. */
     WallpaperDestinationChangeHandler mPendingMigrationViaStatic;
 
@@ -337,8 +341,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
 
                     // If this was the system wallpaper, rebind...
                     wallpaper.mBindSource = BindSource.SET_STATIC;
-                    bindWallpaperComponentLocked(mImageWallpaper, true, false, wallpaper,
-                            callback);
+                    bindWallpaperComponentLocked(mImageWallpaper, true, false, wallpaper, callback);
                 }
 
                 if (lockWallpaperChanged) {
@@ -365,11 +368,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
                     if (DEBUG) {
                         Slog.v(TAG, "Lock screen wallpaper changed to same as home");
                     }
-                    final WallpaperData lockedWallpaper = mLockWallpaperMap.get(
-                            mWallpaper.userId);
-                    if (lockedWallpaper != null) {
-                        detachWallpaperLocked(lockedWallpaper);
-                    }
+                    detachWallpaperLocked(mLockWallpaperMap.get(mWallpaper.userId));
                     clearWallpaperBitmaps(mWallpaper.userId, FLAG_LOCK);
                     mLockWallpaperMap.remove(wallpaper.userId);
                 }
@@ -609,8 +608,8 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
     }
 
     private final Context mContext;
-    private final AtomicBoolean mIsInitialBinding = new AtomicBoolean(true);
-    private final ServiceThread mHandlerThread;
+    private boolean mInitialUserSwitch = true;
+    private ServiceThread mHandlerThread;
     private final WindowManagerInternal mWindowManagerInternal;
     private final PackageManagerInternal mPackageManagerInternal;
     private final IPackageManager mIPackageManager;
@@ -804,6 +803,12 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
                     null /* options */);
             mWindowManagerInternal.setWallpaperShowWhenLocked(
                     mToken, (wallpaper.mWhich & FLAG_LOCK) != 0);
+            if (multiCrop() && wallpaper.mSupportsMultiCrop) {
+                mWindowManagerInternal.setWallpaperCropHints(mToken,
+                        mWallpaperCropper.getRelativeCropHints(wallpaper));
+            } else {
+                mWindowManagerInternal.setWallpaperCropHints(mToken, new SparseArray<>());
+            }
             final DisplayData wpdData =
                     mWallpaperDisplayHelper.getDisplayDataOrCreate(mDisplayId);
             try {
@@ -1464,12 +1469,6 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
     public WallpaperManagerService(Context context) {
         if (DEBUG) Slog.v(TAG, "WallpaperService startup");
         mContext = context;
-        if (Flags.bindWallpaperServiceOnItsOwnThreadDuringAUserSwitch()) {
-            mHandlerThread = new ServiceThread(TAG, THREAD_PRIORITY_FOREGROUND, true /*allowIo*/);
-            mHandlerThread.start();
-        } else {
-            mHandlerThread = null;
-        }
         mShuttingDown = false;
         mImageWallpaper = ComponentName.unflattenFromString(
                 context.getResources().getString(R.string.image_wallpaper_component));
@@ -1479,10 +1478,15 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         mPackageManagerInternal = LocalServices.getService(PackageManagerInternal.class);
         mIPackageManager = AppGlobals.getPackageManager();
         mAppOpsManager = (AppOpsManager) mContext.getSystemService(Context.APP_OPS_SERVICE);
-        DisplayManager dm = mContext.getSystemService(DisplayManager.class);
-        dm.registerDisplayListener(mDisplayListener, null /* handler */);
-        mWallpaperDisplayHelper = new WallpaperDisplayHelper(dm, mWindowManagerInternal);
+        DisplayManager displayManager = mContext.getSystemService(DisplayManager.class);
+        displayManager.registerDisplayListener(mDisplayListener, null /* handler */);
+        WindowManager windowManager = mContext.getSystemService(WindowManager.class);
+        boolean isFoldable = mContext.getResources()
+                .getIntArray(R.array.config_foldedDeviceStates).length > 0;
+        mWallpaperDisplayHelper = new WallpaperDisplayHelper(
+                displayManager, windowManager, mWindowManagerInternal, isFoldable);
         mWallpaperCropper = new WallpaperCropper(mWallpaperDisplayHelper);
+        mWindowManagerInternal.setWallpaperCropUtils(mWallpaperCropper::getCrop);
         mActivityManager = mContext.getSystemService(ActivityManager.class);
 
         if (mContext.getResources().getBoolean(
@@ -1522,7 +1526,6 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         mColorsChangedListeners = new SparseArray<>();
         mWallpaperDataParser = new WallpaperDataParser(mContext, mWallpaperDisplayHelper,
                 mWallpaperCropper);
-        mIsMultiCropEnabled = multiCrop();
         LocalServices.addService(WallpaperManagerInternal.class, new LocalService());
     }
 
@@ -1689,7 +1692,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         sWallpaperType.forEach((type, filename) -> {
             final File record = new File(getWallpaperDir(userID), filename);
             if (record.exists()) {
-                Slog.w(TAG, "User:" + userID + ", wallpaper tyep = " + type
+                Slog.w(TAG, "User:" + userID + ", wallpaper type = " + type
                         + ", wallpaper fail detect!! reset to default wallpaper");
                 clearWallpaperBitmaps(userID, type);
                 record.delete();
@@ -1785,10 +1788,24 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
                     systemWallpaper.wallpaperObserver = new WallpaperObserver(systemWallpaper);
                     systemWallpaper.wallpaperObserver.startWatching();
                 }
-                if (lockWallpaper != systemWallpaper)  {
-                    switchWallpaper(lockWallpaper, null);
+                if (Flags.reorderWallpaperDuringUserSwitch()) {
+                    detachWallpaperLocked(mLastLockWallpaper);
+                    detachWallpaperLocked(mLastWallpaper);
+                    if (lockWallpaper == systemWallpaper)  {
+                        switchWallpaper(systemWallpaper, reply);
+                    } else {
+                        KeyguardManager km = mContext.getSystemService(KeyguardManager.class);
+                        boolean isDeviceSecure = km != null && km.isDeviceSecure(userId);
+                        switchWallpaper(isDeviceSecure ? lockWallpaper : systemWallpaper, reply);
+                        switchWallpaper(isDeviceSecure ? systemWallpaper : lockWallpaper, null);
+                    }
+                } else {
+                    if (lockWallpaper != systemWallpaper)  {
+                        switchWallpaper(lockWallpaper, null);
+                    }
+                    switchWallpaper(systemWallpaper, reply);
                 }
-                switchWallpaper(systemWallpaper, reply);
+                mInitialUserSwitch = false;
             }
 
             // Offload color extraction to another thread since switchUser will be called
@@ -2197,6 +2214,67 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
             }
             return null;
         }
+    }
+
+    @Override
+    public List<Rect> getBitmapCrops(List<Point> displaySizes, @SetWallpaperFlags int which,
+            boolean originalBitmap, int userId) {
+        userId = ActivityManager.handleIncomingUser(Binder.getCallingPid(),
+                Binder.getCallingUid(), userId, false, true, "getBitmapCrop", null);
+        synchronized (mLock) {
+            checkPermission(READ_WALLPAPER_INTERNAL);
+            WallpaperData wallpaper = (which == FLAG_LOCK) ? mLockWallpaperMap.get(userId)
+                    : mWallpaperMap.get(userId);
+            if (wallpaper == null || !wallpaper.mSupportsMultiCrop) return null;
+            SparseArray<Rect> relativeSuggestedCrops =
+                    mWallpaperCropper.getRelativeCropHints(wallpaper);
+            Point croppedBitmapSize = new Point(
+                    (int) (0.5f + wallpaper.cropHint.width() / wallpaper.mSampleSize),
+                    (int) (0.5f + wallpaper.cropHint.height() / wallpaper.mSampleSize));
+            SparseArray<Rect> relativeDefaultCrops =
+                    mWallpaperCropper.getDefaultCrops(relativeSuggestedCrops, croppedBitmapSize);
+            SparseArray<Rect> adjustedRelativeSuggestedCrops = new SparseArray<>();
+            for (int i = 0; i < relativeDefaultCrops.size(); i++) {
+                int key = relativeDefaultCrops.keyAt(i);
+                if (relativeSuggestedCrops.contains(key)) {
+                    adjustedRelativeSuggestedCrops.put(key, relativeDefaultCrops.get(key));
+                }
+            }
+            List<Rect> result = new ArrayList<>();
+            boolean rtl = TextUtils.getLayoutDirectionFromLocale(Locale.getDefault())
+                    == View.LAYOUT_DIRECTION_RTL;
+            for (Point displaySize : displaySizes) {
+                result.add(mWallpaperCropper.getCrop(
+                        displaySize, croppedBitmapSize, adjustedRelativeSuggestedCrops, rtl));
+            }
+            if (originalBitmap) result = WallpaperCropper.getOriginalCropHints(wallpaper, result);
+            return result;
+        }
+    }
+
+    @Override
+    public List<Rect> getFutureBitmapCrops(Point bitmapSize, List<Point> displaySizes,
+            int[] screenOrientations, List<Rect> crops) {
+        SparseArray<Rect> cropMap = getCropMap(screenOrientations, crops, ORIENTATION_UNKNOWN);
+        SparseArray<Rect> defaultCrops = mWallpaperCropper.getDefaultCrops(cropMap, bitmapSize);
+        List<Rect> result = new ArrayList<>();
+        boolean rtl = TextUtils.getLayoutDirectionFromLocale(Locale.getDefault())
+                == View.LAYOUT_DIRECTION_RTL;
+        for (Point displaySize : displaySizes) {
+            result.add(mWallpaperCropper.getCrop(displaySize, bitmapSize, defaultCrops, rtl));
+        }
+        return result;
+    }
+
+    @Override
+    public Rect getBitmapCrop(Point bitmapSize, int[] screenOrientations, List<Rect> crops) {
+        if (!multiCrop()) {
+            throw new UnsupportedOperationException(
+                    "This method should only be called with the multi crop flag enabled");
+        }
+        SparseArray<Rect> cropMap = getCropMap(screenOrientations, crops, ORIENTATION_UNKNOWN);
+        SparseArray<Rect> defaultCrops = mWallpaperCropper.getDefaultCrops(cropMap, bitmapSize);
+        return WallpaperCropper.getTotalCrop(defaultCrops);
     }
 
     private boolean hasPermission(String permission) {
@@ -2755,8 +2833,18 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
 
     @Override
     public ParcelFileDescriptor setWallpaper(String name, String callingPackage,
-            Rect cropHint, boolean allowBackup, Bundle extras, int which,
-            IWallpaperManagerCallback completion, int userId) {
+            int[] screenOrientations, List<Rect> crops, boolean allowBackup,
+            Bundle extras, int which, IWallpaperManagerCallback completion, int userId) {
+
+        if (DEBUG) {
+            Slog.d(TAG, "setWallpaper: name = " + name + ", callingPackage = " + callingPackage
+                    + ", screenOrientations = "
+                    + (screenOrientations == null ? null
+                            : Arrays.stream(screenOrientations).boxed().toList())
+                    + ", crops = " + crops
+                    + ", allowBackup = " + allowBackup);
+        }
+
         userId = ActivityManager.handleIncomingUser(getCallingPid(), getCallingUid(), userId,
                 false /* all */, true /* full */, "changing wallpaper", null /* pkg */);
         checkPermission(android.Manifest.permission.SET_WALLPAPER);
@@ -2771,10 +2859,17 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
             return null;
         }
 
+        int currentOrientation = mWallpaperDisplayHelper.getDefaultDisplayCurrentOrientation();
+        SparseArray<Rect> cropMap = !multiCrop() ? null
+                : getCropMap(screenOrientations, crops, currentOrientation);
+        Rect cropHint = multiCrop() || crops == null ? null : crops.get(0);
+        final boolean fromForegroundApp = !multiCrop() ? false
+                : isFromForegroundApp(callingPackage);
+
         // "null" means the no-op crop, preserving the full input image
-        if (cropHint == null) {
+        if (cropHint == null && !multiCrop()) {
             cropHint = new Rect(0, 0, 0, 0);
-        } else {
+        } else if (!multiCrop()) {
             if (cropHint.width() < 0 || cropHint.height() < 0
                     || cropHint.left < 0
                     || cropHint.top < 0) {
@@ -2814,10 +2909,14 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
                     wallpaper.mSystemWasBoth = systemIsBoth;
                     wallpaper.mWhich = which;
                     wallpaper.setComplete = completion;
-                    wallpaper.fromForegroundApp = isFromForegroundApp(callingPackage);
-                    wallpaper.cropHint.set(cropHint);
+                    wallpaper.fromForegroundApp = multiCrop() ? fromForegroundApp
+                            : isFromForegroundApp(callingPackage);
+                    if (!multiCrop()) wallpaper.cropHint.set(cropHint);
+                    if (multiCrop()) wallpaper.mSupportsMultiCrop = true;
+                    if (multiCrop()) wallpaper.mCropHints = cropMap;
                     wallpaper.allowBackup = allowBackup;
                     wallpaper.mWallpaperDimAmount = getWallpaperDimAmount();
+                    wallpaper.mOrientationWhenSet = currentOrientation;
                 }
                 return pfd;
             } finally {
@@ -2826,11 +2925,47 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         }
     }
 
+    private SparseArray<Rect> getCropMap(int[] screenOrientations, List<Rect> crops,
+            int currentOrientation) {
+        if ((crops == null ^ screenOrientations == null)
+                || (crops != null && crops.size() != screenOrientations.length)) {
+            throw new IllegalArgumentException(
+                    "Illegal crops/orientations lists: must both be null, or both the same size");
+        }
+        SparseArray<Rect> cropMap = new SparseArray<>();
+        boolean unknown = false;
+        if (crops != null && crops.size() != 0) {
+            for (int i = 0; i < crops.size(); i++) {
+                Rect crop = crops.get(i);
+                int width = crop.width(), height = crop.height();
+                if (width < 0 || height < 0 || crop.left < 0 || crop.top < 0) {
+                    throw new IllegalArgumentException("Invalid crop rect supplied: " + crop);
+                }
+                int orientation = screenOrientations[i];
+                if (orientation == ORIENTATION_UNKNOWN) {
+                    if (currentOrientation == ORIENTATION_UNKNOWN) {
+                        throw new IllegalArgumentException(
+                                "Invalid orientation: " + ORIENTATION_UNKNOWN);
+                    }
+                    unknown = true;
+                    orientation = currentOrientation;
+                }
+                cropMap.put(orientation, crop);
+            }
+        }
+        if (unknown && cropMap.size() > 1) {
+            throw new IllegalArgumentException("Invalid crops supplied: the UNKNOWN screen "
+                    + "orientation should only be used in a singleton map (in which case it"
+                    + "represents the current orientation of the default display)");
+        }
+        return cropMap;
+    }
+
     private void migrateStaticSystemToLockWallpaperLocked(int userId) {
         WallpaperData sysWP = mWallpaperMap.get(userId);
         if (sysWP == null) {
             if (DEBUG) {
-                Slog.i(TAG, "No system wallpaper?  Not tracking for lock-only");
+                Slog.i(TAG, "No system wallpaper? Not tracking for lock-only");
             }
             return;
         }
@@ -2839,6 +2974,10 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         WallpaperData lockWP = new WallpaperData(userId, FLAG_LOCK);
         lockWP.wallpaperId = sysWP.wallpaperId;
         lockWP.cropHint.set(sysWP.cropHint);
+        lockWP.mSupportsMultiCrop = sysWP.mSupportsMultiCrop;
+        if (sysWP.mCropHints != null) {
+            lockWP.mCropHints = sysWP.mCropHints.clone();
+        }
         lockWP.allowBackup = sysWP.allowBackup;
         lockWP.primaryColors = sysWP.primaryColors;
         lockWP.mWallpaperDimAmount = sysWP.mWallpaperDimAmount;
@@ -2956,6 +3095,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
             final long ident = Binder.clearCallingIdentity();
 
             try {
+                newWallpaper.mSupportsMultiCrop = mImageWallpaper.equals(name);
                 newWallpaper.imageWallpaperPending = false;
                 newWallpaper.mWhich = which;
                 newWallpaper.mSystemWasBoth = systemIsBoth;
@@ -3190,11 +3330,8 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
                     com.android.internal.R.bool.config_wallpaperTopApp)) {
                 bindFlags |= Context.BIND_SCHEDULE_LIKE_TOP_APP;
             }
-            Handler handler = Flags.bindWallpaperServiceOnItsOwnThreadDuringAUserSwitch()
-                    && !mIsInitialBinding.compareAndSet(true, false)
-                    ? mHandlerThread.getThreadHandler() : mContext.getMainThreadHandler();
-            boolean bindSuccess = mContext.bindServiceAsUser(intent, newConn, bindFlags, handler,
-                    new UserHandle(serviceUserId));
+            boolean bindSuccess = mContext.bindServiceAsUser(intent, newConn, bindFlags,
+                    getHandlerForBindingWallpaperLocked(), new UserHandle(serviceUserId));
             if (!bindSuccess) {
                 String msg = "Unable to bind service: " + componentName;
                 if (fromUser) {
@@ -3222,6 +3359,20 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         return true;
     }
 
+    private Handler getHandlerForBindingWallpaperLocked() {
+        if (!Flags.bindWallpaperServiceOnItsOwnThreadDuringAUserSwitch()) {
+            return mContext.getMainThreadHandler();
+        }
+        if (mInitialUserSwitch) {
+            return mContext.getMainThreadHandler();
+        }
+        if (mHandlerThread == null) {
+            mHandlerThread = new ServiceThread(TAG, THREAD_PRIORITY_FOREGROUND, true /*allowIo*/);
+            mHandlerThread.start();
+        }
+        return mHandlerThread.getThreadHandler();
+    }
+
     // Updates tracking of the currently bound wallpapers.
     private void updateCurrentWallpapers(WallpaperData newWallpaper) {
         if (newWallpaper.userId != mCurrentUserId || newWallpaper.equals(mFallbackWallpaper)) {
@@ -3244,10 +3395,10 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
         boolean homeUpdated = (newWallpaper.mWhich & FLAG_SYSTEM) != 0;
         boolean lockUpdated = (newWallpaper.mWhich & FLAG_LOCK) != 0;
         boolean systemWillBecomeLock = newWallpaper.mSystemWasBoth && !lockUpdated;
-        if (mLastWallpaper != null && homeUpdated && !systemWillBecomeLock) {
+        if (homeUpdated && !systemWillBecomeLock) {
             detachWallpaperLocked(mLastWallpaper);
         }
-        if (mLastLockWallpaper != null && lockUpdated) {
+        if (lockUpdated) {
             detachWallpaperLocked(mLastLockWallpaper);
         }
     }
@@ -3255,7 +3406,7 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
     // Frees up all rendering resources used by the given wallpaper so that the WallpaperData object
     // can be reused: detaches Engine, unbinds WallpaperService, etc.
     private void detachWallpaperLocked(WallpaperData wallpaper) {
-        if (wallpaper.connection != null) {
+        if (wallpaper != null && wallpaper.connection != null) {
             if (DEBUG) {
                 Slog.v(TAG, "Detaching wallpaper: " + wallpaper);
             }
@@ -3426,11 +3577,6 @@ public class WallpaperManagerService extends IWallpaperManager.Stub
                 ? mLockWallpaperMap.get(userId)
                 : mWallpaperMap.get(userId);
         return (wallpaper != null) ? wallpaper.allowBackup : false;
-    }
-
-    @Override
-    public boolean isMultiCropEnabled() {
-        return mIsMultiCropEnabled;
     }
 
     private void onDisplayReadyInternal(int displayId) {

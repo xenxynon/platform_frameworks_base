@@ -35,11 +35,11 @@ import android.hardware.biometrics.face.IFace;
 import android.hardware.biometrics.face.SensorProps;
 import android.hardware.face.Face;
 import android.hardware.face.FaceAuthenticateOptions;
+import android.hardware.face.FaceEnrollOptions;
 import android.hardware.face.FaceSensorPropertiesInternal;
 import android.hardware.face.IFaceServiceReceiver;
 import android.os.Binder;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.RemoteException;
@@ -53,12 +53,14 @@ import android.view.Surface;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.biometrics.AuthenticationStatsBroadcastReceiver;
 import com.android.server.biometrics.AuthenticationStatsCollector;
+import com.android.server.biometrics.BiometricHandlerProvider;
 import com.android.server.biometrics.Flags;
 import com.android.server.biometrics.Utils;
 import com.android.server.biometrics.log.BiometricContext;
 import com.android.server.biometrics.log.BiometricLogger;
 import com.android.server.biometrics.sensors.AuthSessionCoordinator;
 import com.android.server.biometrics.sensors.AuthenticationClient;
+import com.android.server.biometrics.sensors.AuthenticationStateListeners;
 import com.android.server.biometrics.sensors.BaseClientMonitor;
 import com.android.server.biometrics.sensors.BiometricScheduler;
 import com.android.server.biometrics.sensors.BiometricStateCallback;
@@ -103,6 +105,8 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     @NonNull
     private final BiometricStateCallback mBiometricStateCallback;
     @NonNull
+    private final AuthenticationStateListeners mAuthenticationStateListeners;
+    @NonNull
     private final String mHalInstanceName;
     @NonNull
     private final Handler mHandler;
@@ -121,6 +125,8 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     private final BiometricContext mBiometricContext;
     @NonNull
     private final AuthSessionCoordinator mAuthSessionCoordinator;
+    @NonNull
+    private final BiometricHandlerProvider mBiometricHandlerProvider;
     @Nullable
     private AuthenticationStatsCollector mAuthenticationStatsCollector;
     @Nullable
@@ -156,32 +162,36 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     public FaceProvider(@NonNull Context context,
             @NonNull BiometricStateCallback biometricStateCallback,
+            @NonNull AuthenticationStateListeners authenticationStateListeners,
             @NonNull SensorProps[] props,
             @NonNull String halInstanceName,
             @NonNull LockoutResetDispatcher lockoutResetDispatcher,
             @NonNull BiometricContext biometricContext,
             boolean resetLockoutRequiresChallenge) {
-        this(context, biometricStateCallback, props, halInstanceName, lockoutResetDispatcher,
-                biometricContext, null /* daemon */, getHandler(), resetLockoutRequiresChallenge,
+        this(context, biometricStateCallback, authenticationStateListeners, props, halInstanceName,
+                lockoutResetDispatcher, biometricContext, null /* daemon */,
+                BiometricHandlerProvider.getInstance(), resetLockoutRequiresChallenge,
                 false /* testHalEnabled */);
     }
 
     @VisibleForTesting FaceProvider(@NonNull Context context,
             @NonNull BiometricStateCallback biometricStateCallback,
+            @NonNull AuthenticationStateListeners authenticationStateListeners,
             @NonNull SensorProps[] props,
             @NonNull String halInstanceName,
             @NonNull LockoutResetDispatcher lockoutResetDispatcher,
             @NonNull BiometricContext biometricContext,
             @Nullable IFace daemon,
-            @NonNull Handler handler,
+            @NonNull BiometricHandlerProvider biometricHandlerProvider,
             boolean resetLockoutRequiresChallenge,
             boolean testHalEnabled) {
         mContext = context;
         mBiometricStateCallback = biometricStateCallback;
+        mAuthenticationStateListeners = authenticationStateListeners;
         mHalInstanceName = halInstanceName;
         mFaceSensors = new SensorList<>(ActivityManager.getService());
         if (Flags.deHidl()) {
-            mHandler = handler;
+            mHandler = biometricHandlerProvider.getFaceHandler();
         } else {
             mHandler = new Handler(Looper.getMainLooper());
         }
@@ -193,16 +203,10 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
         mAuthSessionCoordinator = mBiometricContext.getAuthSessionCoordinator();
         mDaemon = daemon;
         mTestHalEnabled = testHalEnabled;
+        mBiometricHandlerProvider = biometricHandlerProvider;
 
         initAuthenticationBroadcastReceiver();
         initSensors(resetLockoutRequiresChallenge, props);
-    }
-
-    @NonNull
-    private static Handler getHandler() {
-        HandlerThread handlerThread = new HandlerThread(TAG);
-        handlerThread.start();
-        return new Handler(handlerThread.getLooper());
     }
 
     private void initAuthenticationBroadcastReceiver() {
@@ -516,7 +520,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
     public long scheduleEnroll(int sensorId, @NonNull IBinder token,
             @NonNull byte[] hardwareAuthToken, int userId, @NonNull IFaceServiceReceiver receiver,
             @NonNull String opPackageName, @NonNull int[] disabledFeatures,
-            @Nullable Surface previewSurface, boolean debugConsent) {
+            @Nullable Surface previewSurface, boolean debugConsent, FaceEnrollOptions options) {
         final long id = mRequestCounter.incrementAndGet();
         mHandler.post(() -> {
             mFaceSensors.get(sensorId).scheduleFaceUpdateActiveUserClient(userId);
@@ -530,7 +534,7 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                     createLogger(BiometricsProtoEnums.ACTION_ENROLL,
                             BiometricsProtoEnums.CLIENT_UNKNOWN,
                             mAuthenticationStatsCollector),
-                    mBiometricContext, maxTemplatesPerUser, debugConsent);
+                    mBiometricContext, maxTemplatesPerUser, debugConsent, options);
             if (Flags.deHidl()) {
                 scheduleForSensor(sensorId, client, mBiometricStateCallback);
             } else {
@@ -610,20 +614,35 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
                             mAuthenticationStatsCollector),
                     mBiometricContext, isStrongBiometric,
                     mUsageStats, lockoutTracker,
-                    allowBackgroundAuthentication, Utils.getCurrentStrength(sensorId));
+                    allowBackgroundAuthentication, Utils.getCurrentStrength(sensorId),
+                    mAuthenticationStateListeners);
             scheduleForSensor(sensorId, client, new ClientMonitorCallback() {
                 @Override
                 public void onClientStarted(
                          BaseClientMonitor clientMonitor) {
-                    mAuthSessionCoordinator.authStartedFor(userId, sensorId, requestId);
+                    if (Flags.deHidl()) {
+                        mBiometricHandlerProvider.getBiometricCallbackHandler().post(() ->
+                                mAuthSessionCoordinator.authStartedFor(userId, sensorId,
+                                        requestId));
+                    } else {
+                        mAuthSessionCoordinator.authStartedFor(userId, sensorId, requestId);
+                    }
                 }
 
                 @Override
                 public void onClientFinished(
                         BaseClientMonitor clientMonitor,
                         boolean success) {
-                    mAuthSessionCoordinator.authEndedFor(userId, Utils.getCurrentStrength(sensorId),
-                            sensorId, requestId, client.wasAuthSuccessful());
+                    if (Flags.deHidl()) {
+                        mBiometricHandlerProvider.getBiometricCallbackHandler().post(() ->
+                                mAuthSessionCoordinator.authEndedFor(userId,
+                                        Utils.getCurrentStrength(sensorId), sensorId, requestId,
+                                        client.wasAuthSuccessful()));
+                    } else {
+                        mAuthSessionCoordinator.authEndedFor(userId,
+                                Utils.getCurrentStrength(sensorId),
+                                sensorId, requestId, client.wasAuthSuccessful());
+                    }
                 }
             });
         });
@@ -884,5 +903,12 @@ public class FaceProvider implements IBinder.DeathRecipient, ServiceProvider {
 
     public boolean getTestHalEnabled() {
         return mTestHalEnabled;
+    }
+
+    /**
+     * Sends a face re enroll notification.
+     */
+    public void sendFaceReEnrollNotification() {
+        mAuthenticationStatsCollector.sendFaceReEnrollNotification();
     }
 }

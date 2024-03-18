@@ -105,6 +105,9 @@ public class ConversationLayout extends FrameLayout
     private int mConversationIconTopPaddingExpandedGroup;
     private int mConversationIconTopPadding;
     private int mExpandedGroupMessagePadding;
+    // TODO (b/217799515) Currently, mConversationText shows the conversation title, the actual
+    //  conversation text is inside of mMessagingLinearLayout, which is misleading, we should rename
+    //  this to mConversationTitleView
     private TextView mConversationText;
     private View mConversationIconBadge;
     private CachingIconView mConversationIconBadgeBg;
@@ -125,6 +128,11 @@ public class ConversationLayout extends FrameLayout
     private int mNotificationBackgroundColor;
     private CharSequence mFallbackChatName;
     private CharSequence mFallbackGroupChatName;
+    //TODO (b/217799515) Currently, Notification.MessagingStyle, ConversationLayout, and
+    // HybridConversationNotificationView, each has their own definition of "ConversationTitle".
+    // What make things worse is that the term of "ConversationTitle" often confuses with
+    // "ConversationText".
+    // We need to unify them or differentiate the namings.
     private CharSequence mConversationTitle;
     private int mMessageSpacingStandard;
     private int mMessageSpacingGroup;
@@ -297,13 +305,17 @@ public class ConversationLayout extends FrameLayout
         mNameReplacement = nameReplacement;
     }
 
-    /** Sets this conversation as "important", adding some additional UI treatment. */
+    /**
+     * Sets this conversation as "important", adding some additional UI treatment.
+     */
     @RemotableViewMethod
     public void setIsImportantConversation(boolean isImportantConversation) {
         setIsImportantConversation(isImportantConversation, false);
     }
 
-    /** @hide **/
+    /**
+     * @hide
+     **/
     public void setIsImportantConversation(boolean isImportantConversation, boolean animate) {
         mImportantConversation = isImportantConversation;
         mImportanceRingView.setVisibility(isImportantConversation && mIcon.getVisibility() != GONE
@@ -386,6 +398,7 @@ public class ConversationLayout extends FrameLayout
 
     /**
      * Set conversation data
+     *
      * @param extras Bundle contains conversation data
      */
     @RemotableViewMethod(asyncImpl = "setDataAsync")
@@ -419,14 +432,21 @@ public class ConversationLayout extends FrameLayout
         final List<MessagingMessage> newHistoricMessagingMessages =
                 createMessages(newHistoricMessages, /* isHistoric= */true, usePrecomputedText);
 
+        // Add our new MessagingMessages to groups
+        List<List<MessagingMessage>> groups = new ArrayList<>();
+        List<Person> senders = new ArrayList<>();
+        // Lets first find the groups (populate `groups` and `senders`)
+        findGroups(newHistoricMessagingMessages, newMessagingMessages, user, groups, senders);
+
         return new MessagingData(user, showSpinner, unreadCount,
-                newHistoricMessagingMessages, newMessagingMessages);
+                newHistoricMessagingMessages, newMessagingMessages, groups, senders);
     }
 
     /**
      * RemotableViewMethod's asyncImpl of {@link #setData(Bundle)}.
      * This should be called on a background thread, and returns a Runnable which is then must be
      * called on the main thread to complete the operation and set text.
+     *
      * @param extras Bundle contains conversation data
      * @hide
      */
@@ -449,6 +469,7 @@ public class ConversationLayout extends FrameLayout
 
     /**
      * enable/disable precomputed text usage
+     *
      * @hide
      */
     public void setPrecomputedTextEnabled(boolean precomputedTextEnabled) {
@@ -466,7 +487,9 @@ public class ConversationLayout extends FrameLayout
         mImageResolver = resolver;
     }
 
-    /** @hide */
+    /**
+     * @hide
+     */
     public void setUnreadCount(int unreadCount) {
         mExpandButton.setNumber(unreadCount);
     }
@@ -492,21 +515,13 @@ public class ConversationLayout extends FrameLayout
         setUser(messagingData.getUser());
         setUnreadCount(messagingData.getUnreadCount());
 
-        List<MessagingMessage> messages = messagingData.getNewMessagingMessages();
-        List<MessagingMessage> historicMessages = messagingData.getHistoricMessagingMessages();
         // Copy our groups, before they get clobbered
         ArrayList<MessagingGroup> oldGroups = new ArrayList<>(mGroups);
 
-        // Add our new MessagingMessages to groups
-        List<List<MessagingMessage>> groups = new ArrayList<>();
-        List<Person> senders = new ArrayList<>();
-
-        // Lets first find the groups (populate `groups` and `senders`)
-        findGroups(historicMessages, messages, groups, senders);
-
         // Let's now create the views and reorder them accordingly
         //   side-effect: updates mGroups, mAddedGroups
-        createGroupViews(groups, senders, messagingData.getShowSpinner());
+        createGroupViews(messagingData.getGroups(), messagingData.getSenders(),
+                messagingData.getShowSpinner());
 
         // Let's first check which groups were removed altogether and remove them in one animation
         removeGroups(oldGroups);
@@ -519,8 +534,8 @@ public class ConversationLayout extends FrameLayout
             historicMessage.removeMessage(mToRecycle);
         }
 
-        mMessages = messages;
-        mHistoricMessages = historicMessages;
+        mMessages = messagingData.getNewMessagingMessages();
+        mHistoricMessages = messagingData.getHistoricMessagingMessages();
 
         updateHistoricMessageVisibility();
         updateTitleAndNamesDisplay();
@@ -795,6 +810,10 @@ public class ConversationLayout extends FrameLayout
         mConversationTitle = conversationTitle != null ? conversationTitle.toString() : null;
     }
 
+    // TODO (b/217799515) getConversationTitle is not consistent with setConversationTitle
+    //  if you call getConversationTitle() immediately after setConversationTitle(), the result
+    //  will not correctly reflect the new change without calling updateConversationLayout, for
+    //  example.
     public CharSequence getConversationTitle() {
         return mConversationText.getText();
     }
@@ -962,9 +981,12 @@ public class ConversationLayout extends FrameLayout
         }
     }
 
+    /**
+     * Finds groups and senders from the given messaging messages and fills outGroups and outSenders
+     */
     private void findGroups(List<MessagingMessage> historicMessages,
-            List<MessagingMessage> messages, List<List<MessagingMessage>> groups,
-            List<Person> senders) {
+            List<MessagingMessage> messages, Person user, List<List<MessagingMessage>> outGroups,
+            List<Person> outSenders) {
         CharSequence currentSenderKey = null;
         List<MessagingMessage> currentGroup = null;
         int histSize = historicMessages.size();
@@ -982,14 +1004,14 @@ public class ConversationLayout extends FrameLayout
             isNewGroup |= !TextUtils.equals(key, currentSenderKey);
             if (isNewGroup) {
                 currentGroup = new ArrayList<>();
-                groups.add(currentGroup);
+                outGroups.add(currentGroup);
                 if (sender == null) {
-                    sender = mUser;
+                    sender = user;
                 } else {
                     // Remove all formatting from the sender name
                     sender = sender.toBuilder().setName(Objects.toString(sender.getName())).build();
                 }
-                senders.add(sender);
+                outSenders.add(sender);
                 currentSenderKey = key;
             }
             currentGroup.add(message);

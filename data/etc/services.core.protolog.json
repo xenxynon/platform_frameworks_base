@@ -1867,6 +1867,12 @@
       "group": "WM_DEBUG_STATES",
       "at": "com\/android\/server\/wm\/ActivityTaskSupervisor.java"
     },
+    "-483957611": {
+      "message": "Resuming configuration dispatch for %s",
+      "level": "VERBOSE",
+      "group": "WM_DEBUG_WINDOW_TRANSITIONS_MIN",
+      "at": "com\/android\/server\/wm\/ActivityRecord.java"
+    },
     "-481924678": {
       "message": "handleNotObscuredLocked w: %s, w.mHasSurface: %b, w.isOnScreen(): %b, w.isDisplayedLw(): %b, w.mAttrs.userActivityTimeout: %d",
       "level": "DEBUG",
@@ -2077,6 +2083,12 @@
       "group": "WM_DEBUG_LOCKTASK",
       "at": "com\/android\/server\/wm\/LockTaskController.java"
     },
+    "-315778658": {
+      "message": "transferTouchGesture failed because args transferFromToken or transferToToken is null",
+      "level": "ERROR",
+      "group": "WM_DEBUG_EMBEDDED_WINDOWS",
+      "at": "com\/android\/server\/wm\/WindowManagerService.java"
+    },
     "-312353598": {
       "message": "Executing finish of activity: %s",
       "level": "VERBOSE",
@@ -2191,6 +2203,12 @@
       "group": "WM_DEBUG_ORIENTATION",
       "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
+    "-195654020": {
+      "message": "Attempt to transfer touch gesture with host window not associated with embedded window",
+      "level": "WARN",
+      "group": "WM_DEBUG_EMBEDDED_WINDOWS",
+      "at": "com\/android\/server\/wm\/EmbeddedWindowController.java"
+    },
     "-193782861": {
       "message": "Final remove of window: %s",
       "level": "VERBOSE",
@@ -2251,12 +2269,6 @@
       "group": "WM_DEBUG_STATES",
       "at": "com\/android\/server\/wm\/Task.java"
     },
-    "-134091882": {
-      "message": "Screenshotting Activity %s",
-      "level": "VERBOSE",
-      "group": "WM_DEBUG_BACK_PREVIEW",
-      "at": "com\/android\/server\/wm\/TaskFragment.java"
-    },
     "-125383273": {
       "message": "Content Recording: waiting to record, so do nothing",
       "level": "VERBOSE",
@@ -2298,12 +2310,6 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_ANIM",
       "at": "com\/android\/server\/wm\/WindowState.java"
-    },
-    "-90559682": {
-      "message": "Config is skipping already pausing %s",
-      "level": "VERBOSE",
-      "group": "WM_DEBUG_CONFIGURATION",
-      "at": "com\/android\/server\/wm\/ActivityRecord.java"
     },
     "-87705714": {
       "message": "findFocusedWindow: focusedApp=null using new focus @ %s",
@@ -3241,6 +3247,12 @@
       "group": "WM_DEBUG_FOCUS_LIGHT",
       "at": "com\/android\/server\/wm\/WindowState.java"
     },
+    "701366755": {
+      "message": "Attempt to transfer touch gesture with non-existent embedded window",
+      "level": "WARN",
+      "group": "WM_DEBUG_EMBEDDED_WINDOWS",
+      "at": "com\/android\/server\/wm\/EmbeddedWindowController.java"
+    },
     "704998117": {
       "message": "Failed to create surface control for %s",
       "level": "WARN",
@@ -3553,12 +3565,6 @@
       "group": "WM_ERROR",
       "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
-    "1011462000": {
-      "message": "Re-launching after pause: %s",
-      "level": "VERBOSE",
-      "group": "WM_DEBUG_STATES",
-      "at": "com\/android\/server\/wm\/TaskFragment.java"
-    },
     "1015746067": {
       "message": "Display id=%d is ignoring orientation request for %d, return %d following a per-app override for %s",
       "level": "VERBOSE",
@@ -3594,6 +3600,12 @@
       "level": "WARN",
       "group": "WM_DEBUG_CONFIGURATION",
       "at": "com\/android\/server\/wm\/ActivityRecord.java"
+    },
+    "1042363394": {
+      "message": "Attempt to transfer touch gesture using a host window with no input channel",
+      "level": "WARN",
+      "group": "WM_DEBUG_EMBEDDED_WINDOWS",
+      "at": "com\/android\/server\/wm\/EmbeddedWindowController.java"
     },
     "1046228706": {
       "message": "Defer transition id=%d for TaskFragmentTransaction=%s",
@@ -4039,6 +4051,12 @@
       "group": "WM_DEBUG_WINDOW_TRANSITIONS",
       "at": "com\/android\/server\/wm\/Transition.java"
     },
+    "1473051122": {
+      "message": "Pausing configuration dispatch for  %s",
+      "level": "VERBOSE",
+      "group": "WM_DEBUG_WINDOW_TRANSITIONS_MIN",
+      "at": "com\/android\/server\/wm\/ActivityRecord.java"
+    },
     "1494644409": {
       "message": "  Rejecting as detached: %s",
       "level": "VERBOSE",
@@ -4080,6 +4098,12 @@
       "level": "DEBUG",
       "group": "WM_DEBUG_RECENTS_ANIMATIONS",
       "at": "com\/android\/server\/wm\/RecentsAnimationController.java"
+    },
+    "1520642640": {
+      "message": "Attempt to transfer touch gesture using embedded window with no associated host",
+      "level": "WARN",
+      "group": "WM_DEBUG_EMBEDDED_WINDOWS",
+      "at": "com\/android\/server\/wm\/EmbeddedWindowController.java"
     },
     "1521476038": {
       "message": "Attempted to set flag to a display that does not exist: %d",
@@ -4255,6 +4279,12 @@
       "group": "WM_DEBUG_APP_TRANSITIONS_ANIM",
       "at": "com\/android\/server\/wm\/ActivityRecord.java"
     },
+    "1721036256": {
+      "message": "Attempt to transfer touch gesture using embedded window that has no input channel",
+      "level": "WARN",
+      "group": "WM_DEBUG_EMBEDDED_WINDOWS",
+      "at": "com\/android\/server\/wm\/EmbeddedWindowController.java"
+    },
     "1730300180": {
       "message": "PendingStartTransaction found",
       "level": "VERBOSE",
@@ -4350,6 +4380,12 @@
       "level": "VERBOSE",
       "group": "WM_DEBUG_ANIM",
       "at": "com\/android\/server\/wm\/WindowStateAnimator.java"
+    },
+    "1810872941": {
+      "message": "setWallpaperCropHints: non-existent wallpaper token: %s",
+      "level": "WARN",
+      "group": "WM_ERROR",
+      "at": "com\/android\/server\/wm\/WindowManagerService.java"
     },
     "1820873642": {
       "message": "SyncGroup %d:  Unfinished dependencies: %s",
@@ -4741,6 +4777,9 @@
       "tag": "WindowManager"
     },
     "WM_DEBUG_DREAM": {
+      "tag": "WindowManager"
+    },
+    "WM_DEBUG_EMBEDDED_WINDOWS": {
       "tag": "WindowManager"
     },
     "WM_DEBUG_FOCUS": {

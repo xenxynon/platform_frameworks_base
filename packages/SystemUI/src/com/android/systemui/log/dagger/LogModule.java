@@ -333,7 +333,7 @@ public class LogModule {
     /**
      * Provides a buffer for our connections and disconnections to MediaBrowserService.
      *
-     * See {@link com.android.systemui.media.controls.resume.ResumeMediaBrowser}.
+     * See {@link com.android.systemui.media.controls.domain.resume.ResumeMediaBrowser}.
      */
     @Provides
     @SysUISingleton
@@ -345,7 +345,7 @@ public class LogModule {
     /**
      * Provides a buffer for updates to the media carousel.
      *
-     * See {@link com.android.systemui.media.controls.ui.MediaCarouselController}.
+     * See {@link com.android.systemui.media.controls.ui.controller.MediaCarouselController}.
      */
     @Provides
     @SysUISingleton
@@ -579,6 +579,16 @@ public class LogModule {
         return factory.create("CommunalLog", 250);
     }
 
+    /**
+     * Provides a {@link TableLogBuffer} for communal-related logs.
+     */
+    @Provides
+    @SysUISingleton
+    @CommunalTableLog
+    public static TableLogBuffer provideCommunalTableLogBuffer(TableLogBufferFactory factory) {
+        return factory.create("CommunalTableLog", 250);
+    }
+
     /** Provides a {@link LogBuffer} for display metrics related logs. */
     @Provides
     @SysUISingleton
@@ -617,5 +627,21 @@ public class LogModule {
     @PackageChangeRepoLog
     public static LogBuffer providePackageChangeRepoLogBuffer(LogBufferFactory factory) {
         return factory.create("PackageChangeRepo", 50);
+    }
+
+    /** Provides a {@link LogBuffer} for NavBarButtonClicks. */
+    @Provides
+    @SysUISingleton
+    @NavBarButtonClickLog
+    public static LogBuffer provideNavBarButtonClickLogBuffer(LogBufferFactory factory) {
+        return factory.create("NavBarButtonClick", 50);
+    }
+
+    /** Provides a {@link LogBuffer} for NavBar Orientation Tracking. */
+    @Provides
+    @SysUISingleton
+    @NavbarOrientationTrackingLog
+    public static LogBuffer provideNavbarOrientationTrackingLogBuffer(LogBufferFactory factory) {
+        return factory.create("NavbarOrientationTrackingLog", 50);
     }
 }

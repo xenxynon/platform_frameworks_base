@@ -10,10 +10,24 @@ flag {
 }
 
 flag {
+    name: "resettable_dynamic_properties"
+    namespace: "accessibility"
+    description: "Maintains initial copies of a11yServiceInfo dynamic properties so they can reset on disconnect."
+    bug: "312386990"
+}
+
+flag {
     name: "cleanup_a11y_overlays"
     namespace: "accessibility"
     description: "Removes all attached accessibility overlays when a service is removed."
     bug: "271490102"
+}
+
+flag {
+    name: "compute_window_changes_on_a11y"
+    namespace: "accessibility"
+    description: "Computes accessibility window changes in accessibility instead of wm package."
+    bug: "322444245"
 }
 
 flag {
@@ -42,6 +56,20 @@ flag {
     namespace: "accessibility"
     description: "Whether to enable multi-finger-multi-tap gesture for magnification"
     bug: "257274411"
+}
+
+flag {
+    name: "fix_drag_pointer_when_ending_drag"
+    namespace: "accessibility"
+    description: "Send the correct pointer id when transitioning from dragging to delegating states."
+    bug: "300002193"
+}
+
+flag {
+    name: "fullscreen_fling_gesture"
+    namespace: "accessibility"
+    description: "When true, adds a fling gesture animation for fullscreen magnification"
+    bug: "319175022"
 }
 
 flag {

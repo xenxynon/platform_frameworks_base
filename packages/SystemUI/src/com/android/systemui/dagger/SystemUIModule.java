@@ -17,6 +17,7 @@
 package com.android.systemui.dagger;
 
 import android.app.INotificationManager;
+import android.app.Service;
 import android.content.Context;
 import android.service.dreams.IDreamManager;
 
@@ -27,6 +28,8 @@ import com.android.keyguard.dagger.ClockRegistryModule;
 import com.android.keyguard.dagger.KeyguardBouncerComponent;
 import com.android.systemui.BootCompleteCache;
 import com.android.systemui.BootCompleteCacheImpl;
+import com.android.systemui.CameraProtectionModule;
+import com.android.systemui.SystemUISecondaryUserService;
 import com.android.systemui.accessibility.AccessibilityModule;
 import com.android.systemui.accessibility.data.repository.AccessibilityRepositoryModule;
 import com.android.systemui.appops.dagger.AppOpsModule;
@@ -57,6 +60,7 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.flags.FlagDependenciesModule;
 import com.android.systemui.flags.FlagsModule;
+import com.android.systemui.inputmethod.InputMethodModule;
 import com.android.systemui.keyboard.KeyboardModule;
 import com.android.systemui.keyevent.data.repository.KeyEventRepositoryModule;
 import com.android.systemui.keyguard.ui.view.layout.blueprints.KeyguardBlueprintModule;
@@ -66,6 +70,7 @@ import com.android.systemui.log.dagger.MonitorLog;
 import com.android.systemui.log.table.TableLogBuffer;
 import com.android.systemui.mediaprojection.appselector.MediaProjectionModule;
 import com.android.systemui.mediaprojection.taskswitcher.MediaProjectionTaskSwitcherModule;
+import com.android.systemui.model.SceneContainerPlugin;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.motiontool.MotionToolModule;
 import com.android.systemui.navigationbar.NavigationBarComponent;
@@ -83,6 +88,8 @@ import com.android.systemui.qs.footer.dagger.FooterActionsModule;
 import com.android.systemui.recents.Recents;
 import com.android.systemui.recordissue.RecordIssueModule;
 import com.android.systemui.retail.dagger.RetailModeModule;
+import com.android.systemui.scene.shared.model.SceneDataSource;
+import com.android.systemui.scene.shared.model.SceneDataSourceDelegator;
 import com.android.systemui.scene.ui.view.WindowRootViewComponent;
 import com.android.systemui.screenrecord.ScreenRecordModule;
 import com.android.systemui.screenshot.dagger.ScreenshotModule;
@@ -133,7 +140,7 @@ import com.android.systemui.user.domain.UserDomainLayerModule;
 import com.android.systemui.util.EventLogModule;
 import com.android.systemui.util.concurrency.SysUIConcurrencyModule;
 import com.android.systemui.util.dagger.UtilModule;
-import com.android.systemui.util.kotlin.CoroutinesModule;
+import com.android.systemui.util.kotlin.SysUICoroutinesModule;
 import com.android.systemui.util.reference.ReferenceModule;
 import com.android.systemui.util.sensors.SensorModule;
 import com.android.systemui.util.settings.SettingsUtilModule;
@@ -147,6 +154,8 @@ import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.ClassKey;
+import dagger.multibindings.IntoMap;
 
 import java.util.Collections;
 import java.util.Optional;
@@ -175,6 +184,7 @@ import javax.inject.Named;
         BouncerInteractorModule.class,
         BouncerRepositoryModule.class,
         BouncerViewModule.class,
+        CameraProtectionModule.class,
         ClipboardOverlayModule.class,
         ClockRegistryModule.class,
         CommunalModule.class,
@@ -182,7 +192,6 @@ import javax.inject.Named;
         ConfigurationControllerModule.class,
         ConnectivityModule.class,
         ControlsModule.class,
-        CoroutinesModule.class,
         DemoModeModule.class,
         DeviceEntryModule.class,
         DisableFlagsModule.class,
@@ -193,6 +202,7 @@ import javax.inject.Named;
         FlagsModule.class,
         FlagDependenciesModule.class,
         FooterActionsModule.class,
+        InputMethodModule.class,
         KeyEventRepositoryModule.class,
         KeyboardModule.class,
         KeyguardBlueprintModule.class,
@@ -228,6 +238,7 @@ import javax.inject.Named;
         StatusBarWindowModule.class,
         SystemPropertiesFlagsModule.class,
         SysUIConcurrencyModule.class,
+        SysUICoroutinesModule.class,
         SysUIUnfoldModule.class,
         TelephonyRepositoryModule.class,
         TemporaryDisplayModule.class,
@@ -268,8 +279,11 @@ public abstract class SystemUIModule {
 
     @SysUISingleton
     @Provides
-    static SysUiState provideSysUiState(DisplayTracker displayTracker, DumpManager dumpManager) {
-        final SysUiState state = new SysUiState(displayTracker);
+    static SysUiState provideSysUiState(
+            DisplayTracker displayTracker,
+            DumpManager dumpManager,
+            SceneContainerPlugin sceneContainerPlugin) {
+        final SysUiState state = new SysUiState(displayTracker, sceneContainerPlugin);
         dumpManager.registerDumpable(state);
         return state;
     }
@@ -376,4 +390,12 @@ public abstract class SystemUIModule {
     @Binds
     abstract LargeScreenShadeInterpolator largeScreensShadeInterpolator(
             LargeScreenShadeInterpolatorImpl impl);
+
+    @Binds
+    @IntoMap
+    @ClassKey(SystemUISecondaryUserService.class)
+    abstract Service bindsSystemUISecondaryUserService(SystemUISecondaryUserService service);
+
+    @Binds
+    abstract SceneDataSource bindSceneDataSource(SceneDataSourceDelegator delegator);
 }

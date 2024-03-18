@@ -272,7 +272,9 @@ class AndroidPackageTest : ParcelableComponentTest(AndroidPackage::class, Packag
         AndroidPackage::hasPreserveLegacyExternalStorage,
         AndroidPackage::hasRequestForegroundServiceExemption,
         AndroidPackage::hasRequestRawExternalStorageAccess,
-        AndroidPackage::isUpdatableSystem
+        AndroidPackage::isUpdatableSystem,
+        AndroidPackage::getEmergencyInstaller,
+        AndroidPackage::isAllowCrossUidActivitySwitchFromBelow,
     )
 
     override fun extraParams() = listOf(

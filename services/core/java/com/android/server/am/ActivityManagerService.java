@@ -135,6 +135,7 @@ import static android.view.Display.INVALID_DISPLAY;
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_CONFIGURATION;
 import static com.android.internal.util.FrameworkStatsLog.UNSAFE_INTENT_EVENT_REPORTED__EVENT_TYPE__INTERNAL_NON_EXPORTED_COMPONENT_MATCH;
 import static com.android.internal.util.FrameworkStatsLog.UNSAFE_INTENT_EVENT_REPORTED__EVENT_TYPE__NEW_MUTABLE_IMPLICIT_PENDING_INTENT_RETRIEVED;
+import static com.android.sdksandbox.flags.Flags.sdkSandboxInstrumentationInfo;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_ALL;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_ALLOWLISTS;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BACKGROUND_CHECK;
@@ -186,6 +187,7 @@ import static com.android.server.wm.ActivityTaskManagerService.DUMP_TOP_RESUMED_
 import static com.android.server.wm.ActivityTaskManagerService.DUMP_VISIBLE_ACTIVITIES;
 import static com.android.server.wm.ActivityTaskManagerService.RELAUNCH_REASON_NONE;
 import static com.android.server.wm.ActivityTaskManagerService.relaunchReasonToString;
+import static com.android.systemui.shared.Flags.enableHomeDelay;
 
 import android.Manifest;
 import android.Manifest.permission;
@@ -475,6 +477,8 @@ import com.android.server.pm.pkg.SELinuxUtil;
 import com.android.server.pm.snapshot.PackageDataSnapshot;
 import com.android.server.power.stats.BatteryStatsImpl;
 import com.android.server.sdksandbox.SdkSandboxManagerLocal;
+import com.android.server.stats.pull.StatsPullAtomService;
+import com.android.server.stats.pull.StatsPullAtomServiceInternal;
 import com.android.server.uri.GrantUri;
 import com.android.server.uri.NeededUriGrants;
 import com.android.server.uri.UriGrantsManagerInternal;
@@ -523,6 +527,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -932,6 +937,15 @@ public class ActivityManagerService extends IActivityManager.Stub
     @GuardedBy("this")
     final ComponentAliasResolver mComponentAliasResolver;
 
+    private static final long HOME_LAUNCH_TIMEOUT_MS = 15000;
+    private final AtomicBoolean mHasHomeDelay = new AtomicBoolean(false);
+
+    /**
+     * Tracks all users with computed color resources by ThemeOverlaycvontroller
+     */
+    @GuardedBy("this")
+    private final Set<Integer> mThemeOverlayReadyUsers = new HashSet<>();
+
     /**
      * Tracks association information for a particular package along with debuggability.
      * <p> Associations for a package A are allowed to package B if B is part of the
@@ -1330,6 +1344,8 @@ public class ActivityManagerService extends IActivityManager.Stub
      */
     final BatteryStatsService mBatteryStatsService;
 
+    StatsPullAtomServiceInternal mStatsPullAtomServiceInternal;
+
     /**
      * Information about component usage
      */
@@ -1708,6 +1724,8 @@ public class ActivityManagerService extends IActivityManager.Stub
     static final int REMOVE_UID_FROM_OBSERVER_MSG = 81;
     static final int BIND_APPLICATION_TIMEOUT_SOFT_MSG = 82;
     static final int BIND_APPLICATION_TIMEOUT_HARD_MSG = 83;
+    static final int SERVICE_FGS_TIMEOUT_MSG = 84;
+    static final int SERVICE_FGS_ANR_TIMEOUT_MSG = 85;
 
     static final int FIRST_BROADCAST_QUEUE_MSG = 200;
 
@@ -1769,7 +1787,7 @@ public class ActivityManagerService extends IActivityManager.Stub
     @GuardedBy("mProcLock")
     private long mLastBinderHeavyHitterAutoSamplerStart = 0L;
 
-    final AppProfiler mAppProfiler;
+    AppProfiler mAppProfiler;
 
     private static final int INDEX_NATIVE_PSS = 0;
     private static final int INDEX_NATIVE_SWAP_PSS = 1;
@@ -2070,6 +2088,12 @@ public class ActivityManagerService extends IActivityManager.Stub
                 case BIND_APPLICATION_TIMEOUT_HARD_MSG: {
                     handleBindApplicationTimeoutHard((ProcessRecord) msg.obj);
                 } break;
+                case SERVICE_FGS_TIMEOUT_MSG: {
+                    mServices.onFgsTimeout((ServiceRecord) msg.obj);
+                } break;
+                case SERVICE_FGS_ANR_TIMEOUT_MSG: {
+                    mServices.onFgsAnrTimeout((ServiceRecord) msg.obj);
+                } break;
             }
         }
     }
@@ -2118,7 +2142,8 @@ public class ActivityManagerService extends IActivityManager.Stub
         // Start watching app ops after we and the package manager are up and running.
         mAppOpsService.startWatchingMode(AppOpsManager.OP_RUN_IN_BACKGROUND, null,
                 new IAppOpsCallback.Stub() {
-                    @Override public void opChanged(int op, int uid, String packageName) {
+                    @Override public void opChanged(int op, int uid, String packageName,
+                            String persistentDeviceId) {
                         if (op == AppOpsManager.OP_RUN_IN_BACKGROUND && packageName != null) {
                             if (getAppOpsManager().checkOpNoThrow(op, uid, packageName)
                                     != AppOpsManager.MODE_ALLOWED) {
@@ -2132,7 +2157,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         mAppOpsService.startWatchingActive(cameraOp, new IAppOpsActiveCallback.Stub() {
             @Override
             public void opActiveChanged(int op, int uid, String packageName, String attributionTag,
-                    boolean active, @AttributionFlags int attributionFlags,
+                    int virtualDeviceId, boolean active, @AttributionFlags int attributionFlags,
                     int attributionChainId) {
                 cameraActiveChanged(uid, active);
             }
@@ -2348,6 +2373,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                 mService.startBroadcastObservers();
             } else if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
                 mService.mPackageWatchdog.onPackagesReady();
+                mService.scheduleHomeTimeout();
             }
         }
 
@@ -2514,7 +2540,7 @@ public class ActivityManagerService extends IActivityManager.Stub
         mInjector = injector;
         mContext = mInjector.getContext();
         mUiContext = null;
-        mAppErrors = null;
+        mAppErrors = injector.getAppErrors();
         mPackageWatchdog = null;
         mAppOpsService = mInjector.getAppOpsService(null /* recentAccessesFile */,
             null /* storageFile */, null /* handler */);
@@ -2532,7 +2558,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                 ? new OomAdjusterModernImpl(this, mProcessList, activeUids, handlerThread)
                 : new OomAdjuster(this, mProcessList, activeUids, handlerThread);
 
-        mIntentFirewall = null;
+        mIntentFirewall = injector.getIntentFirewall();
         mProcessStats = new ProcessStatsService(this, mContext.getCacheDir());
         mCpHelper = new ContentProviderHelper(this, false);
         mServices = mInjector.getActiveServices(this);
@@ -4917,11 +4943,7 @@ public class ActivityManagerService extends IActivityManager.Stub
             if (!mConstants.mEnableWaitForFinishAttachApplication) {
                 finishAttachApplicationInner(startSeq, callingUid, pid);
             }
-
-            // Temporarily disable sending BOOT_COMPLETED to see if this was impacting perf tests
-            if (false) {
-                maybeSendBootCompletedLocked(app);
-            }
+            maybeSendBootCompletedLocked(app);
         } catch (Exception e) {
             // We need kill the process group here. (b/148588589)
             Slog.wtf(TAG, "Exception thrown during bind of " + app, e);
@@ -5178,13 +5200,11 @@ public class ActivityManagerService extends IActivityManager.Stub
         intent.addFlags(Intent.FLAG_RECEIVER_NO_ABORT
                 | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND
                 | Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
-        final BroadcastOptions bOptions = mUserController.getTemporaryAppAllowlistBroadcastOptions(
-                reason);
 
         broadcastIntentLocked(null, null, null, intent, null, null, 0, null, null,
                 new String[]{android.Manifest.permission.RECEIVE_BOOT_COMPLETED},
                 null, null, AppOpsManager.OP_NONE,
-                bOptions.toBundle(), true,
+                null, true,
                 false, MY_PID, SYSTEM_UID,
                 SYSTEM_UID, MY_PID, app.userId);
     }
@@ -5392,6 +5412,61 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
     }
 
+    /**
+     * Starts Home if there is no completion signal from ThemeOverlayController
+     */
+    private void scheduleHomeTimeout() {
+        if (enableHomeDelay() && mHasHomeDelay.compareAndSet(false, true)) {
+            int userId = mUserController.getCurrentUserId();
+            mHandler.postDelayed(() -> {
+                if (!isThemeOverlayReady(userId)) {
+                    Slog.d(TAG,
+                            "ThemeHomeDelay: ThemeOverlayController not responding, launching "
+                                    + "Home after "
+                                    + HOME_LAUNCH_TIMEOUT_MS + "ms");
+                    setThemeOverlayReady(userId);
+                }
+            }, HOME_LAUNCH_TIMEOUT_MS);
+        }
+    }
+
+    /**
+     * Used by ThemeOverlayController to notify when color
+     * palette is ready.
+     *
+     * @param userId The ID of the user where ThemeOverlayController is ready.
+     *
+     * @throws RemoteException
+     *
+     * @hide
+     */
+    @Override
+    public void setThemeOverlayReady(@UserIdInt int userId) {
+        enforceCallingPermission(Manifest.permission.SET_THEME_OVERLAY_CONTROLLER_READY,
+                "setThemeOverlayReady");
+
+        boolean updateUser;
+        synchronized (mThemeOverlayReadyUsers) {
+            updateUser = mThemeOverlayReadyUsers.add(userId);
+        }
+
+        if (updateUser && enableHomeDelay()) {
+            mAtmInternal.startHomeOnAllDisplays(userId, "setThemeOverlayReady");
+        }
+    }
+
+    /**
+     * Returns current state of ThemeOverlayController color
+     * palette readiness.
+     *
+     * @hide
+     */
+    public boolean isThemeOverlayReady(int userId) {
+        synchronized (mThemeOverlayReadyUsers) {
+            return mThemeOverlayReadyUsers.contains(userId);
+        }
+    }
+
     final void ensureBootCompleted() {
         boolean booting;
         boolean enableScreen;
@@ -5491,6 +5566,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                         }
                     }
                     intents[i] = new Intent(intent);
+                    intents[i].removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH);
                 }
             }
             if (resolvedTypes != null && resolvedTypes.length != intents.length) {
@@ -13701,9 +13777,13 @@ public class ActivityManagerService extends IActivityManager.Stub
             throws TransactionTooLargeException {
         enforceNotIsolatedCaller("startService");
         enforceAllowedToStartOrBindServiceIfSdkSandbox(service);
-        // Refuse possible leaked file descriptors
-        if (service != null && service.hasFileDescriptors() == true) {
-            throw new IllegalArgumentException("File descriptors passed in Intent");
+        if (service != null) {
+            // Refuse possible leaked file descriptors
+            if (service.hasFileDescriptors()) {
+                throw new IllegalArgumentException("File descriptors passed in Intent");
+            }
+            // Remove existing mismatch flag so it can be properly updated later
+            service.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH);
         }
 
         if (callingPackage == null) {
@@ -13839,6 +13919,13 @@ public class ActivityManagerService extends IActivityManager.Stub
     }
 
     @Override
+    public boolean hasServiceTimeLimitExceeded(ComponentName className, IBinder token) {
+        synchronized (this) {
+            return mServices.hasServiceTimedOutLocked(className, token);
+        }
+    }
+
+    @Override
     public int handleIncomingUser(int callingPid, int callingUid, int userId, boolean allowAll,
             boolean requireFull, String name, String callerPackage) {
         return mUserController.handleIncomingUser(callingPid, callingUid, userId, allowAll,
@@ -13875,6 +13962,11 @@ public class ActivityManagerService extends IActivityManager.Stub
                 "isSingleton(" + componentProcessName + ", " + aInfo + ", " + className + ", 0x"
                 + Integer.toHexString(flags) + ") = " + result);
         return result;
+    }
+
+    boolean isSystemUserOnly(int flags) {
+        return android.multiuser.Flags.enableSystemUserOnlyForServicesAndProviders()
+                && (flags & ServiceInfo.FLAG_SYSTEM_USER_ONLY) != 0;
     }
 
     /**
@@ -13920,9 +14012,13 @@ public class ActivityManagerService extends IActivityManager.Stub
         enforceNotIsolatedCaller("bindService");
         enforceAllowedToStartOrBindServiceIfSdkSandbox(service);
 
-        // Refuse possible leaked file descriptors
-        if (service != null && service.hasFileDescriptors() == true) {
-            throw new IllegalArgumentException("File descriptors passed in Intent");
+        if (service != null) {
+            // Refuse possible leaked file descriptors
+            if (service.hasFileDescriptors()) {
+                throw new IllegalArgumentException("File descriptors passed in Intent");
+            }
+            // Remove existing mismatch flag so it can be properly updated later
+            service.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH);
         }
 
         if (callingPackage == null) {
@@ -13996,13 +14092,15 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
     }
 
-    public void serviceDoneExecuting(IBinder token, int type, int startId, int res) {
+    @Override
+    public void serviceDoneExecuting(IBinder token, int type, int startId, int res, Intent intent) {
         synchronized(this) {
             if (!(token instanceof ServiceRecord)) {
                 Slog.e(TAG, "serviceDoneExecuting: Invalid service token=" + token);
                 throw new IllegalArgumentException("Invalid service token");
             }
-            mServices.serviceDoneExecutingLocked((ServiceRecord) token, type, startId, res, false);
+            mServices.serviceDoneExecutingLocked((ServiceRecord) token, type, startId, res, false,
+                    intent);
         }
     }
 
@@ -15821,9 +15919,13 @@ public class ActivityManagerService extends IActivityManager.Stub
     }
 
     final Intent verifyBroadcastLocked(Intent intent) {
-        // Refuse possible leaked file descriptors
-        if (intent != null && intent.hasFileDescriptors() == true) {
-            throw new IllegalArgumentException("File descriptors passed in Intent");
+        if (intent != null) {
+            // Refuse possible leaked file descriptors
+            if (intent.hasFileDescriptors()) {
+                throw new IllegalArgumentException("File descriptors passed in Intent");
+            }
+            // Remove existing mismatch flag so it can be properly updated later
+            intent.removeExtendedFlags(Intent.EXTENDED_FLAG_FILTER_MISMATCH);
         }
 
         int flags = intent.getFlags();
@@ -16246,10 +16348,22 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         final ApplicationInfo sdkSandboxInfo;
+        final String processName;
         try {
-            sdkSandboxInfo =
-                    sandboxManagerLocal.getSdkSandboxApplicationInfoForInstrumentation(
-                            sdkSandboxClientAppInfo, isSdkInSandbox);
+            if (sdkSandboxInstrumentationInfo()) {
+                sdkSandboxInfo =
+                        sandboxManagerLocal.getSdkSandboxApplicationInfoForInstrumentation(
+                                sdkSandboxClientAppInfo, isSdkInSandbox);
+                processName = sdkSandboxInfo.processName;
+            } else {
+                final PackageManager pm = mContext.getPackageManager();
+                sdkSandboxInfo =
+                        pm.getApplicationInfoAsUser(pm.getSdkSandboxPackageName(), 0, userId);
+                processName =
+                        sandboxManagerLocal.getSdkSandboxProcessNameForInstrumentation(
+                                sdkSandboxClientAppInfo);
+                sdkSandboxInfo.uid = Process.toSdkSandboxUid(sdkSandboxClientAppInfo.uid);
+            }
         } catch (NameNotFoundException e) {
             reportStartInstrumentationFailureLocked(
                     watcher, className, "Can't find SdkSandbox package");
@@ -16258,7 +16372,7 @@ public class ActivityManagerService extends IActivityManager.Stub
 
         ActiveInstrumentation activeInstr = new ActiveInstrumentation(this);
         activeInstr.mClass = className;
-        activeInstr.mTargetProcesses = new String[]{sdkSandboxInfo.processName};
+        activeInstr.mTargetProcesses = new String[]{processName};
         activeInstr.mTargetInfo = sdkSandboxInfo;
         activeInstr.mIsSdkInSandbox = isSdkInSandbox;
         activeInstr.mProfileFile = profileFile;
@@ -16301,7 +16415,7 @@ public class ActivityManagerService extends IActivityManager.Stub
 
                 ProcessRecord app = addAppLocked(
                         sdkSandboxInfo,
-                        sdkSandboxInfo.processName,
+                        processName,
                         /* isolated= */ false,
                         /* isSdkSandbox= */ true,
                         sdkSandboxInfo.uid,
@@ -16665,6 +16779,21 @@ public class ActivityManagerService extends IActivityManager.Stub
                 final @ProcessCapability int capability) {
         mBatteryStatsService.noteUidProcessState(uid, state);
         mAppOpsService.updateUidProcState(uid, state, capability);
+        if (StatsPullAtomService.ENABLE_MOBILE_DATA_STATS_AGGREGATED_PULLER) {
+            try {
+                if (mStatsPullAtomServiceInternal == null) {
+                    mStatsPullAtomServiceInternal = LocalServices.getService(
+                            StatsPullAtomServiceInternal.class);
+                }
+                if (mStatsPullAtomServiceInternal != null) {
+                    mStatsPullAtomServiceInternal.noteUidProcessState(uid, state);
+                } else {
+                    Slog.d(TAG, "StatsPullAtomService not ready yet");
+                }
+            } catch (Exception e) {
+                Slog.e(TAG, "Exception during logging uid proc state change event", e);
+            }
+        }
         if (mTrackingAssociations) {
             for (int i1=0, N1=mAssociations.size(); i1<N1; i1++) {
                 ArrayMap<ComponentName, SparseArray<ArrayMap<String, Association>>> targetComponents
@@ -18109,6 +18238,10 @@ public class ActivityManagerService extends IActivityManager.Stub
             mAtmInternal.onUserStopped(userId);
             // Clean up various services by removing the user
             mBatteryStatsService.onUserRemoved(userId);
+
+            synchronized (mThemeOverlayReadyUsers) {
+                mThemeOverlayReadyUsers.remove(userId);
+            }
         }
 
         @Override
@@ -19472,6 +19605,11 @@ public class ActivityManagerService extends IActivityManager.Stub
             return ActivityManagerService.this.clearApplicationUserData(packageName, keepState,
                     isRestore, observer, userId);
         }
+
+        @Override
+        public boolean isThemeOverlayReady(int userId) {
+            return ActivityManagerService.this.isThemeOverlayReady(userId);
+        }
     }
 
     long inputDispatchingTimedOut(int pid, final boolean aboveSystem, TimeoutRecord timeoutRecord) {
@@ -20332,6 +20470,36 @@ public class ActivityManagerService extends IActivityManager.Stub
                         ProcessList.SCHED_GROUP_BACKGROUND);
             }
             return broadcastQueues;
+        }
+
+        /** @see Binder#getCallingUid */
+        public int getCallingUid() {
+            return Binder.getCallingUid();
+        }
+
+        /** @see Binder#getCallingPid */
+        public int getCallingPid() {
+            return Binder.getCallingUid();
+        }
+
+        /** @see Binder#clearCallingIdentity */
+        public long clearCallingIdentity() {
+            return Binder.clearCallingIdentity();
+        }
+
+        /** @see Binder#clearCallingIdentity */
+        public void restoreCallingIdentity(long ident) {
+            Binder.restoreCallingIdentity(ident);
+        }
+
+        /** @return the default instance of AppErrors */
+        public AppErrors getAppErrors() {
+            return null;
+        }
+
+        /** @return the default instance of intent firewall */
+        public IntentFirewall getIntentFirewall() {
+            return null;
         }
     }
 

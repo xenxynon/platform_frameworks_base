@@ -17,22 +17,26 @@
 package com.android.server.os;
 
 import android.app.admin.flags.Flags;
-import static android.app.admin.flags.Flags.onboardingBugreportV2Enabled;
 
 import static com.android.compatibility.common.util.SystemUtil.runWithShellPermissionIdentity;
 
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertThrows;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 import android.app.role.RoleManager;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.BugreportManager.BugreportCallback;
 import android.os.IBinder;
 import android.os.IDumpstateListener;
 import android.os.Process;
 import android.os.RemoteException;
+import android.platform.test.annotations.RequiresFlagsDisabled;
 import android.platform.test.annotations.RequiresFlagsEnabled;
 import android.platform.test.flag.junit.CheckFlagsRule;
 import android.platform.test.flag.junit.DeviceFlagsValueProvider;
@@ -45,9 +49,12 @@ import androidx.test.runner.AndroidJUnit4;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import java.io.FileDescriptor;
 import java.util.concurrent.CompletableFuture;
@@ -66,6 +73,9 @@ public class BugreportManagerServiceImplTest {
     private BugreportManagerServiceImpl mService;
     private BugreportManagerServiceImpl.BugreportFileManager mBugreportFileManager;
 
+    @Mock
+    private PackageManager mPackageManager;
+
     private int mCallingUid = 1234;
     private String mCallingPackage  = "test.package";
     private AtomicFile mMappingFile;
@@ -74,7 +84,8 @@ public class BugreportManagerServiceImplTest {
     private String mBugreportFile2 = "bugreport-file2.zip";
 
     @Before
-    public void setUp() {
+    public void setUp() throws Exception {
+        MockitoAnnotations.initMocks(this);
         mContext = InstrumentationRegistry.getInstrumentation().getContext();
         mMappingFile = new AtomicFile(mContext.getFilesDir(), "bugreport-mapping.xml");
         ArraySet<String> mAllowlistedPackages = new ArraySet<>();
@@ -83,6 +94,7 @@ public class BugreportManagerServiceImplTest {
                 new BugreportManagerServiceImpl.Injector(mContext, mAllowlistedPackages,
                         mMappingFile));
         mBugreportFileManager = new BugreportManagerServiceImpl.BugreportFileManager(mMappingFile);
+        when(mPackageManager.getPackageUidAsUser(anyString(), anyInt())).thenReturn(mCallingUid);
     }
 
     @After
@@ -108,6 +120,7 @@ public class BugreportManagerServiceImplTest {
     }
 
     @Test
+    @RequiresFlagsDisabled(Flags.FLAG_ONBOARDING_BUGREPORT_V2_ENABLED)
     public void testBugreportFileManagerFileExists() {
         Pair<Integer, String> callingInfo = new Pair<>(mCallingUid, mCallingPackage);
         mBugreportFileManager.addBugreportFileForCaller(
@@ -115,30 +128,33 @@ public class BugreportManagerServiceImplTest {
 
         assertThrows(IllegalArgumentException.class, () ->
                 mBugreportFileManager.ensureCallerPreviouslyGeneratedFile(
-                        mContext, callingInfo, Process.myUserHandle().getIdentifier(),
-                        "unknown-file.zip", /* forceUpdateMapping= */ true));
+                        mContext, mPackageManager,  callingInfo,
+                        Process.myUserHandle().getIdentifier(), "unknown-file.zip",
+                        /* forceUpdateMapping= */ true));
 
         // No exception should be thrown.
         mBugreportFileManager.ensureCallerPreviouslyGeneratedFile(
-                mContext, callingInfo, mContext.getUserId(), mBugreportFile,
+                mContext, mPackageManager, callingInfo, mContext.getUserId(), mBugreportFile,
                 /* forceUpdateMapping= */ true);
     }
 
     @Test
     @RequiresFlagsEnabled(Flags.FLAG_ONBOARDING_BUGREPORT_V2_ENABLED)
+    @Ignore
     public void testBugreportFileManagerKeepFilesOnRetrieval() {
         Pair<Integer, String> callingInfo = new Pair<>(mCallingUid, mCallingPackage);
         mBugreportFileManager.addBugreportFileForCaller(
                 callingInfo, mBugreportFile, /* keepOnRetrieval= */ true);
 
         mBugreportFileManager.ensureCallerPreviouslyGeneratedFile(
-                mContext, callingInfo, mContext.getUserId(), mBugreportFile,
+                mContext, mPackageManager, callingInfo, mContext.getUserId(), mBugreportFile,
                 /* forceUpdateMapping= */ true);
 
         assertThat(mBugreportFileManager.mBugreportFilesToPersist).containsExactly(mBugreportFile);
     }
 
     @Test
+    @RequiresFlagsDisabled(Flags.FLAG_ONBOARDING_BUGREPORT_V2_ENABLED)
     public void testBugreportFileManagerMultipleFiles() {
         Pair<Integer, String> callingInfo = new Pair<>(mCallingUid, mCallingPackage);
         mBugreportFileManager.addBugreportFileForCaller(
@@ -148,10 +164,10 @@ public class BugreportManagerServiceImplTest {
 
         // No exception should be thrown.
         mBugreportFileManager.ensureCallerPreviouslyGeneratedFile(
-                mContext, callingInfo, mContext.getUserId(), mBugreportFile,
+                mContext, mPackageManager, callingInfo, mContext.getUserId(), mBugreportFile,
                 /* forceUpdateMapping= */ true);
         mBugreportFileManager.ensureCallerPreviouslyGeneratedFile(
-                mContext, callingInfo, mContext.getUserId(), mBugreportFile2,
+                mContext, mPackageManager, callingInfo, mContext.getUserId(), mBugreportFile2,
                 /* forceUpdateMapping= */ true);
     }
 
@@ -160,8 +176,9 @@ public class BugreportManagerServiceImplTest {
         Pair<Integer, String> callingInfo = new Pair<>(mCallingUid, mCallingPackage);
         assertThrows(IllegalArgumentException.class,
                 () -> mBugreportFileManager.ensureCallerPreviouslyGeneratedFile(
-                        mContext, callingInfo, Process.myUserHandle().getIdentifier(),
-                        "test-file.zip", /* forceUpdateMapping= */ true));
+                        mContext, mPackageManager, callingInfo,
+                        Process.myUserHandle().getIdentifier(), "test-file.zip",
+                        /* forceUpdateMapping= */ true));
     }
 
     @Test

@@ -27,6 +27,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 
 /**
  * [SceneTransitionLayout] is a container that automatically animates its content whenever its state
@@ -38,7 +42,8 @@ import androidx.compose.ui.platform.LocalDensity
  * UI code.
  *
  * @param state the state of this layout.
- * @param edgeDetector the edge detector used to detect which edge a swipe is started from, if any.
+ * @param swipeSourceDetector the edge detector used to detect which edge a swipe is started from,
+ *   if any.
  * @param transitionInterceptionThreshold used during a scene transition. For the scene to be
  *   intercepted, the progress value must be above the threshold, and below (1 - threshold).
  * @param scenes the configuration of the different scenes of this layout.
@@ -48,14 +53,14 @@ import androidx.compose.ui.platform.LocalDensity
 fun SceneTransitionLayout(
     state: SceneTransitionLayoutState,
     modifier: Modifier = Modifier,
-    edgeDetector: EdgeDetector = DefaultEdgeDetector,
+    swipeSourceDetector: SwipeSourceDetector = DefaultEdgeDetector,
     @FloatRange(from = 0.0, to = 0.5) transitionInterceptionThreshold: Float = 0f,
     scenes: SceneTransitionLayoutScope.() -> Unit,
 ) {
     SceneTransitionLayoutForTesting(
         state,
         modifier,
-        edgeDetector,
+        swipeSourceDetector,
         transitionInterceptionThreshold,
         onLayoutImpl = null,
         scenes,
@@ -76,7 +81,8 @@ fun SceneTransitionLayout(
  *   This is called when the user commits a transition to a new scene because of a [UserAction], for
  *   instance by triggering back navigation or by swiping to a new scene.
  * @param transitions the definition of the transitions used to animate a change of scene.
- * @param edgeDetector the edge detector used to detect which edge a swipe is started from, if any.
+ * @param swipeSourceDetector the source detector used to detect which source a swipe is started
+ *   from, if any.
  * @param transitionInterceptionThreshold used during a scene transition. For the scene to be
  *   intercepted, the progress value must be above the threshold, and below (1 - threshold).
  * @param scenes the configuration of the different scenes of this layout.
@@ -87,7 +93,7 @@ fun SceneTransitionLayout(
     onChangeScene: (SceneKey) -> Unit,
     transitions: SceneTransitions,
     modifier: Modifier = Modifier,
-    edgeDetector: EdgeDetector = DefaultEdgeDetector,
+    swipeSourceDetector: SwipeSourceDetector = DefaultEdgeDetector,
     @FloatRange(from = 0.0, to = 0.5) transitionInterceptionThreshold: Float = 0f,
     scenes: SceneTransitionLayoutScope.() -> Unit,
 ) {
@@ -95,7 +101,7 @@ fun SceneTransitionLayout(
     SceneTransitionLayout(
         state,
         modifier,
-        edgeDetector,
+        swipeSourceDetector,
         transitionInterceptionThreshold,
         scenes,
     )
@@ -113,7 +119,7 @@ interface SceneTransitionLayoutScope {
      */
     fun scene(
         key: SceneKey,
-        userActions: Map<UserAction, SceneKey> = emptyMap(),
+        userActions: Map<UserAction, UserActionResult> = emptyMap(),
         content: @Composable SceneScope.() -> Unit,
     )
 }
@@ -326,7 +332,11 @@ interface ElementBoxScope {
 @Stable @ElementDsl interface MovableElementContentScope : BaseSceneScope, ElementBoxScope
 
 /** An action performed by the user. */
-sealed interface UserAction
+sealed interface UserAction {
+    infix fun to(scene: SceneKey): Pair<UserAction, UserActionResult> {
+        return this to UserActionResult(toScene = scene)
+    }
+}
 
 /** The user navigated back, either using a gesture or by triggering a KEYCODE_BACK event. */
 data object Back : UserAction
@@ -335,7 +345,7 @@ data object Back : UserAction
 data class Swipe(
     val direction: SwipeDirection,
     val pointerCount: Int = 1,
-    val fromEdge: Edge? = null,
+    val fromSource: SwipeSource? = null,
 ) : UserAction {
     companion object {
         val Left = Swipe(SwipeDirection.Left)
@@ -353,6 +363,70 @@ enum class SwipeDirection(val orientation: Orientation) {
 }
 
 /**
+ * The source of a Swipe.
+ *
+ * Important: This can be anything that can be returned by any [SwipeSourceDetector], but this must
+ * implement [equals] and [hashCode]. Note that those can be trivially implemented using data
+ * classes.
+ */
+interface SwipeSource {
+    // Require equals() and hashCode() to be implemented.
+    override fun equals(other: Any?): Boolean
+
+    override fun hashCode(): Int
+}
+
+interface SwipeSourceDetector {
+    /**
+     * Return the [SwipeSource] associated to [position] inside a layout of size [layoutSize], given
+     * [density] and [orientation].
+     */
+    fun source(
+        layoutSize: IntSize,
+        position: IntOffset,
+        density: Density,
+        orientation: Orientation,
+    ): SwipeSource?
+}
+
+/** The result of performing a [UserAction]. */
+class UserActionResult(
+    /** The scene we should be transitioning to during the [UserAction]. */
+    val toScene: SceneKey,
+
+    /**
+     * The distance the action takes to animate from 0% to 100%.
+     *
+     * If `null`, a default distance will be used that depends on the [UserAction] performed.
+     */
+    val distance: UserActionDistance? = null,
+
+    /** The key of the transition that should be used. */
+    val transitionKey: TransitionKey? = null,
+) {
+    constructor(
+        toScene: SceneKey,
+        distance: Dp,
+        transitionKey: TransitionKey? = null,
+    ) : this(toScene, FixedDistance(distance), transitionKey)
+}
+
+interface UserActionDistance {
+    /**
+     * Return the **absolute** distance of the user action given the size of the scene we are
+     * animating from and the [orientation].
+     */
+    fun Density.absoluteDistance(fromSceneSize: IntSize, orientation: Orientation): Float
+}
+
+/** The user action has a fixed [absoluteDistance]. */
+private class FixedDistance(private val distance: Dp) : UserActionDistance {
+    override fun Density.absoluteDistance(fromSceneSize: IntSize, orientation: Orientation): Float {
+        return distance.toPx()
+    }
+}
+
+/**
  * An internal version of [SceneTransitionLayout] to be used for tests.
  *
  * Important: You should use this only in tests and if you need to access the underlying
@@ -362,7 +436,7 @@ enum class SwipeDirection(val orientation: Orientation) {
 internal fun SceneTransitionLayoutForTesting(
     state: SceneTransitionLayoutState,
     modifier: Modifier = Modifier,
-    edgeDetector: EdgeDetector = DefaultEdgeDetector,
+    swipeSourceDetector: SwipeSourceDetector = DefaultEdgeDetector,
     transitionInterceptionThreshold: Float = 0f,
     onLayoutImpl: ((SceneTransitionLayoutImpl) -> Unit)? = null,
     scenes: SceneTransitionLayoutScope.() -> Unit,
@@ -373,7 +447,7 @@ internal fun SceneTransitionLayoutForTesting(
         SceneTransitionLayoutImpl(
                 state = state as BaseSceneTransitionLayoutState,
                 density = density,
-                edgeDetector = edgeDetector,
+                swipeSourceDetector = swipeSourceDetector,
                 transitionInterceptionThreshold = transitionInterceptionThreshold,
                 builder = scenes,
                 coroutineScope = coroutineScope,
@@ -394,7 +468,8 @@ internal fun SceneTransitionLayoutForTesting(
         }
 
         layoutImpl.density = density
-        layoutImpl.edgeDetector = edgeDetector
+        layoutImpl.swipeSourceDetector = swipeSourceDetector
+        layoutImpl.transitionInterceptionThreshold = transitionInterceptionThreshold
     }
 
     layoutImpl.Content(modifier)

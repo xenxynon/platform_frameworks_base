@@ -49,6 +49,7 @@ import android.view.SurfaceControl;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManagerGlobal;
+import android.window.InputTransferToken;
 
 import com.android.wm.shell.common.DisplayController;
 import com.android.wm.shell.common.DisplayLayout;
@@ -74,7 +75,7 @@ class DragResizeInputListener implements AutoCloseable {
 
     private final IBinder mClientToken;
 
-    private final IBinder mFocusGrantToken;
+    private final InputTransferToken mInputTransferToken;
     private final SurfaceControl mDecorationSurface;
     private final InputChannel mInputChannel;
     private final TaskResizeInputEventReceiver mInputEventReceiver;
@@ -121,7 +122,7 @@ class DragResizeInputListener implements AutoCloseable {
         mDecorationSurface = decorationSurface;
         mDisplayController = displayController;
         mClientToken = new Binder();
-        mFocusGrantToken = new Binder();
+        mInputTransferToken = new InputTransferToken();
         mInputChannel = new InputChannel();
         try {
             mWindowSession.grantInputChannel(
@@ -134,7 +135,7 @@ class DragResizeInputListener implements AutoCloseable {
                     INPUT_FEATURE_SPY,
                     TYPE_APPLICATION,
                     null /* windowToken */,
-                    mFocusGrantToken,
+                    mInputTransferToken,
                     TAG + " of " + decorationSurface.toString(),
                     mInputChannel);
         } catch (RemoteException e) {
@@ -169,7 +170,7 @@ class DragResizeInputListener implements AutoCloseable {
                     INPUT_FEATURE_NO_INPUT_CHANNEL,
                     TYPE_INPUT_CONSUMER,
                     null /* windowToken */,
-                    mFocusGrantToken,
+                    mInputTransferToken,
                     "TaskInputSink of " + decorationSurface,
                     mSinkInputChannel);
         } catch (RemoteException e) {
@@ -353,6 +354,7 @@ class DragResizeInputListener implements AutoCloseable {
         private boolean mShouldHandleEvents;
         private int mLastCursorType = PointerIcon.TYPE_DEFAULT;
         private Rect mDragStartTaskBounds;
+        private final Rect mTmpRect = new Rect();
 
         private TaskResizeInputEventReceiver(
                 InputChannel inputChannel, Handler handler, Choreographer choreographer) {
@@ -477,14 +479,15 @@ class DragResizeInputListener implements AutoCloseable {
         }
 
         private void updateInputSinkRegionForDrag(Rect taskBounds) {
+            mTmpRect.set(taskBounds);
             final DisplayLayout layout = mDisplayController.getDisplayLayout(mDisplayId);
             final Region dragTouchRegion = new Region(-taskBounds.left,
                     -taskBounds.top,
                     -taskBounds.left + layout.width(),
                     -taskBounds.top + layout.height());
             // Remove the localized task bounds from the touch region.
-            taskBounds.offsetTo(0, 0);
-            dragTouchRegion.op(taskBounds, Region.Op.DIFFERENCE);
+            mTmpRect.offsetTo(0, 0);
+            dragTouchRegion.op(mTmpRect, Region.Op.DIFFERENCE);
             updateSinkInputChannel(dragTouchRegion);
         }
 

@@ -22,6 +22,7 @@ import android.content.Context
 import android.hardware.biometrics.BiometricAuthenticator
 import android.hardware.biometrics.BiometricConstants
 import android.hardware.biometrics.BiometricPrompt
+import android.hardware.biometrics.Flags.customBiometricPrompt
 import android.hardware.face.FaceManager
 import android.text.method.ScrollingMovementMethod
 import android.util.Log
@@ -41,6 +42,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.airbnb.lottie.LottieAnimationView
 import com.airbnb.lottie.LottieCompositionFactory
+import com.android.systemui.Flags.constraintBp
 import com.android.systemui.biometrics.AuthPanelController
 import com.android.systemui.biometrics.shared.model.BiometricModalities
 import com.android.systemui.biometrics.shared.model.BiometricModality
@@ -70,9 +72,9 @@ object BiometricViewBinder {
     @SuppressLint("ClickableViewAccessibility")
     @JvmStatic
     fun bind(
-        view: BiometricPromptLayout,
+        view: View,
         viewModel: PromptViewModel,
-        panelViewController: AuthPanelController,
+        panelViewController: AuthPanelController?,
         jankListener: BiometricJankListener,
         backgroundView: View,
         legacyCallback: Spaghetti.Callback,
@@ -94,6 +96,7 @@ object BiometricViewBinder {
             view.resources.getColor(R.color.biometric_dialog_gray, view.context.theme)
 
         val logoView = view.requireViewById<ImageView>(R.id.logo)
+        val logoDescriptionView = view.requireViewById<TextView>(R.id.logo_description)
         val titleView = view.requireViewById<TextView>(R.id.title)
         val subtitleView = view.requireViewById<TextView>(R.id.subtitle)
         val descriptionView = view.requireViewById<TextView>(R.id.description)
@@ -102,6 +105,8 @@ object BiometricViewBinder {
 
         // set selected to enable marquee unless a screen reader is enabled
         logoView.isSelected =
+            !accessibilityManager.isEnabled || !accessibilityManager.isTouchExplorationEnabled
+        logoDescriptionView.isSelected =
             !accessibilityManager.isEnabled || !accessibilityManager.isTouchExplorationEnabled
         titleView.isSelected =
             !accessibilityManager.isEnabled || !accessibilityManager.isTouchExplorationEnabled
@@ -112,12 +117,12 @@ object BiometricViewBinder {
         val iconOverlayView = view.requireViewById<LottieAnimationView>(R.id.biometric_icon_overlay)
         val iconView = view.requireViewById<LottieAnimationView>(R.id.biometric_icon)
 
-        PromptIconViewBinder.bind(
-            iconView,
-            iconOverlayView,
-            view.getUpdatedFingerprintAffordanceSize(),
-            viewModel
-        )
+        val iconSizeOverride =
+            if (constraintBp()) {
+                viewModel.fingerprintAffordanceSize
+            } else {
+                (view as BiometricPromptLayout).updatedFingerprintAffordanceSize
+            }
 
         val indicatorMessageView = view.requireViewById<TextView>(R.id.indicator)
 
@@ -145,6 +150,18 @@ object BiometricViewBinder {
         view.repeatWhenAttached {
             // these do not change and need to be set before any size transitions
             val modalities = viewModel.modalities.first()
+
+            // If there is no biometrics available, biometric prompt is showing just for displaying
+            // content, no authentication needed.
+            if (!(customBiometricPrompt() && modalities.isEmpty)) {
+                PromptIconViewBinder.bind(
+                    iconView,
+                    iconOverlayView,
+                    iconSizeOverride,
+                    viewModel,
+                )
+            }
+
             if (modalities.hasFingerprint) {
                 /**
                  * Load the given [rawResources] immediately so they are cached for use in the
@@ -157,6 +174,7 @@ object BiometricViewBinder {
             }
 
             logoView.setImageDrawable(viewModel.logo.first())
+            logoDescriptionView.text = viewModel.logoDescription.first()
             titleView.text = viewModel.title.first()
             subtitleView.text = viewModel.subtitle.first()
             descriptionView.text = viewModel.description.first()
@@ -189,6 +207,7 @@ object BiometricViewBinder {
                     viewsToHideWhenSmall =
                         listOf(
                             logoView,
+                            logoDescriptionView,
                             titleView,
                             subtitleView,
                             descriptionView,
@@ -197,6 +216,7 @@ object BiometricViewBinder {
                     viewsToFadeInOnSizeChange =
                         listOf(
                             logoView,
+                            logoDescriptionView,
                             titleView,
                             subtitleView,
                             descriptionView,

@@ -73,7 +73,9 @@ public final class UserProperties implements Parcelable {
 
     private static final String ATTR_CROSS_PROFILE_CONTENT_SHARING_STRATEGY =
             "crossProfileContentSharingStrategy";
-
+    private static final String ATTR_PROFILE_API_VISIBILITY = "profileApiVisibility";
+    private static final String ITEMS_RESTRICTED_ON_HOME_SCREEN =
+            "itemsRestrictedOnHomeScreen";
     /** Index values of each property (to indicate whether they are present in this object). */
     @IntDef(prefix = "INDEX_", value = {
             INDEX_SHOW_IN_LAUNCHER,
@@ -93,6 +95,8 @@ public final class UserProperties implements Parcelable {
             INDEX_AUTH_ALWAYS_REQUIRED_TO_DISABLE_QUIET_MODE,
             INDEX_CROSS_PROFILE_CONTENT_SHARING_STRATEGY,
             INDEX_ALLOW_STOPPING_USER_WITH_DELAYED_LOCKING,
+            INDEX_PROFILE_API_VISIBILITY,
+            INDEX_ITEMS_RESTRICTED_ON_HOME_SCREEN
     })
     @Retention(RetentionPolicy.SOURCE)
     private @interface PropertyIndex {
@@ -114,6 +118,8 @@ public final class UserProperties implements Parcelable {
     private static final int INDEX_SHOW_IN_SHARING_SURFACES = 14;
     private static final int INDEX_CROSS_PROFILE_CONTENT_SHARING_STRATEGY = 15;
     private static final int INDEX_ALLOW_STOPPING_USER_WITH_DELAYED_LOCKING = 16;
+    private static final int INDEX_PROFILE_API_VISIBILITY = 17;
+    private static final int INDEX_ITEMS_RESTRICTED_ON_HOME_SCREEN = 18;
     /** A bit set, mapping each PropertyIndex to whether it is present (1) or absent (0). */
     private long mPropertiesPresent = 0;
 
@@ -450,6 +456,45 @@ public final class UserProperties implements Parcelable {
     @SuppressLint("UnflaggedApi") // b/306636213
     public static final int CROSS_PROFILE_CONTENT_SHARING_DELEGATE_FROM_PARENT = 1;
 
+    /**
+     * Possible values for the profile visibility in public API surfaces. This indicates whether or
+     * not the information linked to the profile (userId, package names) should not be returned in
+     * API surfaces if a user is marked as hidden.
+     *
+     * @hide
+     */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(prefix = "PROFILE_API_VISIBILITY_",
+            value = {
+                    PROFILE_API_VISIBILITY_UNKNOWN,
+                    PROFILE_API_VISIBILITY_VISIBLE,
+                    PROFILE_API_VISIBILITY_HIDDEN,
+            }
+    )
+    public @interface ProfileApiVisibility {
+    }
+
+    /**
+     * The api visibility value for this profile user is undefined or unknown.
+     *
+     * @hide
+     */
+    public static final int PROFILE_API_VISIBILITY_UNKNOWN = -1;
+
+    /**
+     * Indicates that information about this profile user should be shown in API surfaces.
+     *
+     * @hide
+     */
+    public static final int PROFILE_API_VISIBILITY_VISIBLE = 0;
+
+    /**
+     * Indicates that information about this profile should be not be visible in API surfaces.
+     *
+     * @hide
+     */
+    public static final int PROFILE_API_VISIBILITY_HIDDEN = 1;
+
 
     /**
      * Creates a UserProperties (intended for the SystemServer) that stores a reference to the given
@@ -510,6 +555,8 @@ public final class UserProperties implements Parcelable {
         setShowInQuietMode(orig.getShowInQuietMode());
         setShowInSharingSurfaces(orig.getShowInSharingSurfaces());
         setCrossProfileContentSharingStrategy(orig.getCrossProfileContentSharingStrategy());
+        setProfileApiVisibility(orig.getProfileApiVisibility());
+        setItemsRestrictedOnHomeScreen(orig.areItemsRestrictedOnHomeScreen());
     }
 
     /**
@@ -951,6 +998,57 @@ public final class UserProperties implements Parcelable {
     }
     private @CrossProfileContentSharingStrategy int mCrossProfileContentSharingStrategy;
 
+    /**
+     * Returns the visibility of the profile user in API surfaces. Any information linked to the
+     * profile (userId, package names) should be hidden API surfaces if a user is marked as hidden.
+     *
+     * @hide
+     */
+    @NonNull
+    public @ProfileApiVisibility int getProfileApiVisibility() {
+        if (isPresent(INDEX_PROFILE_API_VISIBILITY)) return mProfileApiVisibility;
+        if (mDefaultProperties != null) return mDefaultProperties.mProfileApiVisibility;
+        throw new SecurityException("You don't have permission to query profileApiVisibility");
+    }
+    /** @hide */
+    @NonNull
+    public void setProfileApiVisibility(@ProfileApiVisibility int profileApiVisibility) {
+        this.mProfileApiVisibility = profileApiVisibility;
+        setPresent(INDEX_PROFILE_API_VISIBILITY);
+    }
+    private @ProfileApiVisibility int mProfileApiVisibility;
+
+    /**
+     * Returns whether a user (usually a profile) is allowed to have items such as Apps Pending
+     * Installation, Widgets, Custom App Shortcuts, etc. on Launcher home screen.
+     *
+     * <p> For a typical user/profile, this property will be false, allowing framework APIs to
+     * provide information about such items to Launcher(s). When set true, framework APIs will
+     * restrict the same.
+     *
+     * <p> This property only restricts information about items that are accessed solely via the
+     * Launcher home screen. Information about items such as App Icons, Deep Links, which can also
+     * be accessed via other launcher components, such as All Apps Drawer is not restricted by this
+     * property.
+     *
+     * @hide
+     */
+    public boolean areItemsRestrictedOnHomeScreen() {
+        if (isPresent(INDEX_ITEMS_RESTRICTED_ON_HOME_SCREEN)) {
+            return mItemsRestrictedOnHomeScreen;
+        }
+        if (mDefaultProperties != null) {
+            return mDefaultProperties.mItemsRestrictedOnHomeScreen;
+        }
+        throw new SecurityException(
+                "You don't have permission to query mItemsRestrictedOnHomeScreen");
+    }
+    /** @hide */
+    public void setItemsRestrictedOnHomeScreen(boolean val) {
+        this.mItemsRestrictedOnHomeScreen = val;
+        setPresent(INDEX_ITEMS_RESTRICTED_ON_HOME_SCREEN);
+    }
+    private boolean mItemsRestrictedOnHomeScreen;
 
     @Override
     public String toString() {
@@ -977,6 +1075,8 @@ public final class UserProperties implements Parcelable {
                 + ", mDeleteAppWithParent=" + getDeleteAppWithParent()
                 + ", mAlwaysVisible=" + getAlwaysVisible()
                 + ", mCrossProfileContentSharingStrategy=" + getCrossProfileContentSharingStrategy()
+                + ", mProfileApiVisibility=" + getProfileApiVisibility()
+                + ", mItemsRestrictedOnHomeScreen=" + areItemsRestrictedOnHomeScreen()
                 + "}";
     }
 
@@ -1010,6 +1110,8 @@ public final class UserProperties implements Parcelable {
         pw.println(prefix + "    mAlwaysVisible=" + getAlwaysVisible());
         pw.println(prefix + "    mCrossProfileContentSharingStrategy="
                 + getCrossProfileContentSharingStrategy());
+        pw.println(prefix + "    mProfileApiVisibility=" + getProfileApiVisibility());
+        pw.println(prefix + "    mItemsRestrictedOnHomeScreen=" + areItemsRestrictedOnHomeScreen());
     }
 
     /**
@@ -1093,6 +1195,13 @@ public final class UserProperties implements Parcelable {
                     break;
                 case ATTR_CROSS_PROFILE_CONTENT_SHARING_STRATEGY:
                     setCrossProfileContentSharingStrategy(parser.getAttributeInt(i));
+                    break;
+                case ATTR_PROFILE_API_VISIBILITY:
+                    setProfileApiVisibility(parser.getAttributeInt(i));
+                    break;
+                case ITEMS_RESTRICTED_ON_HOME_SCREEN:
+                    setItemsRestrictedOnHomeScreen(parser.getAttributeBoolean(i));
+                    break;
                 default:
                     Slog.w(LOG_TAG, "Skipping unknown property " + attributeName);
             }
@@ -1175,6 +1284,14 @@ public final class UserProperties implements Parcelable {
             serializer.attributeInt(null, ATTR_CROSS_PROFILE_CONTENT_SHARING_STRATEGY,
                     mCrossProfileContentSharingStrategy);
         }
+        if (isPresent(INDEX_PROFILE_API_VISIBILITY)) {
+            serializer.attributeInt(null, ATTR_PROFILE_API_VISIBILITY,
+                    mProfileApiVisibility);
+        }
+        if (isPresent(INDEX_ITEMS_RESTRICTED_ON_HOME_SCREEN)) {
+            serializer.attributeBoolean(null, ITEMS_RESTRICTED_ON_HOME_SCREEN,
+                    mItemsRestrictedOnHomeScreen);
+        }
     }
 
     // For use only with an object that has already had any permission-lacking fields stripped out.
@@ -1198,6 +1315,8 @@ public final class UserProperties implements Parcelable {
         dest.writeBoolean(mDeleteAppWithParent);
         dest.writeBoolean(mAlwaysVisible);
         dest.writeInt(mCrossProfileContentSharingStrategy);
+        dest.writeInt(mProfileApiVisibility);
+        dest.writeBoolean(mItemsRestrictedOnHomeScreen);
     }
 
     /**
@@ -1225,6 +1344,8 @@ public final class UserProperties implements Parcelable {
         mDeleteAppWithParent = source.readBoolean();
         mAlwaysVisible = source.readBoolean();
         mCrossProfileContentSharingStrategy = source.readInt();
+        mProfileApiVisibility = source.readInt();
+        mItemsRestrictedOnHomeScreen = source.readBoolean();
     }
 
     @Override
@@ -1274,6 +1395,8 @@ public final class UserProperties implements Parcelable {
         private boolean mAlwaysVisible = false;
         private @CrossProfileContentSharingStrategy int mCrossProfileContentSharingStrategy =
                 CROSS_PROFILE_CONTENT_SHARING_NO_DELEGATION;
+        private @ProfileApiVisibility int mProfileApiVisibility = 0;
+        private boolean mItemsRestrictedOnHomeScreen = false;
 
         /**
          * @hide
@@ -1428,6 +1551,25 @@ public final class UserProperties implements Parcelable {
             return this;
         }
 
+        /**
+         * Sets the value for {@link #mProfileApiVisibility}
+         * @hide
+         */
+        @NonNull
+        public Builder setProfileApiVisibility(@ProfileApiVisibility int profileApiVisibility){
+            mProfileApiVisibility = profileApiVisibility;
+            return this;
+        }
+
+        /** Sets the value for {@link #mItemsRestrictedOnHomeScreen}
+         * @hide
+         */
+        public Builder setItemsRestrictedOnHomeScreen(
+                boolean itemsRestrictedOnHomeScreen) {
+            mItemsRestrictedOnHomeScreen = itemsRestrictedOnHomeScreen;
+            return this;
+        }
+
         /** Builds a UserProperties object with *all* values populated.
          * @hide
          */
@@ -1452,7 +1594,9 @@ public final class UserProperties implements Parcelable {
                     mAllowStoppingUserWithDelayedLocking,
                     mDeleteAppWithParent,
                     mAlwaysVisible,
-                    mCrossProfileContentSharingStrategy);
+                    mCrossProfileContentSharingStrategy,
+                    mProfileApiVisibility,
+                    mItemsRestrictedOnHomeScreen);
         }
     } // end Builder
 
@@ -1473,7 +1617,9 @@ public final class UserProperties implements Parcelable {
             boolean allowStoppingUserWithDelayedLocking,
             boolean deleteAppWithParent,
             boolean alwaysVisible,
-            @CrossProfileContentSharingStrategy int crossProfileContentSharingStrategy) {
+            @CrossProfileContentSharingStrategy int crossProfileContentSharingStrategy,
+            @ProfileApiVisibility int profileApiVisibility,
+            boolean itemsRestrictedOnHomeScreen) {
         mDefaultProperties = null;
         setShowInLauncher(showInLauncher);
         setStartWithParent(startWithParent);
@@ -1493,5 +1639,7 @@ public final class UserProperties implements Parcelable {
         setDeleteAppWithParent(deleteAppWithParent);
         setAlwaysVisible(alwaysVisible);
         setCrossProfileContentSharingStrategy(crossProfileContentSharingStrategy);
+        setProfileApiVisibility(profileApiVisibility);
+        setItemsRestrictedOnHomeScreen(itemsRestrictedOnHomeScreen);
     }
 }

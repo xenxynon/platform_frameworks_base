@@ -1386,8 +1386,9 @@ public class TelecomManager {
 
     /**
      * Returns a list of {@link PhoneAccountHandle}s which can be used to make and receive phone
-     * calls. The returned list includes those accounts which have been explicitly enabled by
-     * the user or other users visible to the user.
+     * calls. The returned list includes those accounts which have been explicitly enabled.
+     * In contrast to {@link #getCallCapablePhoneAccounts}, this also includes accounts from
+     * the calling user's {@link android.os.UserManager#getUserProfiles} profile group.
      *
      * @see #EXTRA_PHONE_ACCOUNT_HANDLE
      * @return A list of {@code PhoneAccountHandle} objects.
@@ -1460,6 +1461,31 @@ public class TelecomManager {
     }
 
     /**
+     * This API will return all {@link PhoneAccount}s registered via
+     * {@link TelecomManager#registerPhoneAccount(PhoneAccount)}. If a {@link PhoneAccount} appears
+     * to be missing from the list, Telecom has either unregistered the {@link PhoneAccount}
+     * or the caller registered the {@link PhoneAccount} under a different user and does not
+     * have the {@link android.Manifest.permission#INTERACT_ACROSS_USERS} permission.
+     *
+     * @return all the {@link PhoneAccount}s registered by the caller.
+     */
+    @SuppressLint("RequiresPermission")
+    @FlaggedApi(Flags.FLAG_GET_REGISTERED_PHONE_ACCOUNTS)
+    public @NonNull List<PhoneAccount> getRegisteredPhoneAccounts() {
+        ITelecomService service = getTelecomService();
+        if (service != null) {
+            try {
+                return service.getRegisteredPhoneAccounts(
+                        mContext.getOpPackageName(),
+                        mContext.getAttributionTag()).getList();
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
+        }
+        throw new IllegalStateException("Telecom is not available");
+    }
+
+    /**
      * Returns a list of {@link PhoneAccountHandle}s including those which have not been enabled
      * by the user.
      *
@@ -1513,7 +1539,7 @@ public class TelecomManager {
             return service.getCallCapablePhoneAccounts(includeDisabledAccounts,
                     mContext.getOpPackageName(), mContext.getAttributionTag(), true).getList();
         } catch (RemoteException e) {
-            throw e.rethrowAsRuntimeException();
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -1637,6 +1663,26 @@ public class TelecomManager {
      * {@link PhoneAccount} when the upper bound limit, 10, has already been reached.
      *
      * @param account The complete {@link PhoneAccount}.
+     * @throws UnsupportedOperationException if the caller cannot modify phone state and the device
+     * does not have the Telecom feature.
+     * @throws SecurityException if:
+     * <ol>
+     *     <li>the caller cannot modify phone state and the phone account doesn't belong to the
+     *     calling user.</li>
+     *     <li>the caller is registering a self-managed phone and either they are not allowed to
+     *     manage their own calls or if the account is call capable, a connection manager, or a
+     *     sim account.</li>
+     *     <li>the caller is registering a sim account without the ability to do so.</li>
+     *     <li>the caller is registering a multi-user phone account but isn't a system app.</li>
+     *     <li>the account can make SIM-based voice calls but the caller cannot register sim
+     *     accounts or isn't a sim call manager.</li>
+     *     <li>the account defines the EXTRA_SKIP_CALL_FILTERING extra but the caller isn't
+     *     able to modify the phone state.</li>
+     *     <li>the caller is registering an account for a different user but isn't able to
+     *     interact across users.</li>
+     *     <li>if simultaneous calling is available and the phone account package name doesn't
+     *     correspond to the simultaneous calling accounts associated with this phone account.</li>
+     * </ol>
      */
     public void registerPhoneAccount(PhoneAccount account) {
         ITelecomService service = getTelecomService();
@@ -2779,17 +2825,25 @@ public class TelecomManager {
      *
      * @param packageName the package name of the app to check calls for.
      * @param userHandle the user handle on which to check for calls.
+     * @param detectForAllUsers indicates if calls should be detected across all users. If it is
+     *                          set to {@code true}, and the caller has the ability to interact
+     *                          across users, the userHandle parameter is disregarded.
      * @return {@code true} if there are ongoing calls, {@code false} otherwise.
+     * @throws SecurityException if detectForAllUsers is true or userHandle is not the calling user
+     * and the caller does not grant the ability to interact across users.
      * @hide
      */
-    @RequiresPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
+    @SystemApi
+    @FlaggedApi(Flags.FLAG_TELECOM_RESOLVE_HIDDEN_DEPENDENCIES)
+    @RequiresPermission(allOf = {Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
+            Manifest.permission.INTERACT_ACROSS_USERS}, conditional = true)
     public boolean isInSelfManagedCall(@NonNull String packageName,
-            @NonNull UserHandle userHandle) {
+            @NonNull UserHandle userHandle, boolean detectForAllUsers) {
         ITelecomService service = getTelecomService();
         if (service != null) {
             try {
                 return service.isInSelfManagedCall(packageName, userHandle,
-                        mContext.getOpPackageName());
+                        mContext.getOpPackageName(), detectForAllUsers);
             } catch (RemoteException e) {
                 Log.e(TAG, "RemoteException isInSelfManagedCall: " + e);
                 e.rethrowFromSystemServer();

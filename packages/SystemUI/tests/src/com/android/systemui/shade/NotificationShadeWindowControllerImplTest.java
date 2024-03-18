@@ -57,20 +57,14 @@ import com.android.systemui.colorextraction.SysuiColorExtractor;
 import com.android.systemui.common.ui.data.repository.FakeConfigurationRepository;
 import com.android.systemui.common.ui.domain.interactor.ConfigurationInteractor;
 import com.android.systemui.communal.domain.interactor.CommunalInteractor;
-import com.android.systemui.communal.domain.interactor.CommunalInteractorFactory;
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryUdfpsInteractor;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FakeFeatureFlagsClassic;
 import com.android.systemui.keyguard.KeyguardViewMediator;
 import com.android.systemui.keyguard.data.repository.FakeCommandQueue;
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository;
-import com.android.systemui.keyguard.data.repository.FakeKeyguardSurfaceBehindRepository;
-import com.android.systemui.keyguard.data.repository.FakeKeyguardTransitionRepository;
-import com.android.systemui.keyguard.data.repository.InWindowLauncherUnlockAnimationRepository;
 import com.android.systemui.keyguard.domain.interactor.FromLockscreenTransitionInteractor;
 import com.android.systemui.keyguard.domain.interactor.FromPrimaryBouncerTransitionInteractor;
-import com.android.systemui.keyguard.domain.interactor.GlanceableHubTransitions;
-import com.android.systemui.keyguard.domain.interactor.InWindowLauncherUnlockAnimationInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.kosmos.KosmosJavaAdapter;
@@ -88,7 +82,6 @@ import com.android.systemui.shade.data.repository.FakeShadeRepository;
 import com.android.systemui.shade.domain.interactor.ShadeInteractor;
 import com.android.systemui.shade.domain.interactor.ShadeInteractorImpl;
 import com.android.systemui.shade.domain.interactor.ShadeInteractorLegacyImpl;
-import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.disableflags.data.repository.FakeDisableFlagsRepository;
@@ -100,7 +93,6 @@ import com.android.systemui.statusbar.phone.ScrimController;
 import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController;
-import com.android.systemui.statusbar.policy.data.repository.FakeDeviceProvisioningRepository;
 import com.android.systemui.statusbar.policy.data.repository.FakeUserSetupRepository;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.user.domain.interactor.UserSwitcherInteractor;
@@ -186,12 +178,15 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 mTestScope.getBackgroundScope(),
                 new SceneContainerRepository(
                         mTestScope.getBackgroundScope(),
-                        mKosmos.getFakeSceneContainerConfig()),
-                powerInteractor,
-                mock(SceneLogger.class));
+                        mKosmos.getFakeSceneContainerConfig(),
+                        mKosmos.getSceneDataSource()),
+                mock(SceneLogger.class),
+                mKosmos.getDeviceUnlockedInteractor());
 
         FakeConfigurationRepository configurationRepository = new FakeConfigurationRepository();
         FakeSceneContainerFlags sceneContainerFlags = new FakeSceneContainerFlags();
+        KeyguardTransitionInteractor keyguardTransitionInteractor =
+                mKosmos.getKeyguardTransitionInteractor();
         KeyguardInteractor keyguardInteractor = new KeyguardInteractor(
                 keyguardRepository,
                 new FakeCommandQueue(),
@@ -200,58 +195,13 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 new FakeKeyguardBouncerRepository(),
                 new ConfigurationInteractor(configurationRepository),
                 shadeRepository,
+                keyguardTransitionInteractor,
                 () -> sceneInteractor);
-        CommunalInteractor communalInteractor =
-                CommunalInteractorFactory.create().getCommunalInteractor();
+        CommunalInteractor communalInteractor = mKosmos.getCommunalInteractor();
 
-        FakeKeyguardTransitionRepository keyguardTransitionRepository =
-                new FakeKeyguardTransitionRepository();
-
-        KeyguardTransitionInteractor keyguardTransitionInteractor =
-                new KeyguardTransitionInteractor(
-                        mTestScope.getBackgroundScope(),
-                        keyguardTransitionRepository,
-                        () -> keyguardInteractor,
-                        () -> mFromLockscreenTransitionInteractor,
-                        () -> mFromPrimaryBouncerTransitionInteractor);
-
-        mFromLockscreenTransitionInteractor = new FromLockscreenTransitionInteractor(
-                keyguardTransitionRepository,
-                keyguardTransitionInteractor,
-                mTestScope.getBackgroundScope(),
-                mKosmos.getTestDispatcher(),
-                mKosmos.getTestDispatcher(),
-                keyguardInteractor,
-                featureFlags,
-                shadeRepository,
-                powerInteractor,
-                new GlanceableHubTransitions(
-                        mTestScope,
-                        keyguardTransitionInteractor,
-                        keyguardTransitionRepository,
-                        communalInteractor
-                ),
-                () ->
-                        new InWindowLauncherUnlockAnimationInteractor(
-                                new InWindowLauncherUnlockAnimationRepository(),
-                                mTestScope.getBackgroundScope(),
-                                keyguardTransitionInteractor,
-                                () -> new FakeKeyguardSurfaceBehindRepository(),
-                                mock(ActivityManagerWrapper.class)
-                        )
-                );
-
-        mFromPrimaryBouncerTransitionInteractor = new FromPrimaryBouncerTransitionInteractor(
-                keyguardTransitionRepository,
-                keyguardTransitionInteractor,
-                mTestScope.getBackgroundScope(),
-                mKosmos.getTestDispatcher(),
-                mKosmos.getTestDispatcher(),
-                keyguardInteractor,
-                featureFlags,
-                mKeyguardSecurityModel,
-                mSelectedUserInteractor,
-                powerInteractor);
+        mFromLockscreenTransitionInteractor = mKosmos.getFromLockscreenTransitionInteractor();
+        mFromPrimaryBouncerTransitionInteractor =
+                mKosmos.getFromPrimaryBouncerTransitionInteractor();
 
         DeviceEntryUdfpsInteractor deviceEntryUdfpsInteractor =
                 mock(DeviceEntryUdfpsInteractor.class);
@@ -259,7 +209,7 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
 
         mShadeInteractor = new ShadeInteractorImpl(
                 mTestScope.getBackgroundScope(),
-                new FakeDeviceProvisioningRepository(),
+                mKosmos.getDeviceProvisioningInteractor(),
                 new FakeDisableFlagsRepository(),
                 mock(DozeParameters.class),
                 keyguardRepository,
@@ -302,7 +252,8 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
                 mShadeWindowLogger,
                 () -> mSelectedUserInteractor,
                 mUserTracker,
-                mSceneContainerFlags) {
+                mSceneContainerFlags,
+                () -> communalInteractor) {
                     @Override
                     protected boolean isDebuggable() {
                         return false;
@@ -447,6 +398,24 @@ public class NotificationShadeWindowControllerImplTest extends SysuiTestCase {
         verify(mWindowManager).updateViewLayout(any(), mLayoutParameters.capture());
         assertThat((mLayoutParameters.getValue().flags & FLAG_NOT_FOCUSABLE) == 0).isTrue();
         assertThat((mLayoutParameters.getValue().flags & FLAG_ALT_FOCUSABLE_IM) != 0).isTrue();
+    }
+
+    @Test
+    public void setCommunalVisible_userTimeout() {
+        setKeyguardShowing();
+        clearInvocations(mWindowManager);
+
+        mNotificationShadeWindowController.onCommunalVisibleChanged(true);
+        verify(mWindowManager).updateViewLayout(any(), mLayoutParameters.capture());
+        assertThat(mLayoutParameters.getValue().userActivityTimeout)
+                .isEqualTo(CommunalInteractor.AWAKE_INTERVAL_MS);
+        clearInvocations(mWindowManager);
+
+        // Bouncer showing over communal overrides communal value
+        mNotificationShadeWindowController.setBouncerShowing(true);
+        verify(mWindowManager).updateViewLayout(any(), mLayoutParameters.capture());
+        assertThat(mLayoutParameters.getValue().userActivityTimeout)
+                .isEqualTo(KeyguardViewMediator.AWAKE_INTERVAL_BOUNCER_MS);
     }
 
     @Test

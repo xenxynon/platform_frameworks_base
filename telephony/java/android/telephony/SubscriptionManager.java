@@ -1125,7 +1125,7 @@ public class SubscriptionManager {
     /**
      * TelephonyProvider column name for satellite attach enabled for carrier. The value of this
      * column is set based on user settings.
-     * By default, it's disabled.
+     * By default, it's enabled.
      * <P>Type: INTEGER (int)</P>
      * @hide
      */
@@ -1147,6 +1147,36 @@ public class SubscriptionManager {
      * @hide
      */
     public static final String SERVICE_CAPABILITIES = SimInfo.COLUMN_SERVICE_CAPABILITIES;
+
+    /**
+     * TelephonyProvider column name to identify eSIM's transfer status.
+     * By default, it's disabled.
+     * <P>Type: INTEGER (int)</P>
+     * @hide
+     */
+    public static final String TRANSFER_STATUS = SimInfo.COLUMN_TRANSFER_STATUS;
+
+    /**
+     * TelephonyProvider column name for satellite entitlement status. The value of this column is
+     * set based on entitlement query result for satellite configuration.
+     * By default, it's disabled.
+     * <P>Type: INTEGER (int)</P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_STATUS =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_STATUS;
+
+    /**
+     * TelephonyProvider column name for satellite entitlement plmns. The value of this column is
+     * set based on entitlement query result for satellite configuration.
+     * By default, it's empty.
+     * <P>Type: TEXT </P>
+     *
+     * @hide
+     */
+    public static final String SATELLITE_ENTITLEMENT_PLMNS =
+            SimInfo.COLUMN_SATELLITE_ENTITLEMENT_PLMNS;
 
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
@@ -1453,6 +1483,41 @@ public class SubscriptionManager {
     private static final LruCache<Pair<String, Configuration>, Resources> sResourcesCache =
             new LruCache<>(MAX_RESOURCE_CACHE_ENTRY_COUNT);
 
+
+    /**
+     * The profile has not been transferred or converted to an eSIM.
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_SUPPORT_PSIM_TO_ESIM_CONVERSION)
+    @SystemApi
+    public static final int TRANSFER_STATUS_NONE = 0;
+
+    /**
+     * The existing profile of the old device has been transferred to an eSIM of the new device.
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_SUPPORT_PSIM_TO_ESIM_CONVERSION)
+    @SystemApi
+    public static final int TRANSFER_STATUS_TRANSFERRED_OUT = 1;
+
+    /**
+     * The existing profile of the same device has been converted to an eSIM of the same device
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_SUPPORT_PSIM_TO_ESIM_CONVERSION)
+    @SystemApi
+    public static final int TRANSFER_STATUS_CONVERTED = 2;
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(prefix = {"TRANSFER_STATUS"},
+            value = {
+                    TRANSFER_STATUS_NONE,
+                    TRANSFER_STATUS_TRANSFERRED_OUT,
+                    TRANSFER_STATUS_CONVERTED,
+            })
+    public @interface TransferStatus {}
+
+
     /**
      * A listener class for monitoring changes to {@link SubscriptionInfo} records.
      * <p>
@@ -1618,14 +1683,15 @@ public class SubscriptionManager {
     }
 
     /**
-     * Register for changes to the list of active {@link SubscriptionInfo} records or to the
-     * individual records themselves. When a change occurs the onSubscriptionsChanged method of
-     * the listener will be invoked immediately if there has been a notification. The
-     * onSubscriptionChanged method will also be triggered once initially when calling this
-     * function.
+     * Register for changes to the list of {@link SubscriptionInfo} records or to the
+     * individual records (active or inactive) themselves. When a change occurs, the
+     * {@link OnSubscriptionsChangedListener#onSubscriptionsChanged()} method of
+     * the listener will be invoked immediately. The
+     * {@link OnSubscriptionsChangedListener#onSubscriptionsChanged()} method will also be invoked
+     * once initially when calling this method.
      *
      * @param listener an instance of {@link OnSubscriptionsChangedListener} with
-     *                 onSubscriptionsChanged overridden.
+     * {@link OnSubscriptionsChangedListener#onSubscriptionsChanged()} overridden.
      * @param executor the executor that will execute callbacks.
      */
     public void addOnSubscriptionsChangedListener(
@@ -1926,35 +1992,25 @@ public class SubscriptionManager {
      * Then for SDK 35+, if the caller identity is personal profile, then this will return
      * subscription 1 only and vice versa.
      *
-     * <p> The records will be sorted by {@link SubscriptionInfo#getSimSlotIndex} then by
-     * {@link SubscriptionInfo#getSubscriptionId}.
+     * <p> Returned records will be sorted by {@link SubscriptionInfo#getSimSlotIndex} then by
+     * {@link SubscriptionInfo#getSubscriptionId}. Beginning with Android SDK 35, this method will
+     * never return null.
      *
      * <p>Requires Permission: {@link android.Manifest.permission#READ_PHONE_STATE READ_PHONE_STATE}
      * or that the calling app has carrier privileges (see
      * {@link TelephonyManager#hasCarrierPrivileges}).
      *
-     * @return Sorted list of the currently {@link SubscriptionInfo} records available on the device.
-     * <ul>
-     * <li>
-     * If null is returned the current state is unknown but if a {@link OnSubscriptionsChangedListener}
-     * has been registered {@link OnSubscriptionsChangedListener#onSubscriptionsChanged} will be
-     * invoked in the future.
-     * </li>
-     * <li>
-     * If the list is empty then there are no {@link SubscriptionInfo} records currently available.
-     * </li>
-     * <li>
-     * if the list is non-empty the list is sorted by {@link SubscriptionInfo#getSimSlotIndex}
-     * then by {@link SubscriptionInfo#getSubscriptionId}.
-     * </li>
-     * </ul>
+     * @return a list of the active {@link SubscriptionInfo} that is visible to the caller. If
+     *         an empty list or null is returned, then there are no active subscriptions that
+     *         are visible to the caller. If the number of active subscriptions available to
+     *         any caller changes, then this change will be indicated by
+     *         {@link OnSubscriptionsChangedListener#onSubscriptionsChanged}.
      *
      * @throws UnsupportedOperationException If the device does not have
-     *          {@link PackageManager#FEATURE_TELEPHONY_SUBSCRIPTION}.
+     *         {@link PackageManager#FEATURE_TELEPHONY_SUBSCRIPTION}.
      */
     @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
-    // @RequiresPermission(TODO(b/308809058))
-    public List<SubscriptionInfo> getActiveSubscriptionInfoList() {
+    public @Nullable List<SubscriptionInfo> getActiveSubscriptionInfoList() {
         List<SubscriptionInfo> activeList = null;
 
         try {
@@ -1970,6 +2026,8 @@ public class SubscriptionManager {
         if (activeList != null) {
             activeList = activeList.stream().filter(subInfo -> isSubscriptionVisible(subInfo))
                     .collect(Collectors.toList());
+        } else {
+            activeList = Collections.emptyList();
         }
         return activeList;
     }
@@ -1998,17 +2056,15 @@ public class SubscriptionManager {
      *          {@link PackageManager#FEATURE_TELEPHONY_SUBSCRIPTION}.
      */
     public @NonNull List<SubscriptionInfo> getCompleteActiveSubscriptionInfoList() {
-        List<SubscriptionInfo> completeList = getActiveSubscriptionInfoList(
-                /* userVisibleonly */false);
-        if (completeList == null) {
-            completeList = new ArrayList<>();
-        }
-        return completeList;
+        return getActiveSubscriptionInfoList(/* userVisibleonly */ false);
     }
 
     /**
      * Create a new subscription manager instance that can see all subscriptions across
      * user profiles.
+     *
+     * The permission check for accessing all subscriptions will be enforced upon calling the
+     * individual APIs linked below.
      *
      * @return a SubscriptionManager that can see all subscriptions regardless its user profile
      * association.
@@ -2018,9 +2074,7 @@ public class SubscriptionManager {
      * @see UserHandle
      */
     @FlaggedApi(Flags.FLAG_ENFORCE_SUBSCRIPTION_USER_FILTER)
-    // @RequiresPermission(TODO(b/308809058))
-    // The permission check for accessing all subscriptions will be enforced upon calling the
-    // individual APIs linked above.
+    @RequiresPermission(android.Manifest.permission.INTERACT_ACROSS_PROFILES)
     @NonNull public SubscriptionManager createForAllUserProfiles() {
         return new SubscriptionManager(mContext, true/*isForAllUserProfiles*/);
     }
@@ -2031,7 +2085,7 @@ public class SubscriptionManager {
     *
     * @hide
     */
-    public @Nullable List<SubscriptionInfo> getActiveSubscriptionInfoList(boolean userVisibleOnly) {
+    public @NonNull List<SubscriptionInfo> getActiveSubscriptionInfoList(boolean userVisibleOnly) {
         List<SubscriptionInfo> activeList = null;
 
         try {
@@ -2044,11 +2098,13 @@ public class SubscriptionManager {
             // ignore it
         }
 
-        if (!userVisibleOnly || activeList == null) {
-            return activeList;
-        } else {
+        if (activeList == null || activeList.isEmpty()) {
+            return Collections.emptyList();
+        } else if (userVisibleOnly) {
             return activeList.stream().filter(subInfo -> isSubscriptionVisible(subInfo))
                     .collect(Collectors.toList());
+        } else {
+            return activeList;
         }
     }
 
@@ -2085,7 +2141,7 @@ public class SubscriptionManager {
      * @hide
      */
     @SystemApi
-    public List<SubscriptionInfo> getAvailableSubscriptionInfoList() {
+    public @Nullable List<SubscriptionInfo> getAvailableSubscriptionInfoList() {
         List<SubscriptionInfo> result = null;
 
         try {
@@ -2097,7 +2153,7 @@ public class SubscriptionManager {
         } catch (RemoteException ex) {
             // ignore it
         }
-        return result;
+        return (result == null) ? Collections.emptyList() : result;
     }
 
     /**
@@ -2127,7 +2183,7 @@ public class SubscriptionManager {
      * @throws UnsupportedOperationException If the device does not have
      *          {@link PackageManager#FEATURE_TELEPHONY_EUICC}.
      */
-    public List<SubscriptionInfo> getAccessibleSubscriptionInfoList() {
+    public @Nullable List<SubscriptionInfo> getAccessibleSubscriptionInfoList() {
         List<SubscriptionInfo> result = null;
 
         try {
@@ -2138,7 +2194,7 @@ public class SubscriptionManager {
         } catch (RemoteException ex) {
             // ignore it
         }
-        return result;
+        return (result == null) ? Collections.emptyList() : result;
     }
 
     /**
@@ -2215,7 +2271,6 @@ public class SubscriptionManager {
      *          {@link PackageManager#FEATURE_TELEPHONY_SUBSCRIPTION}.
      */
     @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
-    // @RequiresPermission(TODO(b/308809058))
     public int getActiveSubscriptionInfoCount() {
         int result = 0;
 
@@ -4300,7 +4355,7 @@ public class SubscriptionManager {
      *
      * <p>Note the assumption is that one subscription (which usually means one SIM) has
      * only one phone number. The multiple sources backup each other so hopefully at least one
-     * is availavle. For example, for a carrier that doesn't typically set phone numbers
+     * is available. For example, for a carrier that doesn't typically set phone numbers
      * on {@link #PHONE_NUMBER_SOURCE_UICC UICC}, the source {@link #PHONE_NUMBER_SOURCE_IMS IMS}
      * may provide one. Or, a carrier may decide to provide the phone number via source
      * {@link #PHONE_NUMBER_SOURCE_CARRIER carrier} if neither source UICC nor IMS is available.
@@ -4635,7 +4690,6 @@ public class SubscriptionManager {
      * @param subscriptionId the subId of the subscription
      * @param userHandle user handle of the user
      * @return {@code true} if subscription is associated with user
-     * {code true} if there are no subscriptions on device
      * else {@code false} if subscription is not associated with user.
      *
      * @throws IllegalArgumentException if subscription doesn't exist.
@@ -4658,6 +4712,37 @@ public class SubscriptionManager {
             } else {
                 Log.e(LOG_TAG, "[isSubscriptionAssociatedWithUser]: subscription service "
                         + "unavailable");
+            }
+        } catch (RemoteException ex) {
+            ex.rethrowAsRuntimeException();
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether the given subscription is associated with the calling user.
+     *
+     * @param subscriptionId the subscription ID of the subscription
+     * @return {@code true} if the subscription is associated with the user that the current process
+     *         is running in; {@code false} otherwise.
+     *
+     * @throws IllegalArgumentException if subscription doesn't exist.
+     * @throws SecurityException if the caller doesn't have permissions required.
+     */
+    @RequiresPermission(android.Manifest.permission.READ_PHONE_STATE)
+    @FlaggedApi(Flags.FLAG_SUBSCRIPTION_USER_ASSOCIATION_QUERY)
+    public boolean isSubscriptionAssociatedWithUser(int subscriptionId) {
+        if (!isValidSubscriptionId(subscriptionId)) {
+            throw new IllegalArgumentException("[isSubscriptionAssociatedWithCallingUser]: "
+                    + "Invalid subscriptionId: " + subscriptionId);
+        }
+
+        try {
+            ISub iSub = TelephonyManager.getSubscriptionService();
+            if (iSub != null) {
+                return iSub.isSubscriptionAssociatedWithCallingUser(subscriptionId);
+            } else {
+                throw new IllegalStateException("subscription service unavailable.");
             }
         } catch (RemoteException ex) {
             ex.rethrowAsRuntimeException();
@@ -4725,5 +4810,28 @@ public class SubscriptionManager {
      */
     public static int serviceCapabilityToBitmask(@ServiceCapability int capability) {
         return 1 << (capability - 1);
+    }
+
+    /**
+     * Set the transfer status of the subscriptionInfo of the subId.
+     * @param subscriptionId The unique SubscriptionInfo key in database.
+     * @param status The transfer status to change.
+     *
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_SUPPORT_PSIM_TO_ESIM_CONVERSION)
+    @SystemApi
+    @RequiresPermission(Manifest.permission.WRITE_EMBEDDED_SUBSCRIPTIONS)
+    public void setTransferStatus(int subscriptionId, @TransferStatus int status) {
+        try {
+            ISub iSub = TelephonyManager.getSubscriptionService();
+            if (iSub != null) {
+                iSub.setTransferStatus(subscriptionId, status);
+            }
+        } catch (RemoteException ex) {
+            logd("setTransferStatus for subId = " + subscriptionId + " failed.");
+            throw ex.rethrowFromSystemServer();
+        }
     }
 }

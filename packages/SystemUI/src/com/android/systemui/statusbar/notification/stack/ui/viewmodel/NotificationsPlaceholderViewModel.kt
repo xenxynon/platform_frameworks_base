@@ -20,13 +20,14 @@ import com.android.systemui.common.shared.model.NotificationContainerBounds
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.flags.FeatureFlagsClassic
 import com.android.systemui.flags.Flags
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.scene.shared.flag.SceneContainerFlag
 import com.android.systemui.scene.shared.flag.SceneContainerFlags
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.notification.stack.domain.interactor.NotificationStackAppearanceInteractor
 import com.android.systemui.statusbar.notification.stack.shared.flexiNotifsEnabled
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.StateFlow
 
 /**
  * ViewModel used by the Notification placeholders inside the scene container to update the
@@ -40,9 +41,11 @@ constructor(
     shadeInteractor: ShadeInteractor,
     flags: SceneContainerFlags,
     featureFlags: FeatureFlagsClassic,
+    private val keyguardInteractor: KeyguardInteractor,
 ) {
     /** DEBUG: whether the placeholder "Notifications" text should be shown. */
-    val isPlaceholderTextVisible: Boolean = !flags.flexiNotifsEnabled()
+    val isPlaceholderTextVisible: Boolean =
+        !flags.flexiNotifsEnabled() && SceneContainerFlag.isEnabled
 
     /** DEBUG: whether the placeholder should be made slightly visible for positional debugging. */
     val isVisualDebuggingEnabled: Boolean = featureFlags.isEnabled(Flags.NSSL_DEBUG_LINES)
@@ -64,11 +67,11 @@ constructor(
         right: Float,
         bottom: Float,
     ) {
-        interactor.setStackBounds(NotificationContainerBounds(left, top, right, bottom))
+        val notificationContainerBounds =
+            NotificationContainerBounds(top = top, bottom = bottom, left = left, right = right)
+        keyguardInteractor.setNotificationContainerBounds(notificationContainerBounds)
+        interactor.setStackBounds(notificationContainerBounds)
     }
-
-    /** The corner radius of the placeholder, in dp. */
-    val cornerRadiusDp: StateFlow<Float> = interactor.cornerRadiusDp
 
     /**
      * The height in px of the contents of notification stack. Depending on the number of
@@ -83,8 +86,20 @@ constructor(
      */
     val expandFraction: Flow<Float> = shadeInteractor.shadeExpansion
 
+    /**
+     * The amount in px that the notification stack should scroll due to internal expansion. This
+     * should only happen when a notification expansion hits the bottom of the screen, so it is
+     * necessary to scroll up to keep expanding the notification.
+     */
+    val syntheticScroll: Flow<Float> = interactor.syntheticScroll
+
     /** Sets the y-coord in px of the top of the contents of the notification stack. */
     fun onContentTopChanged(padding: Float) {
         interactor.setContentTop(padding)
+    }
+
+    /** Sets whether the notification stack is scrolled to the top. */
+    fun setScrolledToTop(scrolledToTop: Boolean) {
+        interactor.setScrolledToTop(scrolledToTop)
     }
 }

@@ -22,7 +22,8 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.coroutines.collectValues
 import com.android.systemui.keyguard.data.repository.fakeKeyguardTransitionRepository
-import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.keyguard.shared.model.KeyguardState.DREAMING
+import com.android.systemui.keyguard.shared.model.KeyguardState.GONE
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.keyguard.shared.model.TransitionStep
 import com.android.systemui.kosmos.testScope
@@ -51,8 +52,8 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
         underTest =
             animationFlow.setup(
                 duration = 1000.milliseconds,
-                from = KeyguardState.GONE,
-                to = KeyguardState.DREAMING,
+                from = GONE,
+                to = DREAMING,
             )
     }
 
@@ -181,6 +182,79 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
         }
 
     @Test
+    fun usesOnStepToDoubleValueWithState() =
+        testScope.runTest {
+            val flow =
+                underTest.sharedFlowWithState(
+                    duration = 1000.milliseconds,
+                    onStep = { it * 2 },
+                )
+            val animationValues by collectLastValue(flow)
+            runCurrent()
+
+            repository.sendTransitionStep(step(0f, TransitionState.STARTED))
+            assertThat(animationValues)
+                .isEqualTo(
+                    StateToValue(
+                        from = GONE,
+                        to = DREAMING,
+                        transitionState = TransitionState.STARTED,
+                        value = 0f
+                    )
+                )
+            repository.sendTransitionStep(step(0.3f, TransitionState.RUNNING))
+            assertThat(animationValues)
+                .isEqualTo(
+                    StateToValue(
+                        from = GONE,
+                        to = DREAMING,
+                        transitionState = TransitionState.RUNNING,
+                        value = 0.6f
+                    )
+                )
+            repository.sendTransitionStep(step(0.6f, TransitionState.RUNNING))
+            assertThat(animationValues)
+                .isEqualTo(
+                    StateToValue(
+                        from = GONE,
+                        to = DREAMING,
+                        transitionState = TransitionState.RUNNING,
+                        value = 1.2f
+                    )
+                )
+            repository.sendTransitionStep(step(0.8f, TransitionState.RUNNING))
+            assertThat(animationValues)
+                .isEqualTo(
+                    StateToValue(
+                        from = GONE,
+                        to = DREAMING,
+                        transitionState = TransitionState.RUNNING,
+                        value = 1.6f
+                    )
+                )
+            repository.sendTransitionStep(step(1f, TransitionState.RUNNING))
+            assertThat(animationValues)
+                .isEqualTo(
+                    StateToValue(
+                        from = GONE,
+                        to = DREAMING,
+                        transitionState = TransitionState.RUNNING,
+                        value = 2f
+                    )
+                )
+            repository.sendTransitionStep(step(1f, TransitionState.FINISHED))
+            assertThat(animationValues)
+                .isEqualTo(
+                    StateToValue(
+                        from = GONE,
+                        to = DREAMING,
+                        transitionState = TransitionState.FINISHED,
+                        value = null
+                    )
+                )
+        }
+
+    @Test
     fun sameFloatValueWithTheSameTransitionStateDoesNotEmitTwice() =
         testScope.runTest {
             val flow =
@@ -226,8 +300,8 @@ class KeyguardTransitionAnimationFlowTest : SysuiTestCase() {
         state: TransitionState = TransitionState.RUNNING
     ): TransitionStep {
         return TransitionStep(
-            from = KeyguardState.GONE,
-            to = KeyguardState.DREAMING,
+            from = GONE,
+            to = DREAMING,
             value = value,
             transitionState = state,
             ownerName = "GoneToDreamingTransitionViewModelTest"

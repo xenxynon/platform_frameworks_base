@@ -19,6 +19,7 @@ package com.android.systemui.communal.domain.interactor
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags.FLAG_COMMUNAL_HUB
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.communal.data.repository.FakeCommunalRepository
 import com.android.systemui.communal.data.repository.FakeCommunalWidgetRepository
@@ -27,7 +28,6 @@ import com.android.systemui.communal.data.repository.fakeCommunalWidgetRepositor
 import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
-import com.android.systemui.keyguard.domain.interactor.communalInteractor
 import com.android.systemui.kosmos.testScope
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
@@ -60,14 +60,14 @@ class CommunalInteractorCommunalDisabledTest : SysuiTestCase() {
         widgetRepository = kosmos.fakeCommunalWidgetRepository
         keyguardRepository = kosmos.fakeKeyguardRepository
 
-        communalRepository.setIsCommunalEnabled(false)
+        mSetFlagsRule.disableFlags(FLAG_COMMUNAL_HUB)
 
         underTest = kosmos.communalInteractor
     }
 
     @Test
     fun isCommunalEnabled_false() =
-        testScope.runTest { assertThat(underTest.isCommunalEnabled).isFalse() }
+        testScope.runTest { assertThat(underTest.isCommunalEnabled.value).isFalse() }
 
     @Test
     fun isCommunalAvailable_whenStorageUnlock_false() =
@@ -80,16 +80,5 @@ class CommunalInteractorCommunalDisabledTest : SysuiTestCase() {
             runCurrent()
 
             assertThat(isCommunalAvailable).isFalse()
-        }
-
-    @Test
-    fun updateAppWidgetHostActive_whenStorageUnlock_false() =
-        testScope.runTest {
-            assertThat(widgetRepository.isHostActive()).isFalse()
-
-            keyguardRepository.setIsEncryptedOrLockdown(false)
-            runCurrent()
-
-            assertThat(widgetRepository.isHostActive()).isFalse()
         }
 }

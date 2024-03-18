@@ -301,6 +301,8 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
      */
     private volatile int mActivityStateFlags = ACTIVITY_STATE_FLAG_MASK_MIN_TASK_LAYER;
 
+    private final boolean mCanUseSystemGrammaticalGender;
+
     public WindowProcessController(@NonNull ActivityTaskManagerService atm,
             @NonNull ApplicationInfo info, String name, int uid, int userId, Object owner,
             @NonNull WindowProcessListener listener) {
@@ -322,6 +324,9 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
             mIsActivityConfigOverrideAllowed = false;
         }
 
+        mCanUseSystemGrammaticalGender = mAtm.mGrammaticalManagerInternal != null
+                && mAtm.mGrammaticalManagerInternal.canGetSystemGrammaticalGender(mUid,
+                mInfo.packageName);
         onConfigurationChanged(atm.getGlobalConfiguration());
         mAtm.mPackageConfigPersister.updateConfigIfNeeded(this, mUserId, mInfo.packageName);
     }
@@ -1582,6 +1587,11 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
                         + " unchanged for IME proc " + mName);
             }
             return;
+        }
+
+        if (mCanUseSystemGrammaticalGender) {
+            config.setGrammaticalGender(
+                    mAtm.mGrammaticalManagerInternal.getSystemGrammaticalGender(mUserId));
         }
 
         if (mPauseConfigurationDispatchCount > 0) {

@@ -30,10 +30,13 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,10 +71,13 @@ import androidx.dynamicanimation.animation.DynamicAnimation;
 import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.accessibility.dialog.AccessibilityTarget;
 import com.android.internal.messages.nano.SystemMessageProto;
 import com.android.systemui.Flags;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.SysuiTestableContext;
+import com.android.systemui.accessibility.utils.TestUtils;
+import com.android.systemui.res.R;
 import com.android.systemui.util.settings.SecureSettings;
 import com.android.wm.shell.common.magnetictarget.MagnetizedObject;
 
@@ -81,6 +87,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnit;
@@ -112,6 +119,7 @@ public class MenuViewLayerTest extends SysuiTestCase {
     private String mLastAccessibilityButtonTargets;
     private String mLastEnabledAccessibilityServices;
     private WindowMetrics mWindowMetrics;
+    private MenuViewModel mMenuViewModel;
     private MenuView mMenuView;
     private MenuAnimationController mMenuAnimationController;
 
@@ -122,17 +130,16 @@ public class MenuViewLayerTest extends SysuiTestCase {
     private SysuiTestableContext mSpyContext = getContext();
     @Mock
     private IAccessibilityFloatingMenu mFloatingMenu;
-
-    @Mock
-    private SecureSettings mSecureSettings;
-
     @Mock
     private WindowManager mStubWindowManager;
-
     @Mock
     private AccessibilityManager mStubAccessibilityManager;
+    private final SecureSettings mSecureSettings = TestUtils.mockSecureSettings();
 
     private final NotificationManager mMockNotificationManager = mock(NotificationManager.class);
+
+    private final ArgumentMatcher<IntentFilter> mNotificationMatcher =
+            (arg) -> arg.hasAction(ACTION_UNDO) && arg.hasAction(ACTION_DELETE);
 
     @Before
     public void setUp() throws Exception {
@@ -145,8 +152,18 @@ public class MenuViewLayerTest extends SysuiTestCase {
                 new WindowMetrics(mDisplayBounds, fakeDisplayInsets(), /* density = */ 0.0f));
         doReturn(mWindowMetrics).when(mStubWindowManager).getCurrentWindowMetrics();
 
-        mMenuViewLayer = new MenuViewLayer(mSpyContext, mStubWindowManager,
-                mStubAccessibilityManager, mFloatingMenu, mSecureSettings);
+        mMenuViewModel = new MenuViewModel(
+                mSpyContext, mStubAccessibilityManager, mSecureSettings);
+        MenuViewAppearance menuViewAppearance = new MenuViewAppearance(
+                mSpyContext, mStubWindowManager);
+        mMenuView = spy(
+                new MenuView(mSpyContext, mMenuViewModel, menuViewAppearance, mSecureSettings));
+        // Ensure tests don't actually update metrics.
+        doNothing().when(mMenuView).incrementTexMetric(any(), anyInt());
+
+        mMenuViewLayer = spy(new MenuViewLayer(mSpyContext, mStubWindowManager,
+                mStubAccessibilityManager, mMenuViewModel, menuViewAppearance, mMenuView,
+                mFloatingMenu, mSecureSettings));
         mMenuView = (MenuView) mMenuViewLayer.getChildAt(LayerIndex.MENU_VIEW);
         mMenuAnimationController = mMenuView.getMenuAnimationController();
 
@@ -181,16 +198,16 @@ public class MenuViewLayerTest extends SysuiTestCase {
     @Test
     public void onAttachedToWindow_menuIsVisible() {
         mMenuViewLayer.onAttachedToWindow();
-        final View menuView = mMenuViewLayer.getChildAt(LayerIndex.MENU_VIEW);
 
+        final View menuView = mMenuViewLayer.getChildAt(LayerIndex.MENU_VIEW);
         assertThat(menuView.getVisibility()).isEqualTo(VISIBLE);
     }
 
     @Test
-    public void onAttachedToWindow_menuIsGone() {
+    public void onDetachedFromWindow_menuIsGone() {
         mMenuViewLayer.onDetachedFromWindow();
-        final View menuView = mMenuViewLayer.getChildAt(LayerIndex.MENU_VIEW);
 
+        final View menuView = mMenuViewLayer.getChildAt(LayerIndex.MENU_VIEW);
         assertThat(menuView.getVisibility()).isEqualTo(GONE);
     }
 
@@ -233,6 +250,27 @@ public class MenuViewLayerTest extends SysuiTestCase {
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
 
         assertThat(value).isEqualTo(TEST_SELECT_TO_SPEAK_COMPONENT_NAME.flattenToString());
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_FLOATING_MENU_DRAG_TO_EDIT)
+    public void onEditAction_gotoEditScreen_isCalled() {
+        mMenuViewLayer.dispatchAccessibilityAction(R.id.action_edit);
+        verify(mMenuView).gotoEditScreen();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_FLOATING_MENU_DRAG_TO_HIDE)
+    public void onDismissAction_hideMenuAndShowNotification() {
+        mMenuViewLayer.dispatchAccessibilityAction(R.id.action_remove_menu);
+        verify(mMenuViewLayer).hideMenuAndShowNotification();
+    }
+
+    @Test
+    @DisableFlags(Flags.FLAG_FLOATING_MENU_DRAG_TO_HIDE)
+    public void onDismissAction_hideMenuAndShowMessage() {
+        mMenuViewLayer.dispatchAccessibilityAction(R.id.action_remove_menu);
+        verify(mMenuViewLayer).hideMenuAndShowMessage();
     }
 
     @Test
@@ -307,19 +345,13 @@ public class MenuViewLayerTest extends SysuiTestCase {
     @Test
     @EnableFlags(Flags.FLAG_FLOATING_MENU_DRAG_TO_HIDE)
     public void onReleasedInTarget_hideMenuAndShowNotificationWithExpectedActions() {
-        dragMenuThenReleasedInTarget();
+        dragMenuThenReleasedInTarget(R.id.action_remove_menu);
 
         verify(mMockNotificationManager).notify(
                 eq(SystemMessageProto.SystemMessage.NOTE_A11Y_FLOATING_MENU_HIDDEN),
                 any(Notification.class));
-        ArgumentCaptor<IntentFilter> intentFilterCaptor = ArgumentCaptor.forClass(
-                IntentFilter.class);
         verify(mSpyContext).registerReceiver(
-                any(BroadcastReceiver.class),
-                intentFilterCaptor.capture(),
-                anyInt());
-        assertThat(intentFilterCaptor.getValue().matchAction(ACTION_UNDO)).isTrue();
-        assertThat(intentFilterCaptor.getValue().matchAction(ACTION_DELETE)).isTrue();
+                any(BroadcastReceiver.class), argThat(mNotificationMatcher), anyInt());
     }
 
     @Test
@@ -327,10 +359,10 @@ public class MenuViewLayerTest extends SysuiTestCase {
     public void receiveActionUndo_dismissNotificationAndMenuVisible() {
         ArgumentCaptor<BroadcastReceiver> broadcastReceiverCaptor = ArgumentCaptor.forClass(
                 BroadcastReceiver.class);
-        dragMenuThenReleasedInTarget();
+        dragMenuThenReleasedInTarget(R.id.action_remove_menu);
 
         verify(mSpyContext).registerReceiver(broadcastReceiverCaptor.capture(),
-                any(IntentFilter.class), anyInt());
+                argThat(mNotificationMatcher), anyInt());
         broadcastReceiverCaptor.getValue().onReceive(mSpyContext, new Intent(ACTION_UNDO));
 
         verify(mSpyContext).unregisterReceiver(broadcastReceiverCaptor.getValue());
@@ -344,16 +376,57 @@ public class MenuViewLayerTest extends SysuiTestCase {
     public void receiveActionDelete_dismissNotificationAndHideMenu() {
         ArgumentCaptor<BroadcastReceiver> broadcastReceiverCaptor = ArgumentCaptor.forClass(
                 BroadcastReceiver.class);
-        dragMenuThenReleasedInTarget();
+        dragMenuThenReleasedInTarget(R.id.action_remove_menu);
 
         verify(mSpyContext).registerReceiver(broadcastReceiverCaptor.capture(),
-                any(IntentFilter.class), anyInt());
+                argThat(mNotificationMatcher), anyInt());
         broadcastReceiverCaptor.getValue().onReceive(mSpyContext, new Intent(ACTION_DELETE));
 
         verify(mSpyContext).unregisterReceiver(broadcastReceiverCaptor.getValue());
         verify(mMockNotificationManager).cancel(
                 SystemMessageProto.SystemMessage.NOTE_A11Y_FLOATING_MENU_HIDDEN);
         verify(mFloatingMenu).hide();
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_FLOATING_MENU_DRAG_TO_EDIT)
+    public void onDismissAction_incrementsTexMetricDismiss() {
+        int uid1 = 1234, uid2 = 5678;
+        mMenuViewModel.onTargetFeaturesChanged(
+                List.of(new TestAccessibilityTarget(mSpyContext, uid1),
+                        new TestAccessibilityTarget(mSpyContext, uid2)));
+
+        mMenuViewLayer.dispatchAccessibilityAction(R.id.action_remove_menu);
+
+        ArgumentCaptor<Integer> uidCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(mMenuView, times(2)).incrementTexMetric(eq(MenuViewLayer.TEX_METRIC_DISMISS),
+                uidCaptor.capture());
+        assertThat(uidCaptor.getAllValues()).containsExactly(uid1, uid2);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_FLOATING_MENU_DRAG_TO_EDIT)
+    public void onEditAction_incrementsTexMetricEdit() {
+        int uid1 = 1234, uid2 = 5678;
+        mMenuViewModel.onTargetFeaturesChanged(
+                List.of(new TestAccessibilityTarget(mSpyContext, uid1),
+                        new TestAccessibilityTarget(mSpyContext, uid2)));
+
+        mMenuViewLayer.dispatchAccessibilityAction(R.id.action_edit);
+
+        ArgumentCaptor<Integer> uidCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(mMenuView, times(2)).incrementTexMetric(eq(MenuViewLayer.TEX_METRIC_EDIT),
+                uidCaptor.capture());
+        assertThat(uidCaptor.getAllValues()).containsExactly(uid1, uid2);
+    }
+
+    /** Simplified AccessibilityTarget for testing MenuViewLayer. */
+    private static class TestAccessibilityTarget extends AccessibilityTarget {
+        TestAccessibilityTarget(Context context, int uid) {
+            // Set fields unused by tests to defaults that allow test compilation.
+            super(context, AccessibilityManager.ACCESSIBILITY_BUTTON, 0, false,
+                    TEST_SELECT_TO_SPEAK_COMPONENT_NAME.flattenToString(), uid, null, null, null);
+        }
     }
 
     private void setupEnabledAccessibilityServiceList() {
@@ -423,10 +496,12 @@ public class MenuViewLayerTest extends SysuiTestCase {
                 });
     }
 
-    private void dragMenuThenReleasedInTarget() {
+    private void dragMenuThenReleasedInTarget(int id) {
         MagnetizedObject.MagnetListener magnetListener =
-                mMenuViewLayer.getDragToInteractAnimationController().getMagnetListener();
+                mMenuViewLayer.getDragToInteractAnimationController().getMagnetListener(id);
+        View view = mock(View.class);
+        when(view.getId()).thenReturn(id);
         magnetListener.onReleasedInTarget(
-                new MagnetizedObject.MagneticTarget(mock(View.class), 200));
+                new MagnetizedObject.MagneticTarget(view, 200), mock(MagnetizedObject.class));
     }
 }

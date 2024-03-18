@@ -43,12 +43,10 @@ flag {
 }
 
 flag {
-  name: "sensitive_notification_app_protection"
-  namespace: "systemui"
-  description: "This flag controls the sensitive notification app protections while screen sharing"
-  bug: "312784351"
-  # Referenced in WM where WM starts before DeviceConfig
-  is_fixed_read_only: true
+    name: "screenshare_notification_hiding"
+    namespace: "systemui"
+    description: "Enable hiding of notifications during screenshare"
+    bug: "312784809"
 }
 
 flag {
@@ -63,4 +61,11 @@ flag {
   namespace: "systemui"
   description: "Timing test, no functionality"
   bug: "316931130"
+}
+
+flag {
+  name: "notification_custom_view_uri_restriction"
+  namespace: "systemui"
+  description: "This flag enables memory restriction of notifications holding custom views with Uri Bitmaps"
+  bug: "270553691"
 }

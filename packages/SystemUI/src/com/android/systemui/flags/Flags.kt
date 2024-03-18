@@ -44,11 +44,11 @@ object Flags {
     // 100 - notification
     // TODO(b/297792660): Tracking Bug
     @JvmField val UNCLEARED_TRANSIENT_HUN_FIX =
-        unreleasedFlag("uncleared_transient_hun_fix", teamfood = true)
+        releasedFlag("uncleared_transient_hun_fix")
 
     // TODO(b/298308067): Tracking Bug
     @JvmField val SWIPE_UNCLEARED_TRANSIENT_VIEW_FIX =
-        unreleasedFlag("swipe_uncleared_transient_view_fix", teamfood = true)
+        releasedFlag("swipe_uncleared_transient_view_fix")
 
     // TODO(b/254512751): Tracking Bug
     val NOTIFICATION_PIPELINE_DEVELOPER_LOGGING =
@@ -101,11 +101,6 @@ object Flags {
             "persist.sysui.notification.builder_extras_override",
             default = true
         )
-
-    // TODO(b/301955929)
-    @JvmField
-    val NOTIF_LS_BACKGROUND_THREAD =
-            releasedFlag("notification_lockscreen_mgr_bg_thread")
 
     // 200 - keyguard/lockscreen
     // ** Flag retired **
@@ -220,19 +215,6 @@ object Flags {
     @JvmField
     val WALLPAPER_PICKER_PREVIEW_ANIMATION = releasedFlag("wallpaper_picker_preview_animation")
 
-    /**
-     * TODO(b/278086361): Tracking bug
-     * Complete rewrite of the interactions between System UI and Window Manager involving keyguard
-     * state. When enabled, calls to ActivityTaskManagerService from System UI will exclusively
-     * occur from [WmLockscreenVisibilityManager] rather than the legacy KeyguardViewMediator.
-     *
-     * This flag is under development; some types of unlock may not animate properly if you enable
-     * it.
-     */
-    @JvmField
-    val KEYGUARD_WM_STATE_REFACTOR: UnreleasedFlag =
-            unreleasedFlag("keyguard_wm_state_refactor")
-
     // 300 - power menu
     // TODO(b/254512600): Tracking Bug
     @JvmField val POWER_MENU_LITE = releasedFlag("power_menu_lite")
@@ -341,9 +323,6 @@ object Flags {
 
     // TODO(b/254512673): Tracking Bug
     @JvmField val DREAM_MEDIA_TAP_TO_OPEN = unreleasedFlag("dream_media_tap_to_open")
-
-    // TODO(b/263272731): Tracking Bug
-    val MEDIA_TTT_RECEIVER_SUCCESS_RIPPLE = releasedFlag("media_ttt_receiver_success_ripple")
 
     // TODO(b/266157412): Tracking Bug
     val MEDIA_RETAIN_SESSIONS = unreleasedFlag("media_retain_sessions")
@@ -495,11 +474,6 @@ object Flags {
     val WARN_ON_BLOCKING_BINDER_TRANSACTIONS =
         unreleasedFlag("warn_on_blocking_binder_transactions")
 
-    // TODO(b/283071711): Tracking bug
-    @JvmField
-    val TRIM_RESOURCES_WITH_BACKGROUND_TRIM_AT_LOCK =
-        unreleasedFlag("trim_resources_with_background_trim_on_lock")
-
     // TODO:(b/283203305): Tracking bug
     @JvmField val TRIM_FONT_CACHES_AT_UNLOCK = unreleasedFlag("trim_font_caches_on_unlock")
 
@@ -568,13 +542,6 @@ object Flags {
     @JvmField
     val ENABLE_NEW_PRIVACY_DIALOG = releasedFlag("enable_new_privacy_dialog")
 
-    // TODO(b/289573946): Tracking Bug
-    @JvmField val PRECOMPUTED_TEXT = releasedFlag("precomputed_text")
-
-    // TODO(b/302087895): Tracking Bug
-    @JvmField val CALL_LAYOUT_ASYNC_SET_DATA =
-            unreleasedFlag("call_layout_async_set_data", teamfood = true)
-
     // TODO(b/302144438): Tracking Bug
     @JvmField val DECOUPLE_REMOTE_INPUT_DELEGATE_AND_CALLBACK_UPDATE =
             unreleasedFlag("decouple_remote_input_delegate_and_callback_update")
@@ -600,10 +567,6 @@ object Flags {
     /** Enable the share wifi button in Quick Settings internet dialog. */
     @JvmField
     val SHARE_WIFI_QS_BUTTON = releasedFlag("share_wifi_qs_button")
-
-    // TODO(b/287205379): Tracking bug
-    @JvmField
-    val QS_CONTAINER_GRAPH_OPTIMIZER = releasedFlag( "qs_container_graph_optimizer")
 
     /** Enable showing a dialog when clicking on Quick Settings bluetooth tile. */
     @JvmField

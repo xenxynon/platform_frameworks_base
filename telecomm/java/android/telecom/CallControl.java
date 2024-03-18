@@ -21,7 +21,6 @@ import static android.telecom.CallException.TRANSACTION_EXCEPTION_KEY;
 import android.annotation.CallbackExecutor;
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.annotation.SuppressLint;
 import android.os.Binder;
 import android.os.Bundle;
@@ -31,7 +30,6 @@ import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.text.TextUtils;
 
-import com.android.internal.telecom.ClientTransactionalServiceRepository;
 import com.android.internal.telecom.ICallControl;
 import com.android.server.telecom.flags.Flags;
 
@@ -52,20 +50,13 @@ import java.util.concurrent.Executor;
 @SuppressLint("NotCloseable")
 public final class CallControl {
     private static final String TAG = CallControl.class.getSimpleName();
-    private static final String INTERFACE_ERROR_MSG = "Call Control is not available";
     private final String mCallId;
     private final ICallControl mServerInterface;
-    private final PhoneAccountHandle mPhoneAccountHandle;
-    private final ClientTransactionalServiceRepository mRepository;
 
     /** @hide */
-    public CallControl(@NonNull String callId, @Nullable ICallControl serverInterface,
-            @NonNull ClientTransactionalServiceRepository repository,
-            @NonNull PhoneAccountHandle pah) {
+    public CallControl(@NonNull String callId, @NonNull ICallControl serverInterface) {
         mCallId = callId;
         mServerInterface = serverInterface;
-        mRepository = repository;
-        mPhoneAccountHandle = pah;
     }
 
     /**
@@ -97,16 +88,14 @@ public final class CallControl {
      */
     public void setActive(@CallbackExecutor @NonNull Executor executor,
             @NonNull OutcomeReceiver<Void, CallException> callback) {
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.setActive(mCallId,
-                        new CallControlResultReceiver("setActive", executor, callback));
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        try {
+            mServerInterface.setActive(mCallId,
+                    new CallControlResultReceiver("setActive", executor, callback));
 
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 
@@ -134,16 +123,12 @@ public final class CallControl {
         validateVideoState(videoState);
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.answer(videoState, mCallId,
-                        new CallControlResultReceiver("answer", executor, callback));
+        try {
+            mServerInterface.answer(videoState, mCallId,
+                    new CallControlResultReceiver("answer", executor, callback));
 
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 
@@ -165,16 +150,14 @@ public final class CallControl {
      */
     public void setInactive(@CallbackExecutor @NonNull Executor executor,
             @NonNull OutcomeReceiver<Void, CallException> callback) {
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.setInactive(mCallId,
-                        new CallControlResultReceiver("setInactive", executor, callback));
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        try {
+            mServerInterface.setInactive(mCallId,
+                    new CallControlResultReceiver("setInactive", executor, callback));
 
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 
@@ -213,15 +196,11 @@ public final class CallControl {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
         validateDisconnectCause(disconnectCause);
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.disconnect(mCallId, disconnectCause,
-                        new CallControlResultReceiver("disconnect", executor, callback));
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        try {
+            mServerInterface.disconnect(mCallId, disconnectCause,
+                    new CallControlResultReceiver("disconnect", executor, callback));
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 
@@ -245,15 +224,13 @@ public final class CallControl {
      */
     public void startCallStreaming(@CallbackExecutor @NonNull Executor executor,
             @NonNull OutcomeReceiver<Void, CallException> callback) {
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.startCallStreaming(mCallId,
-                        new CallControlResultReceiver("startCallStreaming", executor, callback));
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        Objects.requireNonNull(executor);
+        Objects.requireNonNull(callback);
+        try {
+            mServerInterface.startCallStreaming(mCallId,
+                    new CallControlResultReceiver("startCallStreaming", executor, callback));
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 
@@ -281,15 +258,11 @@ public final class CallControl {
         Objects.requireNonNull(callEndpoint);
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.requestCallEndpointChange(callEndpoint,
-                        new CallControlResultReceiver("endpointChange", executor, callback));
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        try {
+            mServerInterface.requestCallEndpointChange(callEndpoint,
+                    new CallControlResultReceiver("requestCallEndpointChange", executor, callback));
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 
@@ -313,22 +286,56 @@ public final class CallControl {
      *                 passed that details why the operation failed.
      */
     @FlaggedApi(Flags.FLAG_SET_MUTE_STATE)
-    public void setMuteState(boolean isMuted, @CallbackExecutor @NonNull Executor executor,
+    public void requestMuteState(boolean isMuted, @CallbackExecutor @NonNull Executor executor,
             @NonNull OutcomeReceiver<Void, CallException> callback) {
         Objects.requireNonNull(executor);
         Objects.requireNonNull(callback);
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.setMuteState(isMuted,
-                        new CallControlResultReceiver("setMuteState", executor, callback));
-
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        try {
+            mServerInterface.setMuteState(isMuted,
+                    new CallControlResultReceiver("requestMuteState", executor, callback));
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
+
+     /**
+     * Request a new video state for the ongoing call. This can only be changed if the application
+     * has registered a {@link PhoneAccount} with the
+     * {@link PhoneAccount#CAPABILITY_SUPPORTS_VIDEO_CALLING} and set the
+     * {@link CallAttributes#SUPPORTS_VIDEO_CALLING} when adding the call via
+     * {@link TelecomManager#addCall(CallAttributes, Executor, OutcomeReceiver,
+     *                                                      CallControlCallback, CallEventCallback)}
+     *
+     * @param videoState to report to Telecom. To see the valid argument to pass,
+      *                   see {@link CallAttributes.CallType}.
+     * @param executor   The {@link Executor} on which the {@link OutcomeReceiver} callback
+     *                   will be called on.
+     * @param callback   that will be completed on the Telecom side that details success or failure
+     *                   of the requested operation.
+     *
+     *                   {@link OutcomeReceiver#onResult} will be called if Telecom has successfully
+     *                   switched the video state.
+     *
+     *                   {@link OutcomeReceiver#onError} will be called if Telecom has failed to set
+     *                   the new video state.  A {@link CallException} will be passed
+     *                   that details why the operation failed.
+     * @throws IllegalArgumentException if the argument passed for videoState is invalid.  To see a
+     * list of valid states, see {@link CallAttributes.CallType}.
+     */
+     @FlaggedApi(Flags.FLAG_TRANSACTIONAL_VIDEO_STATE)
+     public void requestVideoState(@CallAttributes.CallType int videoState,
+             @CallbackExecutor @NonNull Executor executor,
+             @NonNull OutcomeReceiver<Void, CallException> callback) {
+         validateVideoState(videoState);
+         Objects.requireNonNull(executor);
+         Objects.requireNonNull(callback);
+         try {
+             mServerInterface.requestVideoState(videoState, mCallId,
+                     new CallControlResultReceiver("requestVideoState", executor, callback));
+         } catch (RemoteException e) {
+             throw e.rethrowAsRuntimeException();
+         }
+     }
 
     /**
      * Raises an event to the {@link android.telecom.InCallService} implementations tracking this
@@ -352,14 +359,10 @@ public final class CallControl {
     public void sendEvent(@NonNull String event, @NonNull Bundle extras) {
         Objects.requireNonNull(event);
         Objects.requireNonNull(extras);
-        if (mServerInterface != null) {
-            try {
-                mServerInterface.sendEvent(mCallId, event, extras);
-            } catch (RemoteException e) {
-                throw e.rethrowAsRuntimeException();
-            }
-        } else {
-            throw new IllegalStateException(INTERFACE_ERROR_MSG);
+        try {
+            mServerInterface.sendEvent(mCallId, event, extras);
+        } catch (RemoteException e) {
+            throw e.rethrowAsRuntimeException();
         }
     }
 

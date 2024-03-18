@@ -18,10 +18,12 @@
 package com.android.systemui.communal.domain.interactor
 
 import android.app.smartspace.SmartspaceTarget
+import android.content.pm.UserInfo
 import android.provider.Settings.Secure.HUB_MODE_TUTORIAL_COMPLETED
 import android.widget.RemoteViews
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
+import com.android.systemui.Flags.FLAG_COMMUNAL_HUB
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.communal.data.repository.FakeCommunalMediaRepository
 import com.android.systemui.communal.data.repository.FakeCommunalPrefsRepository
@@ -40,14 +42,20 @@ import com.android.systemui.communal.shared.model.CommunalWidgetContentModel
 import com.android.systemui.communal.shared.model.ObservableCommunalTransitionState
 import com.android.systemui.communal.widgets.EditWidgetsActivityStarter
 import com.android.systemui.coroutines.collectLastValue
+import com.android.systemui.flags.Flags
+import com.android.systemui.flags.fakeFeatureFlagsClassic
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
 import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
-import com.android.systemui.keyguard.domain.interactor.communalInteractor
-import com.android.systemui.keyguard.domain.interactor.editWidgetsActivityStarter
 import com.android.systemui.kosmos.testScope
+import com.android.systemui.scene.domain.interactor.SceneInteractor
+import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.flag.fakeSceneContainerFlags
+import com.android.systemui.scene.shared.model.SceneKey
 import com.android.systemui.smartspace.data.repository.FakeSmartspaceRepository
 import com.android.systemui.smartspace.data.repository.fakeSmartspaceRepository
 import com.android.systemui.testKosmos
+import com.android.systemui.user.data.repository.FakeUserRepository
+import com.android.systemui.user.data.repository.fakeUserRepository
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
@@ -59,8 +67,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mock
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.mockito.MockitoAnnotations
 
 /**
  * This class of test cases assume that communal is enabled. For disabled cases, see
@@ -70,6 +80,9 @@ import org.mockito.Mockito.verify
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 class CommunalInteractorTest : SysuiTestCase() {
+    @Mock private lateinit var mainUser: UserInfo
+    @Mock private lateinit var secondaryUser: UserInfo
+
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
 
@@ -78,64 +91,112 @@ class CommunalInteractorTest : SysuiTestCase() {
     private lateinit var mediaRepository: FakeCommunalMediaRepository
     private lateinit var widgetRepository: FakeCommunalWidgetRepository
     private lateinit var smartspaceRepository: FakeSmartspaceRepository
+    private lateinit var userRepository: FakeUserRepository
     private lateinit var keyguardRepository: FakeKeyguardRepository
     private lateinit var communalPrefsRepository: FakeCommunalPrefsRepository
     private lateinit var editWidgetsActivityStarter: EditWidgetsActivityStarter
+    private lateinit var sceneInteractor: SceneInteractor
 
     private lateinit var underTest: CommunalInteractor
 
     @Before
     fun setUp() {
+        MockitoAnnotations.initMocks(this)
+
         tutorialRepository = kosmos.fakeCommunalTutorialRepository
         communalRepository = kosmos.fakeCommunalRepository
         mediaRepository = kosmos.fakeCommunalMediaRepository
         widgetRepository = kosmos.fakeCommunalWidgetRepository
         smartspaceRepository = kosmos.fakeSmartspaceRepository
+        userRepository = kosmos.fakeUserRepository
         keyguardRepository = kosmos.fakeKeyguardRepository
         editWidgetsActivityStarter = kosmos.editWidgetsActivityStarter
         communalPrefsRepository = kosmos.fakeCommunalPrefsRepository
+        sceneInteractor = kosmos.sceneInteractor
+
+        whenever(mainUser.isMain).thenReturn(true)
+        whenever(secondaryUser.isMain).thenReturn(false)
+        userRepository.setUserInfos(listOf(mainUser, secondaryUser))
+
+        kosmos.fakeFeatureFlagsClassic.set(Flags.COMMUNAL_SERVICE_ENABLED, true)
+        mSetFlagsRule.enableFlags(FLAG_COMMUNAL_HUB)
 
         underTest = kosmos.communalInteractor
     }
 
     @Test
     fun communalEnabled_true() =
-        testScope.runTest { assertThat(underTest.isCommunalEnabled).isTrue() }
+        testScope.runTest {
+            userRepository.setSelectedUserInfo(mainUser)
+            runCurrent()
+            assertThat(underTest.isCommunalEnabled.value).isTrue()
+        }
 
     @Test
-    fun isCommunalAvailable_trueWhenStorageUnlock() =
+    fun isCommunalAvailable_storageUnlockedAndMainUser_true() =
         testScope.runTest {
             val isAvailable by collectLastValue(underTest.isCommunalAvailable)
             assertThat(isAvailable).isFalse()
 
             keyguardRepository.setIsEncryptedOrLockdown(false)
-            runCurrent()
+            userRepository.setSelectedUserInfo(mainUser)
+            keyguardRepository.setKeyguardShowing(true)
 
             assertThat(isAvailable).isTrue()
         }
 
     @Test
-    fun isCommunalAvailable_whenStorageUnlock_true() =
+    fun isCommunalAvailable_storageLockedAndMainUser_false() =
+        testScope.runTest {
+            val isAvailable by collectLastValue(underTest.isCommunalAvailable)
+            assertThat(isAvailable).isFalse()
+
+            keyguardRepository.setIsEncryptedOrLockdown(true)
+            userRepository.setSelectedUserInfo(mainUser)
+            keyguardRepository.setKeyguardShowing(true)
+
+            assertThat(isAvailable).isFalse()
+        }
+
+    @Test
+    fun isCommunalAvailable_storageUnlockedAndSecondaryUser_false() =
         testScope.runTest {
             val isAvailable by collectLastValue(underTest.isCommunalAvailable)
             assertThat(isAvailable).isFalse()
 
             keyguardRepository.setIsEncryptedOrLockdown(false)
-            runCurrent()
+            userRepository.setSelectedUserInfo(secondaryUser)
+            keyguardRepository.setKeyguardShowing(true)
+
+            assertThat(isAvailable).isFalse()
+        }
+
+    @Test
+    fun isCommunalAvailable_whenDreaming_true() =
+        testScope.runTest {
+            val isAvailable by collectLastValue(underTest.isCommunalAvailable)
+            assertThat(isAvailable).isFalse()
+
+            keyguardRepository.setIsEncryptedOrLockdown(false)
+            userRepository.setSelectedUserInfo(mainUser)
+            keyguardRepository.setDreaming(true)
 
             assertThat(isAvailable).isTrue()
         }
 
     @Test
-    fun updateAppWidgetHostActive_uponStorageUnlock_true() =
+    fun isCommunalAvailable_communalDisabled_false() =
         testScope.runTest {
-            collectLastValue(underTest.isCommunalAvailable)
-            assertThat(widgetRepository.isHostActive()).isFalse()
+            mSetFlagsRule.disableFlags(FLAG_COMMUNAL_HUB)
+
+            val isAvailable by collectLastValue(underTest.isCommunalAvailable)
+            assertThat(isAvailable).isFalse()
 
             keyguardRepository.setIsEncryptedOrLockdown(false)
-            runCurrent()
+            userRepository.setSelectedUserInfo(mainUser)
+            keyguardRepository.setKeyguardShowing(true)
 
-            assertThat(widgetRepository.isHostActive()).isTrue()
+            assertThat(isAvailable).isFalse()
         }
 
     @Test
@@ -543,17 +604,137 @@ class CommunalInteractorTest : SysuiTestCase() {
         }
 
     @Test
-    fun isCommunalShowing() =
+    fun isCommunalShowing_whenSceneContainerDisabled() =
         testScope.runTest {
-            var isCommunalShowing = collectLastValue(underTest.isCommunalShowing)
+            // Verify default is false
+            val isCommunalShowing by collectLastValue(underTest.isCommunalShowing)
             runCurrent()
-            assertThat(isCommunalShowing()).isEqualTo(false)
+            assertThat(isCommunalShowing).isFalse()
 
+            // Verify scene changes with the flag doesn't have any impact
+            sceneInteractor.changeScene(SceneKey.Communal, loggingReason = "")
+            runCurrent()
+            assertThat(isCommunalShowing).isFalse()
+
+            // Verify scene changes (without the flag) to communal sets the value to true
             underTest.onSceneChanged(CommunalSceneKey.Communal)
-
-            isCommunalShowing = collectLastValue(underTest.isCommunalShowing)
             runCurrent()
-            assertThat(isCommunalShowing()).isEqualTo(true)
+            assertThat(isCommunalShowing).isTrue()
+
+            // Verify scene changes (without the flag) to blank sets the value back to false
+            underTest.onSceneChanged(CommunalSceneKey.Blank)
+            runCurrent()
+            assertThat(isCommunalShowing).isFalse()
+        }
+
+    @Test
+    fun isCommunalShowing_whenSceneContainerEnabled() =
+        testScope.runTest {
+            kosmos.fakeSceneContainerFlags.enabled = true
+
+            // Verify default is false
+            val isCommunalShowing by collectLastValue(underTest.isCommunalShowing)
+            runCurrent()
+            assertThat(isCommunalShowing).isFalse()
+
+            // Verify scene changes without the flag doesn't have any impact
+            underTest.onSceneChanged(CommunalSceneKey.Communal)
+            runCurrent()
+            assertThat(isCommunalShowing).isFalse()
+
+            // Verify scene changes (with the flag) to communal sets the value to true
+            sceneInteractor.changeScene(SceneKey.Communal, loggingReason = "")
+            runCurrent()
+            assertThat(isCommunalShowing).isTrue()
+
+            // Verify scene changes (with the flag) to lockscreen sets the value to false
+            sceneInteractor.changeScene(SceneKey.Lockscreen, loggingReason = "")
+            runCurrent()
+            assertThat(isCommunalShowing).isFalse()
+        }
+
+    @Test
+    fun isIdleOnCommunal() =
+        testScope.runTest {
+            val transitionState =
+                MutableStateFlow<ObservableCommunalTransitionState>(
+                    ObservableCommunalTransitionState.Idle(CommunalSceneKey.Blank)
+                )
+            communalRepository.setTransitionState(transitionState)
+
+            // isIdleOnCommunal is false when not on communal.
+            val isIdleOnCommunal by collectLastValue(underTest.isIdleOnCommunal)
+            runCurrent()
+            assertThat(isIdleOnCommunal).isEqualTo(false)
+
+            // Transition to communal.
+            transitionState.value =
+                ObservableCommunalTransitionState.Idle(CommunalSceneKey.Communal)
+            runCurrent()
+
+            // isIdleOnCommunal is now true since we're on communal.
+            assertThat(isIdleOnCommunal).isEqualTo(true)
+
+            // Start transition away from communal.
+            transitionState.value =
+                ObservableCommunalTransitionState.Transition(
+                    fromScene = CommunalSceneKey.Communal,
+                    toScene = CommunalSceneKey.Blank,
+                    progress = flowOf(0f),
+                    isInitiatedByUserInput = false,
+                    isUserInputOngoing = flowOf(false),
+                )
+            runCurrent()
+
+            // isIdleOnCommunal turns false as soon as transition away starts.
+            assertThat(isIdleOnCommunal).isEqualTo(false)
+        }
+
+    @Test
+    fun isCommunalVisible() =
+        testScope.runTest {
+            val transitionState =
+                MutableStateFlow<ObservableCommunalTransitionState>(
+                    ObservableCommunalTransitionState.Idle(CommunalSceneKey.Blank)
+                )
+            communalRepository.setTransitionState(transitionState)
+
+            // isCommunalVisible is false when not on communal.
+            val isCommunalVisible by collectLastValue(underTest.isCommunalVisible)
+            assertThat(isCommunalVisible).isEqualTo(false)
+
+            // Start transition to communal.
+            transitionState.value =
+                ObservableCommunalTransitionState.Transition(
+                    fromScene = CommunalSceneKey.Blank,
+                    toScene = CommunalSceneKey.Communal,
+                    progress = flowOf(0f),
+                    isInitiatedByUserInput = false,
+                    isUserInputOngoing = flowOf(false),
+                )
+
+            // isCommunalVisible is true once transition starts.
+            assertThat(isCommunalVisible).isEqualTo(true)
+
+            // Finish transition to communal
+            transitionState.value =
+                ObservableCommunalTransitionState.Idle(CommunalSceneKey.Communal)
+
+            // isCommunalVisible is true since we're on communal.
+            assertThat(isCommunalVisible).isEqualTo(true)
+
+            // Start transition away from communal.
+            transitionState.value =
+                ObservableCommunalTransitionState.Transition(
+                    fromScene = CommunalSceneKey.Communal,
+                    toScene = CommunalSceneKey.Blank,
+                    progress = flowOf(1.0f),
+                    isInitiatedByUserInput = false,
+                    isUserInputOngoing = flowOf(false),
+                )
+
+            // isCommunalVisible is still true as the false as soon as transition away runs.
+            assertThat(isCommunalVisible).isEqualTo(true)
         }
 
     @Test
@@ -561,6 +742,14 @@ class CommunalInteractorTest : SysuiTestCase() {
         testScope.runTest {
             underTest.showWidgetEditor()
             verify(editWidgetsActivityStarter).startActivity()
+        }
+
+    @Test
+    fun showWidgetEditor_withPreselectedKey_startsActivity() =
+        testScope.runTest {
+            val widgetKey = CommunalContentModel.KEY.widget(123)
+            underTest.showWidgetEditor(preselectedKey = widgetKey)
+            verify(editWidgetsActivityStarter).startActivity(widgetKey)
         }
 
     private fun smartspaceTimer(id: String, timestamp: Long = 0L): SmartspaceTarget {

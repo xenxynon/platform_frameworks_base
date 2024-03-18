@@ -22,6 +22,7 @@ import android.content.pm.PermissionGroupInfo
 import android.content.pm.PermissionInfo
 import android.content.pm.SigningDetails
 import android.os.Build
+import android.permission.flags.Flags
 import android.util.Slog
 import com.android.internal.os.RoSystemProperties
 import com.android.internal.pm.permission.CompatibilityPermissionInfo
@@ -45,6 +46,7 @@ import com.android.server.pm.KnownPackages
 import com.android.server.pm.parsing.PackageInfoUtils
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.pkg.PackageState
+import libcore.util.EmptyArray
 
 class AppIdPermissionPolicy : SchemePolicy() {
     private val persistence = AppIdPermissionPersistence()
@@ -72,40 +74,42 @@ class AppIdPermissionPolicy : SchemePolicy() {
     }
 
     override fun MutateStateScope.onInitialized() {
-        newState.externalState.configPermissions.forEach { (permissionName, permissionEntry) ->
-            val oldPermission = newState.systemState.permissions[permissionName]
-            val newPermission =
-                if (oldPermission != null) {
-                    if (permissionEntry.gids != null) {
-                        oldPermission.copy(
-                            gids = permissionEntry.gids,
-                            areGidsPerUser = permissionEntry.perUser
-                        )
-                    } else {
-                        return@forEach
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    val permissionInfo =
-                        PermissionInfo().apply {
-                            name = permissionName
-                            packageName = PLATFORM_PACKAGE_NAME
-                            protectionLevel = PermissionInfo.PROTECTION_SIGNATURE
+        if (!Flags.newPermissionGidEnabled()) {
+            newState.externalState.configPermissions.forEach { (permissionName, permissionEntry) ->
+                val oldPermission = newState.systemState.permissions[permissionName]
+                val newPermission =
+                    if (oldPermission != null) {
+                        if (permissionEntry.gids != null) {
+                            oldPermission.copy(
+                                gids = permissionEntry.gids,
+                                areGidsPerUser = permissionEntry.perUser
+                            )
+                        } else {
+                            return@forEach
                         }
-                    if (permissionEntry.gids != null) {
-                        Permission(
-                            permissionInfo,
-                            false,
-                            Permission.TYPE_CONFIG,
-                            0,
-                            permissionEntry.gids,
-                            permissionEntry.perUser
-                        )
                     } else {
-                        Permission(permissionInfo, false, Permission.TYPE_CONFIG, 0)
+                        @Suppress("DEPRECATION")
+                        val permissionInfo =
+                            PermissionInfo().apply {
+                                name = permissionName
+                                packageName = PLATFORM_PACKAGE_NAME
+                                protectionLevel = PermissionInfo.PROTECTION_SIGNATURE
+                            }
+                        if (permissionEntry.gids != null) {
+                            Permission(
+                                permissionInfo,
+                                false,
+                                Permission.TYPE_CONFIG,
+                                0,
+                                permissionEntry.gids,
+                                permissionEntry.perUser
+                            )
+                        } else {
+                            Permission(permissionInfo, false, Permission.TYPE_CONFIG, 0)
+                        }
                     }
-                }
-            newState.mutateSystemState().mutatePermissions()[permissionName] = newPermission
+                newState.mutateSystemState().mutatePermissions()[permissionName] = newPermission
+            }
         }
     }
 
@@ -458,7 +462,7 @@ class AppIdPermissionPolicy : SchemePolicy() {
                 )
                 return@forEachIndexed
             }
-            val newPermission =
+            var newPermission =
                 if (oldPermission != null && newPackageName != oldPermission.packageName) {
                     val oldPackageName = oldPermission.packageName
                     // Only allow system apps to redefine non-system permissions.
@@ -581,6 +585,29 @@ class AppIdPermissionPolicy : SchemePolicy() {
                         )
                     }
                 }
+            if (Flags.newPermissionGidEnabled()) {
+                var gids = EmptyArray.INT
+                var areGidsPerUser = false
+                if (!parsedPermission.isTree && packageState.isSystem) {
+                    newState.externalState.configPermissions[permissionName]?.let {
+                        // PermissionEntry.gids may return null when parsing legacy config trying
+                        // to work around an issue about upgrading from L platfrm. We can just
+                        // ignore such entries now.
+                        if (it.gids != null) {
+                            gids = it.gids
+                            areGidsPerUser = it.perUser
+                        }
+                    }
+                }
+                newPermission = Permission(
+                    newPermissionInfo,
+                    true,
+                    Permission.TYPE_MANIFEST,
+                    packageState.appId,
+                    gids,
+                    areGidsPerUser
+                )
+            }
 
             if (parsedPermission.isTree) {
                 newState.mutateSystemState().mutatePermissionTrees()[permissionName] = newPermission
@@ -1197,15 +1224,80 @@ class AppIdPermissionPolicy : SchemePolicy() {
             newState.externalState.packageStates[PLATFORM_PACKAGE_NAME]!!
                 .androidPackage!!
                 .signingDetails
-        return sourceSigningDetails?.hasCommonSignerWithCapability(
-            packageSigningDetails,
-            SigningDetails.CertCapabilities.PERMISSION
-        ) == true ||
-            packageSigningDetails.hasAncestorOrSelf(platformSigningDetails) ||
-            platformSigningDetails.checkCapability(
+        val hasCommonSigner =
+            sourceSigningDetails?.hasCommonSignerWithCapability(
                 packageSigningDetails,
                 SigningDetails.CertCapabilities.PERMISSION
-            )
+            ) == true ||
+                packageSigningDetails.hasAncestorOrSelf(platformSigningDetails) ||
+                platformSigningDetails.checkCapability(
+                    packageSigningDetails,
+                    SigningDetails.CertCapabilities.PERMISSION
+                )
+        if (!Flags.signaturePermissionAllowlistEnabled()) {
+            return hasCommonSigner;
+        }
+        if (!hasCommonSigner) {
+            return false
+        }
+        // A platform signature permission also needs to be allowlisted on non-debuggable builds.
+        if (permission.packageName == PLATFORM_PACKAGE_NAME) {
+            val isRequestedByFactoryApp =
+                if (packageState.isSystem) {
+                    // For updated system applications, a signature permission still needs to be
+                    // allowlisted if it wasn't requested by the original application.
+                    if (packageState.isUpdatedSystemApp) {
+                        val disabledSystemPackage =
+                            newState.externalState.disabledSystemPackageStates[
+                                    packageState.packageName]
+                                ?.androidPackage
+                        disabledSystemPackage != null &&
+                            permission.name in disabledSystemPackage.requestedPermissions
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                }
+            if (
+                !(isRequestedByFactoryApp ||
+                    getSignaturePermissionAllowlistState(packageState, permission.name) == true)
+            ) {
+                Slog.w(
+                    LOG_TAG,
+                    "Signature permission ${permission.name} for package" +
+                        " ${packageState.packageName} (${packageState.path}) not in" +
+                        " signature permission allowlist"
+                )
+                if (!Build.isDebuggable()) {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    private fun MutateStateScope.getSignaturePermissionAllowlistState(
+        packageState: PackageState,
+        permissionName: String
+    ): Boolean? {
+        val permissionAllowlist = newState.externalState.permissionAllowlist
+        val packageName = packageState.packageName
+        return when {
+            packageState.isVendor || packageState.isOdm ->
+                permissionAllowlist.getVendorSignatureAppAllowlistState(packageName, permissionName)
+            packageState.isProduct ->
+                permissionAllowlist.getProductSignatureAppAllowlistState(
+                    packageName,
+                    permissionName
+                )
+            packageState.isSystemExt ->
+                permissionAllowlist.getSystemExtSignatureAppAllowlistState(
+                    packageName,
+                    permissionName
+                )
+            else -> permissionAllowlist.getSignatureAppAllowlistState(packageName, permissionName)
+        }
     }
 
     private fun MutateStateScope.checkPrivilegedPermissionAllowlist(
@@ -1595,6 +1687,9 @@ class AppIdPermissionPolicy : SchemePolicy() {
         permissionName: String
     ): Int =
         state.userStates[userId]?.appIdPermissionFlags?.get(appId).getWithDefault(permissionName, 0)
+
+    fun GetStateScope.getAllPermissionFlags(appId: Int, userId: Int): IndexedMap<String, Int>? =
+        state.userStates[userId]?.appIdPermissionFlags?.get(appId)
 
     fun MutateStateScope.setPermissionFlags(
         appId: Int,

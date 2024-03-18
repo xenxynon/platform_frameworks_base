@@ -55,10 +55,12 @@ constructor(
     }
 
     /** The key of the scene we should switch to when swiping left. */
-    val leftDestinationSceneKey: SceneKey? =
-        if (communalInteractor.isCommunalEnabled) {
-            SceneKey.Communal
-        } else {
-            null
-        }
+    val leftDestinationSceneKey: StateFlow<SceneKey?> =
+        communalInteractor.isCommunalAvailable
+            .map { available -> if (available) SceneKey.Communal else null }
+            .stateIn(
+                scope = applicationScope,
+                started = SharingStarted.WhileSubscribed(),
+                initialValue = null,
+            )
 }

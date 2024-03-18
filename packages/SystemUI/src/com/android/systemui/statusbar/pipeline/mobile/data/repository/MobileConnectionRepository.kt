@@ -78,6 +78,9 @@ interface MobileConnectionRepository {
      */
     val isInService: StateFlow<Boolean>
 
+    /** Reflects [android.telephony.ServiceState.isUsingNonTerrestrialNetwork] */
+    val isNonTerrestrial: StateFlow<Boolean>
+
     /** True if [android.telephony.SignalStrength] told us that this connection is using GSM */
     val isGsm: StateFlow<Boolean>
 
@@ -135,6 +138,7 @@ interface MobileConnectionRepository {
     val imsRegistered: StateFlow<Boolean>
     val imsRegistrationTech: StateFlow<Int>
     val isConnectionFailed: StateFlow<Boolean>
+    val ciwlanAvailable: StateFlow<Boolean>
 
     /**
      * The service provider name for this network connection, or the default name.

@@ -17,6 +17,7 @@
 package com.android.keyguard
 
 import android.testing.TestableLooper
+import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ImageView
@@ -24,11 +25,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import com.android.internal.util.LatencyTracker
 import com.android.internal.widget.LockPatternUtils
+import com.android.keyguard.domain.interactor.KeyguardKeyboardInteractor
 import com.android.systemui.Flags as AconfigFlags
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.classifier.FalsingCollector
 import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.Flags
+import com.android.systemui.keyboard.data.repository.FakeKeyboardRepository
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.policy.DevicePostureController
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
@@ -49,10 +52,14 @@ import org.mockito.MockitoAnnotations
 
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-@TestableLooper.RunWithLooper
+// collectFlow in KeyguardPinBasedInputViewController.onViewAttached calls JavaAdapter.CollectFlow,
+// which calls View.onRepeatWhenAttached, which requires being run on main thread.
+@TestableLooper.RunWithLooper(setAsMainLooper = true)
 class KeyguardPasswordViewControllerTest : SysuiTestCase() {
     @Mock private lateinit var keyguardPasswordView: KeyguardPasswordView
     @Mock private lateinit var passwordEntry: EditText
+    private var passwordEntryLayoutParams =
+        ViewGroup.LayoutParams(/* width = */ 0, /* height = */ 0)
     @Mock lateinit var keyguardUpdateMonitor: KeyguardUpdateMonitor
     @Mock lateinit var securityMode: KeyguardSecurityModel.SecurityMode
     @Mock lateinit var lockPatternUtils: LockPatternUtils
@@ -90,6 +97,8 @@ class KeyguardPasswordViewControllerTest : SysuiTestCase() {
         whenever(keyguardPasswordView.findViewById<ImageView>(R.id.switch_ime_button))
             .thenReturn(mock(ImageView::class.java))
         `when`(keyguardPasswordView.resources).thenReturn(context.resources)
+        whenever(passwordEntry.layoutParams).thenReturn(passwordEntryLayoutParams)
+        val keyguardKeyboardInteractor = KeyguardKeyboardInteractor(FakeKeyboardRepository())
         val fakeFeatureFlags = FakeFeatureFlags()
         fakeFeatureFlags.set(Flags.LOCKSCREEN_ENABLE_LANDSCAPE, false)
         mSetFlagsRule.enableFlags(AconfigFlags.FLAG_REVAMPED_BOUNCER_MESSAGES)
@@ -111,6 +120,7 @@ class KeyguardPasswordViewControllerTest : SysuiTestCase() {
                 postureController,
                 fakeFeatureFlags,
                 mSelectedUserInteractor,
+                keyguardKeyboardInteractor,
             )
     }
 

@@ -33,6 +33,7 @@ import static android.view.WindowManager.TRANSIT_CHANGE;
 import static android.view.WindowManager.TRANSIT_CLOSE;
 import static android.view.WindowManager.TRANSIT_OPEN;
 import static android.view.WindowManager.TRANSIT_TO_BACK;
+import static android.window.TransitionInfo.FLAG_CONFIG_AT_END;
 import static android.window.TransitionInfo.FLAG_FILLS_TASK;
 import static android.window.TransitionInfo.FLAG_IN_TASK_WITH_EMBEDDED_ACTIVITY;
 import static android.window.TransitionInfo.FLAG_IS_BEHIND_STARTING_WINDOW;
@@ -1602,6 +1603,33 @@ public class TransitionTests extends WindowTestsBase {
     }
 
     @Test
+    public void testTransientWithParallelLaunch() {
+        final Task recentTask = mDisplayContent.getDefaultTaskDisplayArea().getRootHomeTask();
+        final ActivityRecord recent = new ActivityBuilder(mAtm).setTask(recentTask)
+                .setVisible(false).build();
+        final ActivityRecord app = new ActivityBuilder(mAtm).setCreateTask(true).build();
+        final Task appTask = app.getTask();
+        registerTestTransitionPlayer();
+        final TransitionController controller = mRootWindowContainer.mTransitionController;
+        final Transition transition = createTestTransition(TRANSIT_OPEN, controller);
+        transition.mParallelCollectType = Transition.PARALLEL_TYPE_RECENTS;
+        controller.moveToCollecting(transition);
+        transition.collect(recentTask);
+        transition.collect(appTask);
+        transition.setTransientLaunch(recent, appTask);
+        recentTask.moveToFront("move-recent-to-front");
+        transition.setAllReady();
+        transition.start();
+        // Assume that the app starts another activity in its task.
+        final Transition newTransition = controller.createAndStartCollecting(TRANSIT_OPEN);
+
+        assertEquals(newTransition, controller.getCollectingTransition());
+        assertTrue(controller.mWaitingTransitions.contains(transition));
+        assertTrue(controller.isTransientHide(appTask));
+        assertTrue(controller.isTransientVisible(appTask));
+    }
+
+    @Test
     public void testNotReadyPushPop() {
         final TransitionController controller = new TestTransitionController(mAtm);
         controller.setSyncEngine(mWm.mSyncEngine);
@@ -2510,6 +2538,36 @@ public class TransitionTests extends WindowTestsBase {
         if (explicitRefreshRateHints) {
             verify(session[0]).close();
         }
+    }
+
+    @Test
+    public void testConfigAtEnd() {
+        final TransitionController controller = mDisplayContent.mTransitionController;
+        Transition transit = createTestTransition(TRANSIT_CHANGE, controller);
+        final TestTransitionPlayer player = registerTestTransitionPlayer();
+
+        final Task task = createTask(mDisplayContent);
+        final Rect taskBounds = new Rect(0, 0, 200, 300);
+        task.getConfiguration().windowConfiguration.setBounds(taskBounds);
+        final ActivityRecord activity = createActivityRecord(task);
+        activity.setVisibleRequested(true);
+        activity.setVisible(true);
+
+        controller.moveToCollecting(transit);
+        transit.collect(task);
+        transit.setConfigAtEnd(task);
+        task.getRequestedOverrideConfiguration().windowConfiguration.setBounds(
+                new Rect(10, 10, 200, 300));
+        task.onRequestedOverrideConfigurationChanged(task.getRequestedOverrideConfiguration());
+
+        controller.requestStartTransition(transit, task, null, null);
+        player.start();
+        assertTrue(activity.isConfigurationDispatchPaused());
+        // config-at-end flag must propagate up to task if activity was promoted.
+        assertTrue(player.mLastReady.getChange(
+                task.mRemoteToken.toWindowContainerToken()).hasFlags(FLAG_CONFIG_AT_END));
+        player.finish();
+        assertFalse(activity.isConfigurationDispatchPaused());
     }
 
     @Test

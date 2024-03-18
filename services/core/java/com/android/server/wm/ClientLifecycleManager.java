@@ -64,6 +64,10 @@ class ClientLifecycleManager {
         final IApplicationThread client = transaction.getClient();
         try {
             transaction.schedule();
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Failed to deliver transaction for " + client
+                            + "\ntransaction=" + transaction);
+            throw e;
         } finally {
             if (!(client instanceof Binder)) {
                 // If client is not an instance of Binder - it's a remote call and at this point it
@@ -83,11 +87,7 @@ class ClientLifecycleManager {
     void scheduleTransactionItemNow(@NonNull IApplicationThread client,
             @NonNull ClientTransactionItem transactionItem) throws RemoteException {
         final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
-        if (transactionItem.isActivityLifecycleItem()) {
-            clientTransaction.setLifecycleStateRequest((ActivityLifecycleItem) transactionItem);
-        } else {
-            clientTransaction.addCallback(transactionItem);
-        }
+        clientTransaction.addTransactionItem(transactionItem);
         scheduleTransaction(clientTransaction);
     }
 
@@ -106,27 +106,41 @@ class ClientLifecycleManager {
             final ClientTransaction clientTransaction = getOrCreatePendingTransaction(client);
             clientTransaction.addTransactionItem(transactionItem);
 
-            onClientTransactionItemScheduled(clientTransaction);
+            onClientTransactionItemScheduled(clientTransaction,
+                    false /* shouldDispatchImmediately */);
         } else {
             // TODO(b/260873529): cleanup after launch.
             final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
-            if (transactionItem.isActivityLifecycleItem()) {
-                clientTransaction.setLifecycleStateRequest((ActivityLifecycleItem) transactionItem);
-            } else {
-                clientTransaction.addCallback(transactionItem);
-            }
+            clientTransaction.addTransactionItem(transactionItem);
+
             scheduleTransaction(clientTransaction);
         }
     }
 
+    void scheduleTransactionAndLifecycleItems(@NonNull IApplicationThread client,
+            @NonNull ClientTransactionItem transactionItem,
+            @NonNull ActivityLifecycleItem lifecycleItem) throws RemoteException {
+        scheduleTransactionAndLifecycleItems(client, transactionItem, lifecycleItem,
+                false /* shouldDispatchImmediately */);
+    }
+
     /**
      * Schedules a single transaction item with a lifecycle request, delivery to client application.
+     *
+     * @param shouldDispatchImmediately whether or not to dispatch the transaction immediately. This
+     *                                  should only be {@code true} when it is important to know the
+     *                                  result of dispatching immediately. For example, when cold
+     *                                  launches an app, the server needs to know if the transaction
+     *                                  is dispatched successfully, and may restart the process if
+     *                                  not.
+     *
      * @throws RemoteException
      * @see ClientTransactionItem
      */
     void scheduleTransactionAndLifecycleItems(@NonNull IApplicationThread client,
             @NonNull ClientTransactionItem transactionItem,
-            @NonNull ActivityLifecycleItem lifecycleItem) throws RemoteException {
+            @NonNull ActivityLifecycleItem lifecycleItem,
+            boolean shouldDispatchImmediately) throws RemoteException {
         // The behavior is different depending on the flag.
         // When flag is on, we wait until RootWindowContainer#performSurfacePlacementNoTrace to
         // dispatch all pending transactions at once.
@@ -135,12 +149,12 @@ class ClientLifecycleManager {
             clientTransaction.addTransactionItem(transactionItem);
             clientTransaction.addTransactionItem(lifecycleItem);
 
-            onClientTransactionItemScheduled(clientTransaction);
+            onClientTransactionItemScheduled(clientTransaction, shouldDispatchImmediately);
         } else {
             // TODO(b/260873529): cleanup after launch.
             final ClientTransaction clientTransaction = ClientTransaction.obtain(client);
-            clientTransaction.addCallback(transactionItem);
-            clientTransaction.setLifecycleStateRequest(lifecycleItem);
+            clientTransaction.addTransactionItem(transactionItem);
+            clientTransaction.addTransactionItem(lifecycleItem);
             scheduleTransaction(clientTransaction);
         }
     }
@@ -157,7 +171,8 @@ class ClientLifecycleManager {
             try {
                 scheduleTransaction(transaction);
             } catch (RemoteException e) {
-                Slog.e(TAG, "Failed to deliver transaction for " + transaction.getClient());
+                Slog.e(TAG, "Failed to deliver pending transaction", e);
+                // TODO(b/323801078): apply cleanup for individual transaction item if needed.
             }
         }
         mPendingTransactions.clear();
@@ -194,8 +209,9 @@ class ClientLifecycleManager {
 
     /** Must only be called with WM lock. */
     private void onClientTransactionItemScheduled(
-            @NonNull ClientTransaction clientTransaction) throws RemoteException {
-        if (shouldDispatchPendingTransactionsImmediately()) {
+            @NonNull ClientTransaction clientTransaction,
+            boolean shouldDispatchImmediately) throws RemoteException {
+        if (shouldDispatchImmediately || shouldDispatchPendingTransactionsImmediately()) {
             // Dispatch the pending transaction immediately.
             mPendingTransactions.remove(clientTransaction.getClient().asBinder());
             scheduleTransaction(clientTransaction);

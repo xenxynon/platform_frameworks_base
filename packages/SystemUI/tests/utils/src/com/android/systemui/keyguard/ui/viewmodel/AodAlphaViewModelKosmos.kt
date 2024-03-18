@@ -26,8 +26,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 val Kosmos.aodAlphaViewModel by Fixture {
     AodAlphaViewModel(
-        keyguardInteractor = keyguardInteractor,
         keyguardTransitionInteractor = keyguardTransitionInteractor,
-        occludedToLockscreenTransitionViewModel = occludedToLockscreenTransitionViewModel,
+        goneToAodTransitionViewModel = goneToAodTransitionViewModel,
+        goneToDozingTransitionViewModel = goneToDozingTransitionViewModel,
+        keyguardInteractor = keyguardInteractor,
     )
 }

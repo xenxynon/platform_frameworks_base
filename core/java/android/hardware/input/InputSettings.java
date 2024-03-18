@@ -17,7 +17,9 @@
 package android.hardware.input;
 
 import static com.android.hardware.input.Flags.keyboardA11yBounceKeysFlag;
+import static com.android.hardware.input.Flags.keyboardA11ySlowKeysFlag;
 import static com.android.hardware.input.Flags.keyboardA11yStickyKeysFlag;
+import static com.android.hardware.input.Flags.touchpadTapDragging;
 import static com.android.input.flags.Flags.enableInputFilterRustImpl;
 
 import android.Manifest;
@@ -52,8 +54,8 @@ public class InputSettings {
 
     /**
      * Pointer Speed: The default pointer speed (0).
-     * @hide
      */
+    @SuppressLint("UnflaggedApi") // TestApi without associated feature.
     public static final int DEFAULT_POINTER_SPEED = 0;
 
     /**
@@ -67,6 +69,18 @@ public class InputSettings {
      * @hide
      */
     public static final int MAX_ACCESSIBILITY_BOUNCE_KEYS_THRESHOLD_MILLIS = 5000;
+
+    /**
+     * The maximum allowed Accessibility slow keys threshold.
+     * @hide
+     */
+    public static final int MAX_ACCESSIBILITY_SLOW_KEYS_THRESHOLD_MILLIS = 5000;
+
+    /**
+     * Default value for {@link Settings.Secure#STYLUS_POINTER_ICON_ENABLED}.
+     * @hide
+     */
+    public static final int DEFAULT_STYLUS_POINTER_ICON_ENABLED = 1;
 
     private InputSettings() {
     }
@@ -296,6 +310,53 @@ public class InputSettings {
     }
 
     /**
+     * Returns true if the feature flag for touchpad tap dragging is enabled.
+     *
+     * @hide
+     */
+    public static boolean isTouchpadTapDraggingFeatureFlagEnabled() {
+        return touchpadTapDragging();
+    }
+
+    /**
+     * Returns true if the touchpad should allow tap dragging.
+     *
+     * The returned value only applies to gesture-compatible touchpads.
+     *
+     * @param context The application context.
+     * @return Whether the touchpad should allow tap dragging.
+     *
+     * @hide
+     */
+    public static boolean useTouchpadTapDragging(@NonNull Context context) {
+        if (!isTouchpadTapDraggingFeatureFlagEnabled()) {
+            return false;
+        }
+        return Settings.System.getIntForUser(context.getContentResolver(),
+                Settings.System.TOUCHPAD_TAP_DRAGGING, 0, UserHandle.USER_CURRENT) == 1;
+    }
+
+    /**
+     * Sets the tap dragging behavior for the touchpad.
+     *
+     * The new behavior is only applied to gesture-compatible touchpads.
+     *
+     * @param context The application context.
+     * @param enabled Will enable tap dragging if true, disable it if false
+     *
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.WRITE_SETTINGS)
+    public static void setTouchpadTapDragging(@NonNull Context context, boolean enabled) {
+        if (!isTouchpadTapDraggingFeatureFlagEnabled()) {
+            return;
+        }
+        Settings.System.putIntForUser(context.getContentResolver(),
+                Settings.System.TOUCHPAD_TAP_DRAGGING, enabled ? 1 : 0,
+                UserHandle.USER_CURRENT);
+    }
+
+    /**
      * Returns true if the touchpad should use the right click zone.
      *
      * The returned value only applies to gesture-compatible touchpads.
@@ -328,14 +389,19 @@ public class InputSettings {
     }
 
     /**
-     * Whether a pointer icon will be shown over the location of a
-     * stylus pointer.
+     * Whether a pointer icon will be shown over the location of a stylus pointer.
+     *
      * @hide
      */
     public static boolean isStylusPointerIconEnabled(@NonNull Context context) {
+        if (InputProperties.force_enable_stylus_pointer_icon().orElse(false)) {
+            return true;
+        }
         return context.getResources()
-                       .getBoolean(com.android.internal.R.bool.config_enableStylusPointerIcon)
-               || InputProperties.force_enable_stylus_pointer_icon().orElse(false);
+                        .getBoolean(com.android.internal.R.bool.config_enableStylusPointerIcon)
+                && Settings.Secure.getIntForUser(context.getContentResolver(),
+                        Settings.Secure.STYLUS_POINTER_ICON_ENABLED,
+                        DEFAULT_STYLUS_POINTER_ICON_ENABLED, UserHandle.USER_CURRENT_OR_SELF) != 0;
     }
 
     /**
@@ -415,6 +481,86 @@ public class InputSettings {
         }
         Settings.Secure.putIntForUser(context.getContentResolver(),
                 Settings.Secure.ACCESSIBILITY_BOUNCE_KEYS, thresholdTimeMillis,
+                UserHandle.USER_CURRENT);
+    }
+
+    /**
+     * Whether Accessibility slow keys feature flags is enabled.
+     *
+     * <p>
+     * 'Slow keys' is an accessibility feature to aid users who have physical disabilities, that
+     * allows the user to specify the duration for which one must press-and-hold a key before the
+     * system accepts the keypress.
+     * </p>
+     *
+     * @hide
+     */
+    public static boolean isAccessibilitySlowKeysFeatureFlagEnabled() {
+        return keyboardA11ySlowKeysFlag() && enableInputFilterRustImpl();
+    }
+
+    /**
+     * Whether Accessibility slow keys is enabled.
+     *
+     * <p>
+     * 'Slow keys' is an accessibility feature to aid users who have physical disabilities, that
+     * allows the user to specify the duration for which one must press-and-hold a key before the
+     * system accepts the keypress.
+     * </p>
+     *
+     * @hide
+     */
+    public static boolean isAccessibilitySlowKeysEnabled(@NonNull Context context) {
+        return getAccessibilitySlowKeysThreshold(context) != 0;
+    }
+
+    /**
+     * Get Accessibility slow keys threshold duration in milliseconds.
+     *
+     * <p>
+     * 'Slow keys' is an accessibility feature to aid users who have physical disabilities, that
+     * allows the user to specify the duration for which one must press-and-hold a key before the
+     * system accepts the keypress.
+     * </p>
+     *
+     * @hide
+     */
+    public static int getAccessibilitySlowKeysThreshold(@NonNull Context context) {
+        if (!isAccessibilitySlowKeysFeatureFlagEnabled()) {
+            return 0;
+        }
+        return Settings.Secure.getIntForUser(context.getContentResolver(),
+                Settings.Secure.ACCESSIBILITY_SLOW_KEYS, 0, UserHandle.USER_CURRENT);
+    }
+
+    /**
+     * Set Accessibility slow keys threshold duration in milliseconds.
+     * @param thresholdTimeMillis time duration for which a key should be pressed to be registered
+     *                            in the system. The threshold must be between 0 and
+     *                            {@link MAX_ACCESSIBILITY_SLOW_KEYS_THRESHOLD_MILLIS}
+     *
+     * <p>
+     * 'Slow keys' is an accessibility feature to aid users who have physical disabilities, that
+     * allows the user to specify the duration for which one must press-and-hold a key before the
+     * system accepts the keypress.
+     * </p>
+     *
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.WRITE_SETTINGS)
+    public static void setAccessibilitySlowKeysThreshold(@NonNull Context context,
+            int thresholdTimeMillis) {
+        if (!isAccessibilitySlowKeysFeatureFlagEnabled()) {
+            return;
+        }
+        if (thresholdTimeMillis < 0
+                || thresholdTimeMillis > MAX_ACCESSIBILITY_SLOW_KEYS_THRESHOLD_MILLIS) {
+            throw new IllegalArgumentException(
+                    "Provided Slow keys threshold should be in range [0, "
+                            + MAX_ACCESSIBILITY_SLOW_KEYS_THRESHOLD_MILLIS + "]");
+        }
+        Settings.Secure.putIntForUser(context.getContentResolver(),
+                Settings.Secure.ACCESSIBILITY_SLOW_KEYS, thresholdTimeMillis,
                 UserHandle.USER_CURRENT);
     }
 

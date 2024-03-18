@@ -79,6 +79,7 @@ import com.android.systemui.dreams.DreamOverlayStateController;
 import com.android.systemui.flags.FakeFeatureFlags;
 import com.android.systemui.flags.Flags;
 import com.android.systemui.keyguard.domain.interactor.KeyguardDismissActionInteractor;
+import com.android.systemui.keyguard.domain.interactor.KeyguardSurfaceBehindInteractor;
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
 import com.android.systemui.keyguard.domain.interactor.WindowManagerLockscreenVisibilityInteractor;
 import com.android.systemui.navigationbar.NavigationModeController;
@@ -89,8 +90,7 @@ import com.android.systemui.shade.NotificationShadeWindowView;
 import com.android.systemui.shade.ShadeController;
 import com.android.systemui.shade.ShadeExpansionChangeEvent;
 import com.android.systemui.shade.ShadeExpansionStateManager;
-import com.android.systemui.shade.ShadeViewController;
-import com.android.systemui.statusbar.NotificationMediaManager;
+import com.android.systemui.shade.ShadeLockscreenInteractor;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
@@ -124,7 +124,7 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
     @Mock private LockPatternUtils mLockPatternUtils;
     @Mock private CentralSurfaces mCentralSurfaces;
     @Mock private ViewGroup mContainer;
-    @Mock private ShadeViewController mShadeViewController;
+    @Mock private ShadeLockscreenInteractor mShadeLockscreenInteractor;
     @Mock private BiometricUnlockController mBiometricUnlockController;
     @Mock private SysuiStatusBarStateController mStatusBarStateController;
     @Mock private KeyguardUpdateMonitor mKeyguardUpdateMonitor;
@@ -182,8 +182,10 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
         when(mBouncerViewDelegate.getBackCallback()).thenReturn(mBouncerViewDelegateBackCallback);
         mFeatureFlags = new FakeFeatureFlags();
         mFeatureFlags.set(Flags.REFACTOR_KEYGUARD_DISMISS_INTENT, false);
-        mFeatureFlags.set(Flags.KEYGUARD_WM_STATE_REFACTOR, false);
-        mSetFlagsRule.disableFlags(com.android.systemui.Flags.FLAG_DEVICE_ENTRY_UDFPS_REFACTOR);
+        mSetFlagsRule.disableFlags(
+                com.android.systemui.Flags.FLAG_DEVICE_ENTRY_UDFPS_REFACTOR,
+                com.android.systemui.Flags.FLAG_KEYGUARD_WM_STATE_REFACTOR
+        );
 
         when(mNotificationShadeWindowController.getWindowRootView())
                 .thenReturn(mNotificationShadeWindowView);
@@ -203,7 +205,6 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
                         mock(DockManager.class),
                         mNotificationShadeWindowController,
                         mKeyguardStateController,
-                        mock(NotificationMediaManager.class),
                         mKeyguardMessageAreaFactory,
                         Optional.of(mSysUiUnfoldComponent),
                         () -> mShadeController,
@@ -220,7 +221,8 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
                         StandardTestDispatcher(null, null),
                         () -> mock(WindowManagerLockscreenVisibilityInteractor.class),
                         () -> mock(KeyguardDismissActionInteractor.class),
-                        mSelectedUserInteractor) {
+                        mSelectedUserInteractor,
+                        () -> mock(KeyguardSurfaceBehindInteractor.class)) {
                     @Override
                     public ViewRootImpl getViewRootImpl() {
                         return mViewRootImpl;
@@ -230,7 +232,7 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
                 .thenReturn(mOnBackInvokedDispatcher);
         mStatusBarKeyguardViewManager.registerCentralSurfaces(
                 mCentralSurfaces,
-                mShadeViewController,
+                mShadeLockscreenInteractor,
                 new ShadeExpansionStateManager(),
                 mBiometricUnlockController,
                 mNotificationContainer,
@@ -711,7 +713,6 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
                         mock(DockManager.class),
                         mock(NotificationShadeWindowController.class),
                         mKeyguardStateController,
-                        mock(NotificationMediaManager.class),
                         mKeyguardMessageAreaFactory,
                         Optional.of(mSysUiUnfoldComponent),
                         () -> mShadeController,
@@ -728,7 +729,8 @@ public class StatusBarKeyguardViewManagerTest extends SysuiTestCase {
                         StandardTestDispatcher(null, null),
                         () -> mock(WindowManagerLockscreenVisibilityInteractor.class),
                         () -> mock(KeyguardDismissActionInteractor.class),
-                        mSelectedUserInteractor) {
+                        mSelectedUserInteractor,
+                        () -> mock(KeyguardSurfaceBehindInteractor.class)) {
                     @Override
                     public ViewRootImpl getViewRootImpl() {
                         return mViewRootImpl;

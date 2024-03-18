@@ -16,12 +16,17 @@
 
 package com.android.systemui.volume.panel.dagger
 
+import com.android.systemui.volume.panel.component.anc.AncModule
+import com.android.systemui.volume.panel.component.bottombar.BottomBarModule
+import com.android.systemui.volume.panel.component.captioning.CaptioningModule
+import com.android.systemui.volume.panel.component.mediaoutput.MediaOutputModule
 import com.android.systemui.volume.panel.dagger.factory.VolumePanelComponentFactory
 import com.android.systemui.volume.panel.dagger.scope.VolumePanelScope
 import com.android.systemui.volume.panel.domain.DomainModule
 import com.android.systemui.volume.panel.domain.interactor.ComponentsInteractor
 import com.android.systemui.volume.panel.ui.UiModule
-import com.android.systemui.volume.panel.ui.viewmodel.ComponentsLayoutManager
+import com.android.systemui.volume.panel.ui.composable.ComponentsFactory
+import com.android.systemui.volume.panel.ui.layout.ComponentsLayoutManager
 import com.android.systemui.volume.panel.ui.viewmodel.VolumePanelViewModel
 import dagger.BindsInstance
 import dagger.Subcomponent
@@ -41,6 +46,10 @@ import kotlinx.coroutines.CoroutineScope
             DomainModule::class,
             UiModule::class,
             // Components modules
+            BottomBarModule::class,
+            AncModule::class,
+            CaptioningModule::class,
+            MediaOutputModule::class,
         ]
 )
 interface VolumePanelComponent {
@@ -48,6 +57,8 @@ interface VolumePanelComponent {
     fun coroutineScope(): CoroutineScope
 
     fun componentsInteractor(): ComponentsInteractor
+
+    fun componentsFactory(): ComponentsFactory
 
     fun componentsLayoutManager(): ComponentsLayoutManager
 

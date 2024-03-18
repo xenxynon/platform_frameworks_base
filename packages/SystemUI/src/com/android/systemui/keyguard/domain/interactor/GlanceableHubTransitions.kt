@@ -23,6 +23,7 @@ import com.android.systemui.communal.domain.interactor.CommunalInteractor
 import com.android.systemui.communal.domain.interactor.CommunalTransitionProgress
 import com.android.systemui.communal.shared.model.CommunalSceneKey
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.keyguard.shared.model.TransitionInfo
@@ -30,12 +31,15 @@ import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.util.kotlin.sample
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.flowOn
 
 class GlanceableHubTransitions
 @Inject
 constructor(
     @Application private val scope: CoroutineScope,
+    @Background private val bgDispatcher: CoroutineDispatcher,
     private val transitionInteractor: KeyguardTransitionInteractor,
     private val transitionRepository: KeyguardTransitionRepository,
     private val communalInteractor: CommunalInteractor,
@@ -48,25 +52,26 @@ constructor(
      * externally. The progress is used for both transitions caused by user touch input or by
      * programmatic changes.
      */
-    fun listenForLockscreenAndHubTransition(
+    fun listenForGlanceableHubTransition(
         transitionName: String,
         transitionOwnerName: String,
-        toScene: CommunalSceneKey
+        fromState: KeyguardState,
+        toState: KeyguardState,
     ) {
-        val fromState: KeyguardState
-        val toState: KeyguardState
-        if (toScene == CommunalSceneKey.Blank) {
-            fromState = KeyguardState.GLANCEABLE_HUB
-            toState = KeyguardState.LOCKSCREEN
-        } else {
-            fromState = KeyguardState.LOCKSCREEN
-            toState = KeyguardState.GLANCEABLE_HUB
-        }
+        val toScene =
+            if (toState == KeyguardState.GLANCEABLE_HUB) {
+                CommunalSceneKey.Communal
+            } else {
+                CommunalSceneKey.Blank
+            }
         var transitionId: UUID? = null
         scope.launch("$transitionOwnerName#$transitionName") {
             communalInteractor
                 .transitionProgressToScene(toScene)
-                .sample(transitionInteractor.startedKeyguardTransitionStep, ::Pair)
+                .sample(
+                    transitionInteractor.startedKeyguardTransitionStep.flowOn(bgDispatcher),
+                    ::Pair
+                )
                 .collect { pair ->
                     val (transitionProgress, lastStartedStep) = pair
 

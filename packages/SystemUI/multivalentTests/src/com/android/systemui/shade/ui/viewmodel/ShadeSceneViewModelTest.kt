@@ -27,11 +27,12 @@ import com.android.systemui.deviceentry.domain.interactor.deviceEntryInteractor
 import com.android.systemui.flags.FakeFeatureFlagsClassic
 import com.android.systemui.flags.Flags
 import com.android.systemui.kosmos.testScope
-import com.android.systemui.media.controls.pipeline.MediaDataManager
+import com.android.systemui.media.controls.domain.pipeline.MediaDataManager
 import com.android.systemui.qs.ui.adapter.FakeQSSceneAdapter
 import com.android.systemui.scene.domain.interactor.sceneInteractor
 import com.android.systemui.scene.shared.model.SceneKey
-import com.android.systemui.scene.shared.model.SceneModel
+import com.android.systemui.shade.domain.interactor.privacyChipInteractor
+import com.android.systemui.shade.domain.interactor.shadeHeaderClockInteractor
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.notificationsPlaceholderViewModel
 import com.android.systemui.statusbar.pipeline.airplane.data.repository.FakeAirplaneModeRepository
 import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.AirplaneModeInteractor
@@ -60,8 +61,8 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
 
     private val kosmos = testKosmos()
     private val testScope = kosmos.testScope
-    private val sceneInteractor = kosmos.sceneInteractor
-    private val deviceEntryInteractor = kosmos.deviceEntryInteractor
+    private val sceneInteractor by lazy { kosmos.sceneInteractor }
+    private val deviceEntryInteractor by lazy { kosmos.deviceEntryInteractor }
 
     private val mobileIconsInteractor = FakeMobileIconsInteractor(FakeMobileMappingsProxy(), mock())
     private val flags = FakeFeatureFlagsClassic().also { it.set(Flags.NEW_NETWORK_SLICE_UI, false) }
@@ -82,7 +83,7 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
             scope = testScope.backgroundScope,
         )
 
-    private val qsFlexiglassAdapter = FakeQSSceneAdapter { mock() }
+    private val qsFlexiglassAdapter = FakeQSSceneAdapter({ mock() })
 
     private lateinit var shadeHeaderViewModel: ShadeHeaderViewModel
 
@@ -97,9 +98,10 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
             ShadeHeaderViewModel(
                 applicationScope = testScope.backgroundScope,
                 context = context,
-                sceneInteractor = sceneInteractor,
                 mobileIconsInteractor = mobileIconsInteractor,
                 mobileIconsViewModel = mobileIconsViewModel,
+                privacyChipInteractor = kosmos.privacyChipInteractor,
+                clockInteractor = kosmos.shadeHeaderClockInteractor,
                 broadcastDispatcher = fakeBroadcastDispatcher,
             )
 
@@ -146,8 +148,7 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.None
             )
-            sceneInteractor.changeScene(SceneModel(SceneKey.Lockscreen), "reason")
-            sceneInteractor.onSceneChanged(SceneModel(SceneKey.Lockscreen), "reason")
+            sceneInteractor.changeScene(SceneKey.Lockscreen, "reason")
 
             assertThat(upTransitionSceneKey).isEqualTo(SceneKey.Lockscreen)
         }
@@ -157,19 +158,46 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
         testScope.runTest {
             val upTransitionSceneKey by collectLastValue(underTest.upDestinationSceneKey)
             kosmos.fakeDeviceEntryRepository.setLockscreenEnabled(true)
+            kosmos.fakeDeviceEntryRepository.setUnlocked(true)
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.None
             )
-            sceneInteractor.changeScene(SceneModel(SceneKey.Gone), "reason")
-            sceneInteractor.onSceneChanged(SceneModel(SceneKey.Gone), "reason")
+            runCurrent()
+            sceneInteractor.changeScene(SceneKey.Gone, "reason")
 
             assertThat(upTransitionSceneKey).isEqualTo(SceneKey.Gone)
         }
 
     @Test
+    fun isClickable_deviceUnlocked_false() =
+        testScope.runTest {
+            val isClickable by collectLastValue(underTest.isClickable)
+            kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
+                AuthenticationMethodModel.Pin
+            )
+            kosmos.fakeDeviceEntryRepository.setUnlocked(true)
+            runCurrent()
+
+            assertThat(isClickable).isFalse()
+        }
+
+    @Test
+    fun isClickable_deviceLockedSecurely_true() =
+        testScope.runTest {
+            val isClickable by collectLastValue(underTest.isClickable)
+            kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
+                AuthenticationMethodModel.Pin
+            )
+            kosmos.fakeDeviceEntryRepository.setUnlocked(false)
+            runCurrent()
+
+            assertThat(isClickable).isTrue()
+        }
+
+    @Test
     fun onContentClicked_deviceUnlocked_switchesToGone() =
         testScope.runTest {
-            val currentScene by collectLastValue(sceneInteractor.desiredScene)
+            val currentScene by collectLastValue(sceneInteractor.currentScene)
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.Pin
             )
@@ -178,13 +206,13 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
 
             underTest.onContentClicked()
 
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Gone))
+            assertThat(currentScene).isEqualTo(SceneKey.Gone)
         }
 
     @Test
     fun onContentClicked_deviceLockedSecurely_switchesToBouncer() =
         testScope.runTest {
-            val currentScene by collectLastValue(sceneInteractor.desiredScene)
+            val currentScene by collectLastValue(sceneInteractor.currentScene)
             kosmos.fakeAuthenticationRepository.setAuthenticationMethod(
                 AuthenticationMethodModel.Pin
             )
@@ -193,7 +221,7 @@ class ShadeSceneViewModelTest : SysuiTestCase() {
 
             underTest.onContentClicked()
 
-            assertThat(currentScene).isEqualTo(SceneModel(SceneKey.Bouncer))
+            assertThat(currentScene).isEqualTo(SceneKey.Bouncer)
         }
 
     @Test

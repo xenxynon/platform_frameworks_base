@@ -31,7 +31,12 @@ android_test {
 
         "test-apps/SuspendTestApp/src/**/*.java",
     ],
+
+    kotlincflags: [
+        "-Werror",
+    ],
     static_libs: [
+        "cts-input-lib",
         "frameworks-base-testutils",
         "services.accessibility",
         "services.appwidget",
@@ -78,6 +83,8 @@ android_test {
         "securebox",
         "flag-junit",
         "ravenwood-junit",
+        "net_flags_lib",
+        "CtsVirtualDeviceCommonLib",
     ],
 
     libs: [
@@ -146,8 +153,8 @@ android_ravenwood_test {
     static_libs: [
         "androidx.annotation_annotation",
         "androidx.test.rules",
-        "mockito_ravenwood",
         "services.core",
+        "flag-junit",
     ],
     srcs: [
         "src/com/android/server/uri/**/*.java",

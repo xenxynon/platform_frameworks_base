@@ -165,6 +165,25 @@ class BubblePositionerTest {
     }
 
     @Test
+    fun testGetRestingPosition_afterBoundsChange() {
+        positioner.update(defaultDeviceConfig.copy(isLargeScreen = true,
+                windowBounds = Rect(0, 0, 2000, 1600)))
+
+        // Set the resting position to the right side
+        var allowableStackRegion = positioner.getAllowableStackPositionRegion(1 /* bubbleCount */)
+        val restingPosition = PointF(allowableStackRegion.right, allowableStackRegion.centerY())
+        positioner.restingPosition = restingPosition
+
+        // Now make the device smaller
+        positioner.update(defaultDeviceConfig.copy(isLargeScreen = false,
+                windowBounds = Rect(0, 0, 1000, 1600)))
+
+        // Check the resting position is on the correct side
+        allowableStackRegion = positioner.getAllowableStackPositionRegion(1 /* bubbleCount */)
+        assertThat(positioner.restingPosition.x).isEqualTo(allowableStackRegion.right)
+    }
+
+    @Test
     fun testHasUserModifiedDefaultPosition_false() {
         positioner.update(defaultDeviceConfig.copy(isLargeScreen = true, isRtl = true))
         assertThat(positioner.hasUserModifiedDefaultPosition()).isFalse()
@@ -445,6 +464,26 @@ class BubblePositionerTest {
         // Bubbles are bottom aligned on portrait, large tablet
         assertThat(positioner.getExpandedViewY(bubble, 0f /* bubblePosition */))
             .isEqualTo(expectedExpandedViewY)
+    }
+
+    @Test
+    fun testGetTaskViewContentWidth_onLeft() {
+        positioner.update(defaultDeviceConfig.copy(insets = Insets.of(100, 0, 200, 0)))
+        val taskViewWidth = positioner.getTaskViewContentWidth(true /* onLeft */)
+        val paddings = positioner.getExpandedViewContainerPadding(true /* onLeft */,
+                false /* isOverflow */)
+        assertThat(taskViewWidth).isEqualTo(
+                positioner.screenRect.width() - paddings[0] - paddings[2])
+    }
+
+    @Test
+    fun testGetTaskViewContentWidth_onRight() {
+        positioner.update(defaultDeviceConfig.copy(insets = Insets.of(100, 0, 200, 0)))
+        val taskViewWidth = positioner.getTaskViewContentWidth(false /* onLeft */)
+        val paddings = positioner.getExpandedViewContainerPadding(false /* onLeft */,
+                false /* isOverflow */)
+        assertThat(taskViewWidth).isEqualTo(
+                positioner.screenRect.width() - paddings[0] - paddings[2])
     }
 
     private val defaultYPosition: Float

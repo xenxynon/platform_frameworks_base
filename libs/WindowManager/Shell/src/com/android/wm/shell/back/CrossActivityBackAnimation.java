@@ -40,7 +40,6 @@ import android.view.IRemoteAnimationFinishedCallback;
 import android.view.IRemoteAnimationRunner;
 import android.view.RemoteAnimationTarget;
 import android.view.SurfaceControl;
-import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 import android.window.BackEvent;
 import android.window.BackMotionEvent;
@@ -51,6 +50,7 @@ import com.android.internal.dynamicanimation.animation.SpringAnimation;
 import com.android.internal.dynamicanimation.animation.SpringForce;
 import com.android.internal.policy.ScreenDecorationsUtils;
 import com.android.internal.protolog.common.ProtoLog;
+import com.android.wm.shell.animation.Interpolators;
 import com.android.wm.shell.common.annotations.ShellMainThread;
 
 import javax.inject.Inject;
@@ -65,7 +65,7 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
 
     /** Duration of post animation after gesture committed. */
     private static final int POST_ANIMATION_DURATION = 350;
-    private static final Interpolator INTERPOLATOR = new DecelerateInterpolator();
+    private static final Interpolator INTERPOLATOR = Interpolators.STANDARD_DECELERATE;
     private static final FloatProperty<CrossActivityBackAnimation> ENTER_PROGRESS_PROP =
             new FloatProperty<>("enter-alpha") {
                 @Override
@@ -199,6 +199,10 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
     }
 
     private void applyTransform(SurfaceControl leash, RectF targetRect, float targetAlpha) {
+        if (leash == null || !leash.isValid()) {
+            return;
+        }
+
         final float scale = targetRect.width() / mStartTaskRect.width();
         mTransformMatrix.reset();
         mTransformMatrix.setScale(scale, scale);
@@ -211,12 +215,16 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
 
     private void finishAnimation() {
         if (mEnteringTarget != null) {
-            mTransaction.setCornerRadius(mEnteringTarget.leash, 0);
-            mEnteringTarget.leash.release();
+            if (mEnteringTarget.leash != null && mEnteringTarget.leash.isValid()) {
+                mTransaction.setCornerRadius(mEnteringTarget.leash, 0);
+                mEnteringTarget.leash.release();
+            }
             mEnteringTarget = null;
         }
         if (mClosingTarget != null) {
-            mClosingTarget.leash.release();
+            if (mClosingTarget.leash != null) {
+                mClosingTarget.leash.release();
+            }
             mClosingTarget = null;
         }
         if (mBackground != null) {
@@ -260,7 +268,9 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
     }
 
     private void onGestureCommitted() {
-        if (mEnteringTarget == null || mClosingTarget == null) {
+        if (mEnteringTarget == null || mClosingTarget == null || mClosingTarget.leash == null
+                || mEnteringTarget.leash == null || !mEnteringTarget.leash.isValid()
+                || !mClosingTarget.leash.isValid()) {
             finishAnimation();
             return;
         }
@@ -275,7 +285,7 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
 
         ValueAnimator valueAnimator =
                 ValueAnimator.ofFloat(1f, 0f).setDuration(POST_ANIMATION_DURATION);
-        valueAnimator.setInterpolator(new DecelerateInterpolator());
+        valueAnimator.setInterpolator(INTERPOLATOR);
         valueAnimator.addUpdateListener(animation -> {
             float progress = animation.getAnimatedFraction();
             updatePostCommitEnteringAnimation(progress);
@@ -300,10 +310,14 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
         float top = mapRange(progress, mEnteringStartRect.top, mStartTaskRect.top);
         float width = mapRange(progress, mEnteringStartRect.width(), mStartTaskRect.width());
         float height = mapRange(progress, mEnteringStartRect.height(), mStartTaskRect.height());
-        float alpha = mapRange(progress, mEnteringProgress, 1.0f);
-
+        float alpha = mapRange(progress, getPreCommitEnteringAlpha(), 1.0f);
         mEnteringRect.set(left, top, left + width, top + height);
         applyTransform(mEnteringTarget.leash, mEnteringRect, alpha);
+    }
+
+    private float getPreCommitEnteringAlpha() {
+        return Math.max(smoothstep(ENTER_ALPHA_THRESHOLD, 0.7f, mEnteringProgress),
+                MIN_WINDOW_ALPHA);
     }
 
     private float getEnteringProgress() {
@@ -315,15 +329,18 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
         if (mEnteringTarget != null && mEnteringTarget.leash != null) {
             transformWithProgress(
                     mEnteringProgress,
-                    Math.max(
-                            smoothstep(ENTER_ALPHA_THRESHOLD, 0.7f, mEnteringProgress),
-                            MIN_WINDOW_ALPHA),  /* alpha */
+                    getPreCommitEnteringAlpha(),
                     mEnteringTarget.leash,
                     mEnteringRect,
                     -mWindowXShift,
                     0
             );
         }
+    }
+
+    private float getPreCommitLeavingAlpha() {
+        return Math.max(1 - smoothstep(0, ENTER_ALPHA_THRESHOLD, mLeavingProgress),
+                MIN_WINDOW_ALPHA);
     }
 
     private float getLeavingProgress() {
@@ -335,9 +352,7 @@ public class CrossActivityBackAnimation extends ShellBackAnimation {
         if (mClosingTarget != null && mClosingTarget.leash != null) {
             transformWithProgress(
                     mLeavingProgress,
-                    Math.max(
-                            1 - smoothstep(0, ENTER_ALPHA_THRESHOLD, mLeavingProgress),
-                            MIN_WINDOW_ALPHA),
+                    getPreCommitLeavingAlpha(),
                     mClosingTarget.leash,
                     mClosingRect,
                     0,

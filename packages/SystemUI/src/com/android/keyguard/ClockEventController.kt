@@ -39,15 +39,13 @@ import com.android.systemui.customization.R
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.DisplaySpecific
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.FeatureFlagsClassic
 import com.android.systemui.flags.Flags.REGION_SAMPLING
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
-import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
 import com.android.systemui.keyguard.shared.model.TransitionState
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.log.core.Logger
-import com.android.systemui.log.core.LogLevel.DEBUG
 import com.android.systemui.plugins.clocks.ClockController
 import com.android.systemui.plugins.clocks.ClockFaceController
 import com.android.systemui.plugins.clocks.ClockMessageBuffers
@@ -92,7 +90,7 @@ constructor(
     @Main private val mainExecutor: DelayableExecutor,
     @Background private val bgExecutor: Executor,
     private val clockBuffers: ClockMessageBuffers,
-    private val featureFlags: FeatureFlags,
+    private val featureFlags: FeatureFlagsClassic,
     private val zenModeController: ZenModeController,
 ) {
     var loggers = listOf(
@@ -317,7 +315,7 @@ constructor(
         object : KeyguardUpdateMonitorCallback() {
             override fun onKeyguardVisibilityChanged(visible: Boolean) {
                 isKeyguardVisible = visible
-                if (!KeyguardShadeMigrationNssl.isEnabled) {
+                if (!migrateClocksToBlueprint()) {
                     if (!isKeyguardVisible) {
                         clock?.run {
                             smallClock.animations.doze(if (isDozing) 1f else 0f)
@@ -411,7 +409,7 @@ constructor(
             parent.repeatWhenAttached {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
                     listenForDozing(this)
-                    if (KeyguardShadeMigrationNssl.isEnabled) {
+                    if (migrateClocksToBlueprint()) {
                         listenForDozeAmountTransition(this)
                         listenForAnyStateToAodTransition(this)
                     } else {
@@ -422,9 +420,11 @@ constructor(
         smallTimeListener?.update(shouldTimeListenerRun)
         largeTimeListener?.update(shouldTimeListenerRun)
 
-        // Query ZenMode data
-        zenModeCallback.onZenChanged(zenModeController.zen)
-        zenModeCallback.onNextAlarmChanged()
+        bgExecutor.execute {
+            // Query ZenMode data
+            zenModeCallback.onZenChanged(zenModeController.zen)
+            zenModeCallback.onNextAlarmChanged()
+        }
     }
 
     fun unregisterListeners() {

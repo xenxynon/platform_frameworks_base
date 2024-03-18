@@ -26,14 +26,14 @@ import android.util.Log;
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.systemui.CoreStartable;
-import com.android.systemui.animation.ActivityLaunchAnimator;
+import com.android.systemui.animation.ActivityTransitionAnimator;
 import com.android.systemui.animation.AnimationFeatureFlags;
-import com.android.systemui.animation.DialogLaunchAnimator;
+import com.android.systemui.animation.DialogTransitionAnimator;
 import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dump.DumpHandler;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.media.controls.pipeline.MediaDataManager;
+import com.android.systemui.media.controls.domain.pipeline.MediaDataManager;
 import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.shade.NotificationPanelViewController;
@@ -56,7 +56,6 @@ import com.android.systemui.statusbar.phone.ManagedProfileControllerImpl;
 import com.android.systemui.statusbar.phone.StatusBarIconController;
 import com.android.systemui.statusbar.phone.StatusBarIconControllerImpl;
 import com.android.systemui.statusbar.phone.StatusBarIconList;
-import com.android.systemui.statusbar.phone.StatusBarNotificationPresenterModule;
 import com.android.systemui.statusbar.phone.StatusBarRemoteInputCallback;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
@@ -73,7 +72,7 @@ import dagger.multibindings.IntoMap;
  * their own version of CentralSurfaces can include just dependencies, without injecting
  * CentralSurfaces itself.
  */
-@Module(includes = {StatusBarNotificationPresenterModule.class})
+@Module
 public interface CentralSurfacesDependenciesModule {
 
     /** */
@@ -191,25 +190,25 @@ public interface CentralSurfacesDependenciesModule {
     /** */
     @Provides
     @SysUISingleton
-    static ActivityLaunchAnimator provideActivityLaunchAnimator() {
-        return new ActivityLaunchAnimator();
+    static ActivityTransitionAnimator provideActivityTransitionAnimator() {
+        return new ActivityTransitionAnimator();
     }
 
     /** */
     @Provides
     @SysUISingleton
-    static DialogLaunchAnimator provideDialogLaunchAnimator(IDreamManager dreamManager,
+    static DialogTransitionAnimator provideDialogTransitionAnimator(IDreamManager dreamManager,
             KeyguardStateController keyguardStateController,
             Lazy<AlternateBouncerInteractor> alternateBouncerInteractor,
             InteractionJankMonitor interactionJankMonitor,
             AnimationFeatureFlags animationFeatureFlags) {
-        DialogLaunchAnimator.Callback callback = new DialogLaunchAnimator.Callback() {
+        DialogTransitionAnimator.Callback callback = new DialogTransitionAnimator.Callback() {
             @Override
             public boolean isDreaming() {
                 try {
                     return dreamManager.isDreaming();
                 } catch (RemoteException e) {
-                    Log.e("DialogLaunchAnimator.Callback", "dreamManager.isDreaming failed", e);
+                    Log.e("DialogTransitionAnimator.Callback", "dreamManager.isDreaming failed", e);
                     return false;
                 }
             }
@@ -224,7 +223,8 @@ public interface CentralSurfacesDependenciesModule {
                 return alternateBouncerInteractor.get().canShowAlternateBouncerForFingerprint();
             }
         };
-        return new DialogLaunchAnimator(callback, interactionJankMonitor, animationFeatureFlags);
+        return new DialogTransitionAnimator(
+                callback, interactionJankMonitor, animationFeatureFlags);
     }
 
     /** */

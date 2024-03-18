@@ -189,11 +189,11 @@ status_t NativeInputEventReceiver::reportTimeline(int32_t inputEventId, nsecs_t 
 void NativeInputEventReceiver::setFdEvents(int events) {
     if (mFdEvents != events) {
         mFdEvents = events;
-        auto&& fd = mInputConsumer.getChannel()->getFd();
+        const int fd = mInputConsumer.getChannel()->getFd();
         if (events) {
-            mMessageQueue->getLooper()->addFd(fd.get(), 0, events, this, nullptr);
+            mMessageQueue->getLooper()->addFd(fd, 0, events, this, nullptr);
         } else {
-            mMessageQueue->getLooper()->removeFd(fd.get());
+            mMessageQueue->getLooper()->removeFd(fd);
         }
     }
 }
@@ -371,15 +371,15 @@ status_t NativeInputEventReceiver::consumeEvents(JNIEnv* env,
                 }
             }
 
-            jobject inputEventObj;
+            ScopedLocalRef<jobject> inputEventObj(env);
             switch (inputEvent->getType()) {
                 case InputEventType::KEY:
                     if (kDebugDispatchCycle) {
                         ALOGD("channel '%s' ~ Received key event.", getInputChannelName().c_str());
                     }
                     inputEventObj =
-                            android_view_KeyEvent_fromNative(env,
-                                                             static_cast<KeyEvent&>(*inputEvent));
+                            android_view_KeyEvent_obtainAsCopy(env,
+                                                               static_cast<KeyEvent&>(*inputEvent));
                     break;
 
                 case InputEventType::MOTION: {
@@ -447,20 +447,19 @@ status_t NativeInputEventReceiver::consumeEvents(JNIEnv* env,
 
             default:
                 assert(false); // InputConsumer should prevent this from ever happening
-                inputEventObj = nullptr;
             }
 
-            if (inputEventObj) {
+            if (inputEventObj.get()) {
                 if (kDebugDispatchCycle) {
                     ALOGD("channel '%s' ~ Dispatching input event.", getInputChannelName().c_str());
                 }
                 env->CallVoidMethod(receiverObj.get(),
-                        gInputEventReceiverClassInfo.dispatchInputEvent, seq, inputEventObj);
+                                    gInputEventReceiverClassInfo.dispatchInputEvent, seq,
+                                    inputEventObj.get());
                 if (env->ExceptionCheck()) {
                     ALOGE("Exception dispatching input event.");
                     skipCallbacks = true;
                 }
-                env->DeleteLocalRef(inputEventObj);
             } else {
                 ALOGW("channel '%s' ~ Failed to obtain event object.",
                         getInputChannelName().c_str());

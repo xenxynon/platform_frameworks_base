@@ -20,11 +20,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
-import android.credentials.ui.CreateCredentialProviderData
-import android.credentials.ui.DisabledProviderData
-import android.credentials.ui.Entry
-import android.credentials.ui.GetCredentialProviderData
-import android.credentials.ui.RequestInfo
+import android.credentials.selection.CreateCredentialProviderData
+import android.credentials.selection.DisabledProviderData
+import android.credentials.selection.Entry
+import android.credentials.selection.GetCredentialProviderData
+import android.credentials.selection.RequestInfo
 import android.graphics.drawable.Drawable
 import android.text.TextUtils
 import android.util.Log
@@ -195,7 +195,7 @@ class GetFlowUtils {
                 }
             return com.android.credentialmanager.getflow.RequestDisplayInfo(
                 appName = originName?.ifEmpty { null }
-                    ?: getAppLabel(context.packageManager, requestInfo.appPackageName)
+                    ?: getAppLabel(context.packageManager, requestInfo.packageName)
                     ?: return null,
                 preferImmediatelyAvailableCredentials = preferImmediatelyAvailableCredentials,
                 preferIdentityDocUi = getCredentialRequest.data.getBoolean(
@@ -269,7 +269,7 @@ class CreateFlowUtils {
                 return null
             }
             val appLabel = originName?.ifEmpty { null }
-                ?: getAppLabel(context.packageManager, requestInfo.appPackageName)
+                ?: getAppLabel(context.packageManager, requestInfo.packageName)
                 ?: return null
             val createCredentialRequest = requestInfo.createCredentialRequest ?: return null
             val createCredentialRequestJetpack = CreateCredentialRequest.createFrom(
@@ -342,8 +342,6 @@ class CreateFlowUtils {
             defaultProviderIdPreferredByApp: String?,
             defaultProviderIdsSetByUser: Set<String>,
             requestDisplayInfo: RequestDisplayInfo,
-            isOnPasskeyIntroStateAlready: Boolean,
-            isPasskeyFirstUse: Boolean,
         ): CreateCredentialUiState? {
             var remoteEntry: RemoteInfo? = null
             var remoteEntryProvider: EnabledProviderInfo? = null
@@ -392,11 +390,8 @@ class CreateFlowUtils {
             val defaultProvider = defaultProviderPreferredByApp ?: defaultProviderSetByUser
             val initialScreenState = toCreateScreenState(
                 createOptionSize = createOptionsPairs.size,
-                isOnPasskeyIntroStateAlready = isOnPasskeyIntroStateAlready,
-                requestDisplayInfo = requestDisplayInfo,
                 remoteEntry = remoteEntry,
-                isPasskeyFirstUse = isPasskeyFirstUse
-            ) ?: return null
+            )
             val sortedCreateOptionsPairs = createOptionsPairs.sortedWith(
                 compareByDescending { it.first.lastUsedTime }
             )
@@ -419,15 +414,9 @@ class CreateFlowUtils {
 
         fun toCreateScreenState(
             createOptionSize: Int,
-            isOnPasskeyIntroStateAlready: Boolean,
-            requestDisplayInfo: RequestDisplayInfo,
             remoteEntry: RemoteInfo?,
-            isPasskeyFirstUse: Boolean,
-        ): CreateScreenState? {
-            return if (isPasskeyFirstUse && requestDisplayInfo.type == CredentialType.PASSKEY &&
-                !isOnPasskeyIntroStateAlready) {
-                CreateScreenState.PASSKEY_INTRO
-            } else if (createOptionSize == 0 && remoteEntry != null) {
+        ): CreateScreenState {
+            return if (createOptionSize == 0 && remoteEntry != null) {
                 CreateScreenState.EXTERNAL_ONLY_SELECTION
             } else {
                 CreateScreenState.CREATION_OPTION_SELECTION

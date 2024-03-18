@@ -69,6 +69,7 @@ import android.window.TaskSnapshot;
 import android.window.WindowOnBackInvokedDispatcher;
 
 import com.android.server.LocalServices;
+import com.android.window.flags.Flags;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -81,6 +82,12 @@ import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Tests for the {@link BackNavigationController} class.
+ *
+ * Build/Install/Run:
+ *  atest WmTests:BackNavigationControllerTests
+ */
 @Presubmit
 @RunWith(WindowTestRunner.class)
 public class BackNavigationControllerTests extends WindowTestsBase {
@@ -623,6 +630,22 @@ public class BackNavigationControllerTests extends WindowTestsBase {
                 0, navigationObserver.getCount());
     }
 
+    @Test
+    public void testAdjacentFocusInActivityEmbedding() {
+        mSetFlagsRule.enableFlags(Flags.FLAG_EMBEDDED_ACTIVITY_BACK_NAV_FLAG);
+        Task task = createTask(mDefaultDisplay);
+        TaskFragment primary = createTaskFragmentWithActivity(task);
+        TaskFragment secondary = createTaskFragmentWithActivity(task);
+        primary.setAdjacentTaskFragment(secondary);
+        secondary.setAdjacentTaskFragment(primary);
+
+        WindowState windowState = mock(WindowState.class);
+        doReturn(windowState).when(mWm).getFocusedWindowLocked();
+        doReturn(primary).when(windowState).getTaskFragment();
+
+        startBackNavigation();
+        verify(mWm).moveFocusToActivity(any());
+    }
 
     /**
      * Test with

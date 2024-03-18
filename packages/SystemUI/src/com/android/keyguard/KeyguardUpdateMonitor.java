@@ -35,6 +35,7 @@ import static android.hardware.biometrics.BiometricSourceType.FINGERPRINT;
 import static android.os.BatteryManager.BATTERY_STATUS_UNKNOWN;
 import static android.os.BatteryManager.CHARGING_POLICY_DEFAULT;
 
+import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.SOME_AUTH_REQUIRED_AFTER_ADAPTIVE_AUTH_REQUEST;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_BOOT;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_LOCKOUT;
@@ -114,7 +115,6 @@ import com.android.settingslib.WirelessUtils;
 import com.android.settingslib.fuelgauge.BatteryStatus;
 import com.android.systemui.CoreStartable;
 import com.android.systemui.Dumpable;
-import com.android.systemui.Flags;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.biometrics.FingerprintInteractiveToAuthProvider;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -1556,6 +1556,14 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         return isEncrypted || isLockDown;
     }
 
+    /**
+     * Whether the device is locked by adaptive auth
+     */
+    public boolean isDeviceLockedByAdaptiveAuth(int userId) {
+        return containsFlag(mStrongAuthTracker.getStrongAuthForUser(userId),
+                SOME_AUTH_REQUIRED_AFTER_ADAPTIVE_AUTH_REQUEST);
+    }
+
     private boolean containsFlag(int haystack, int needle) {
         return (haystack & needle) != 0;
     }
@@ -1624,11 +1632,11 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
     void setAssistantVisible(boolean assistantVisible) {
         mAssistantVisible = assistantVisible;
         mLogger.logAssistantVisible(mAssistantVisible);
-        if (getFaceAuthInteractor() != null) {
-            getFaceAuthInteractor().onAssistantTriggeredOnLockScreen();
-        }
         updateFingerprintListeningState(BIOMETRIC_ACTION_UPDATE);
         if (mAssistantVisible) {
+            if (getFaceAuthInteractor() != null) {
+                getFaceAuthInteractor().onAssistantTriggeredOnLockScreen();
+            }
             requestActiveUnlock(
                     ActiveUnlockConfig.ActiveUnlockRequestOrigin.ASSISTANT,
                     "assistant",
@@ -1821,8 +1829,16 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                 @Override
                 public void onFingerprintDetected(int sensorId, int userId,
                         boolean isStrongBiometric) {
-                    handleBiometricDetected(userId, FINGERPRINT, isStrongBiometric);
+                    // Fingerprint lifecycle ends
+                    if (mHandler.hasCallbacks(mFpCancelNotReceived)) {
+                        mLogger.d("onFingerprintDetected()"
+                                + " triggered while waiting for cancellation, removing watchdog");
+                        mHandler.removeCallbacks(mFpCancelNotReceived);
+                    }
+                    // Don't send cancel if detect succeeds
+                    mFingerprintCancelSignal = null;
                     setFingerprintRunningState(BIOMETRIC_STATE_STOPPED);
+                    handleBiometricDetected(userId, FINGERPRINT, isStrongBiometric);
                 }
             };
 
@@ -2529,7 +2545,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
         final boolean running = mFingerprintRunningState == BIOMETRIC_STATE_RUNNING;
         final boolean runningOrRestarting = running
                 || mFingerprintRunningState == BIOMETRIC_STATE_CANCELLING_RESTARTING;
-        final boolean runDetect = shouldRunFingerprintDetect();
+        final boolean runDetect = !isUnlockingWithFingerprintAllowed();
+
         if (runningOrRestarting && !shouldListenForFingerprint) {
             if (action == BIOMETRIC_ACTION_START) {
                 mLogger.v("Ignoring stopListeningForFingerprint()");
@@ -2542,21 +2559,18 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                 return;
             }
             startListeningForFingerprint(runDetect);
-        } else if (running && runDetect && !mFingerprintDetectRunning) {
+        } else if (running && (runDetect != mFingerprintDetectRunning)) {
             if (action == BIOMETRIC_ACTION_STOP) {
-                mLogger.v("Ignoring startListeningForFingerprint(detect)");
-                return;
+                if (runDetect) {
+                    mLogger.v("Allowing startListeningForFingerprint(detect) despite"
+                            + " BIOMETRIC_ACTION_STOP since auth was running before.");
+                } else {
+                    mLogger.v("Ignoring startListeningForFingerprint() switch detect -> auth");
+                    return;
+                }
             }
-            // stop running authentication and start running fingerprint detection
-            stopListeningForFingerprint();
-            startListeningForFingerprint(true);
+            startListeningForFingerprint(runDetect);
         }
-    }
-
-    private boolean shouldRunFingerprintDetect() {
-        return !isUnlockingWithFingerprintAllowed()
-                || (Flags.runFingerprintDetectOnDismissibleKeyguard()
-                && getUserCanSkipBouncer(mSelectedUserInteractor.getSelectedUserId()));
     }
 
     /**
@@ -4020,7 +4034,6 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, Dumpab
                 mSelectedUserInteractor.getSelectedUserId()));
         pw.println("  getUserUnlockedWithBiometric()="
                 + getUserUnlockedWithBiometric(mSelectedUserInteractor.getSelectedUserId()));
-        pw.println("  mFingerprintDetectRunning=" + mFingerprintDetectRunning);
         pw.println("  SIM States:");
         for (SimData data : mSimDatas.values()) {
             pw.println("    " + data.toString());

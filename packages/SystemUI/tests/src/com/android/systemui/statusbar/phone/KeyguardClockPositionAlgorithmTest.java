@@ -45,6 +45,7 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.MockitoSession;
+import org.mockito.quality.Strictness;
 
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
@@ -80,6 +81,7 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         mStaticMockSession = mockitoSession()
+                .strictness(Strictness.WARN)
                 .mockStatic(BurnInHelperKt.class)
                 .mockStatic(LargeScreenHeaderHelper.class)
                 .startMocking();
@@ -296,7 +298,7 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
 
     @Test
     public void notifPaddingMakesUpToFullMarginInSplitShade_refactorFlagOff_usesResource() {
-        mSetFlagsRule.disableFlags(Flags.FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR);
+        mSetFlagsRule.disableFlags(Flags.FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX);
         int keyguardSplitShadeTopMargin = 100;
         int largeScreenHeaderHeightResource = 70;
         when(mResources.getDimensionPixelSize(R.dimen.keyguard_split_shade_top_margin))
@@ -315,7 +317,7 @@ public class KeyguardClockPositionAlgorithmTest extends SysuiTestCase {
 
     @Test
     public void notifPaddingMakesUpToFullMarginInSplitShade_refactorFlagOn_usesHelper() {
-        mSetFlagsRule.enableFlags(Flags.FLAG_CENTRALIZED_STATUS_BAR_DIMENS_REFACTOR);
+        mSetFlagsRule.enableFlags(Flags.FLAG_CENTRALIZED_STATUS_BAR_HEIGHT_FIX);
         int keyguardSplitShadeTopMargin = 100;
         int largeScreenHeaderHeightHelper = 50;
         int largeScreenHeaderHeightResource = 70;

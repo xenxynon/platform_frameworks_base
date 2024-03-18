@@ -27,6 +27,8 @@ import static android.view.InputDevice.SOURCE_CLASS_NONE;
 import static android.view.InsetsSource.ID_IME;
 import static android.view.Surface.FRAME_RATE_CATEGORY_HIGH;
 import static android.view.Surface.FRAME_RATE_CATEGORY_HIGH_HINT;
+import static android.view.Surface.FRAME_RATE_CATEGORY_LOW;
+import static android.view.Surface.FRAME_RATE_CATEGORY_NORMAL;
 import static android.view.Surface.FRAME_RATE_CATEGORY_NO_PREFERENCE;
 import static android.view.View.PFLAG_DRAW_ANIMATION;
 import static android.view.View.SYSTEM_UI_FLAG_FULLSCREEN;
@@ -91,10 +93,10 @@ import static android.view.WindowManagerGlobal.RELAYOUT_RES_SURFACE_CHANGED;
 import static android.view.accessibility.Flags.fixMergedContentChangeEvent;
 import static android.view.accessibility.Flags.forceInvertColor;
 import static android.view.accessibility.Flags.reduceWindowContentChangedEventThrottle;
+import static android.view.flags.Flags.toolkitMetricsForFrameRateDecision;
+import static android.view.flags.Flags.toolkitSetFrameRateReadOnly;
 import static android.view.inputmethod.InputMethodEditorTraceProto.InputMethodClientsTraceProto.ClientSideProto.IME_FOCUS_CONTROLLER;
 import static android.view.inputmethod.InputMethodEditorTraceProto.InputMethodClientsTraceProto.ClientSideProto.INSETS_CONTROLLER;
-import static android.view.flags.Flags.toolkitSetFrameRateReadOnly;
-import static android.view.flags.Flags.toolkitMetricsForFrameRateDecision;
 
 import static com.android.input.flags.Flags.enablePointerChoreographer;
 
@@ -103,7 +105,6 @@ import android.accessibilityservice.AccessibilityService;
 import android.animation.AnimationHandler;
 import android.animation.LayoutTransition;
 import android.annotation.AnyThread;
-import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.Size;
@@ -220,6 +221,7 @@ import android.widget.Scroller;
 import android.window.BackEvent;
 import android.window.ClientWindowFrames;
 import android.window.CompatOnBackInvokedCallback;
+import android.window.InputTransferToken;
 import android.window.OnBackAnimationCallback;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
@@ -241,7 +243,6 @@ import com.android.internal.view.BaseSurfaceHolder;
 import com.android.internal.view.RootViewSurfaceTaker;
 import com.android.internal.view.SurfaceCallbackHelper;
 import com.android.modules.expresslog.Counter;
-import com.android.window.flags.Flags;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -402,6 +403,8 @@ public final class ViewRootImpl implements ViewParent,
     @Nullable
     private ContentObserver mForceInvertObserver;
 
+    private static final int INVALID_VALUE = Integer.MIN_VALUE;
+    private int mForceInvertEnabled = INVALID_VALUE;
     /**
      * Callback for notifying about global configuration changes.
      */
@@ -1021,12 +1024,36 @@ public final class ViewRootImpl implements ViewParent,
     // Used to check if there is a message in the message queue
     // for idleness handling.
     private boolean mHasIdledMessage = false;
+    // Used to allow developers to opt out Toolkit dVRR feature.
+    // This feature allows device to adjust refresh rate
+    // as needed and can be useful for power saving.
+    // Should not enable the dVRR feature if the value is false.
+    private boolean mIsFrameRatePowerSavingsBalanced = true;
     // time for touch boost period.
     private static final int FRAME_RATE_TOUCH_BOOST_TIME = 3000;
     // time for checking idle status periodically.
     private static final int FRAME_RATE_IDLENESS_CHECK_TIME_MILLIS = 500;
     // time for revaluating the idle status before lowering the frame rate.
     private static final int FRAME_RATE_IDLENESS_REEVALUATE_TIME = 500;
+    // time for evaluating the interval between current time and
+    // the time when frame rate was set previously.
+    private static final int FRAME_RATE_SETTING_REEVALUATE_TIME = 100;
+
+    /*
+     * The variables below are used to update frame rate category
+     */
+    private static final int FRAME_RATE_CATEGORY_COUNT = 5;
+    private int mFrameRateCategoryHighCount = 0;
+    private int mFrameRateCategoryHighHintCount = 0;
+    private int mFrameRateCategoryNormalCount = 0;
+    private int mFrameRateCategoryLowCount = 0;
+
+    /*
+     * the variables below are used to determine whther a dVRR feature should be enabled
+     */
+
+    // Used to determine whether to suppress boost on typing
+    private boolean mShouldSuppressBoostOnTyping = false;
 
     /**
      * A temporary object used so relayoutWindow can return the latest SyncSeqId
@@ -1620,6 +1647,23 @@ public final class ViewRootImpl implements ViewParent,
         }
     }
 
+    private boolean isForceInvertEnabled() {
+        if (mForceInvertEnabled == INVALID_VALUE) {
+            reloadForceInvertEnabled();
+        }
+        return mForceInvertEnabled == 1;
+    }
+
+    private void reloadForceInvertEnabled() {
+        if (forceInvertColor()) {
+            mForceInvertEnabled = Settings.Secure.getIntForUser(
+                    mContext.getContentResolver(),
+                    Settings.Secure.ACCESSIBILITY_FORCE_INVERT_COLOR_ENABLED,
+                    /* def= */ 0,
+                    UserHandle.myUserId());
+        }
+    }
+
     /**
      * Register any kind of listeners if setView was success.
      */
@@ -1646,6 +1690,7 @@ public final class ViewRootImpl implements ViewParent,
                 mForceInvertObserver = new ContentObserver(mHandler) {
                     @Override
                     public void onChange(boolean selfChange) {
+                        reloadForceInvertEnabled();
                         updateForceDarkMode();
                     }
                 };
@@ -1866,16 +1911,11 @@ public final class ViewRootImpl implements ViewParent,
     @VisibleForTesting
     public @ForceDarkType.ForceDarkTypeDef int determineForceDarkType() {
         if (forceInvertColor()) {
-            boolean isForceInvertEnabled = Settings.Secure.getIntForUser(
-                    mContext.getContentResolver(),
-                    Settings.Secure.ACCESSIBILITY_FORCE_INVERT_COLOR_ENABLED,
-                    /* def= */ 0,
-                    UserHandle.myUserId()) == 1;
             // Force invert ignores all developer opt-outs.
             // We also ignore dark theme, since the app developer can override the user's preference
             // for dark mode in configuration.uiMode. Instead, we assume that the force invert
             // setting will be enabled at the same time dark theme is in the Settings app.
-            if (isForceInvertEnabled) {
+            if (isForceInvertEnabled()) {
                 return ForceDarkType.FORCE_INVERT_COLOR_DARK;
             }
         }
@@ -2517,8 +2557,10 @@ public final class ViewRootImpl implements ViewParent,
         // Set the frame rate selection strategy to FRAME_RATE_SELECTION_STRATEGY_SELF
         // This strategy ensures that the frame rate specifications do not cascade down to
         // the descendant layers. This is particularly important for applications like Chrome,
-        // where child surfaces should adhere to default behavior instead of no preference
-        if (sToolkitSetFrameRateReadOnlyFlagValue) {
+        // where child surfaces should adhere to default behavior instead of no preference.
+        // This issue only happens when ViewRootImpl calls setFrameRateCategory. This is
+        // no longer needed if the dVRR feature is disabled.
+        if (shouldEnableDvrr()) {
             try {
                 mFrameRateTransaction.setFrameRateSelectionStrategy(sc,
                         sc.FRAME_RATE_SELECTION_STRATEGY_SELF).applyAsyncUnsafe();
@@ -3242,7 +3284,7 @@ public final class ViewRootImpl implements ViewParent,
                 destroyHardwareResources();
             }
 
-            if (sToolkitSetFrameRateReadOnlyFlagValue && viewVisibility == View.VISIBLE) {
+            if (shouldEnableDvrr() && viewVisibility == View.VISIBLE) {
                 // Boost frame rate when the viewVisibility becomes true.
                 // This is mainly for lanuchers that lanuch new windows.
                 boostFrameRate(FRAME_RATE_TOUCH_BOOST_TIME);
@@ -3957,7 +3999,7 @@ public final class ViewRootImpl implements ViewParent,
                 }
             }
 
-            if (sToolkitSetFrameRateReadOnlyFlagValue) {
+            if (shouldEnableDvrr()) {
                 // Boost the frame rate when the ViewRootImpl first becomes available.
                 boostFrameRate(FRAME_RATE_TOUCH_BOOST_TIME);
             }
@@ -4079,8 +4121,14 @@ public final class ViewRootImpl implements ViewParent,
         // when the values are applicable.
         setPreferredFrameRate(mPreferredFrameRate);
         setPreferredFrameRateCategory(mPreferredFrameRateCategory);
+        mFrameRateCategoryHighCount = mFrameRateCategoryHighCount > 0
+                ? mFrameRateCategoryHighCount - 1 : mFrameRateCategoryHighCount;
+        mFrameRateCategoryNormalCount = mFrameRateCategoryNormalCount > 0
+                ? mFrameRateCategoryNormalCount - 1 : mFrameRateCategoryNormalCount;
+        mFrameRateCategoryLowCount = mFrameRateCategoryLowCount > 0
+                ? mFrameRateCategoryLowCount - 1 : mFrameRateCategoryLowCount;
         mPreferredFrameRateCategory = FRAME_RATE_CATEGORY_NO_PREFERENCE;
-        mPreferredFrameRate = 0;
+        mPreferredFrameRate = -1;
     }
 
     private void createSyncIfNeeded() {
@@ -5165,7 +5213,10 @@ public final class ViewRootImpl implements ViewParent,
 
         // Force recalculation of transparent regions
         if (accessibilityFocusDirty) {
-            requestLayout();
+            final Rect bounds = mAttachInfo.mTmpInvalRect;
+            if (getAccessibilityFocusedRect(bounds)) {
+                requestLayout();
+            }
         }
 
         mAttachInfo.mDrawingTime =
@@ -5831,9 +5882,11 @@ public final class ViewRootImpl implements ViewParent,
         if (mAttachInfo.mThreadedRenderer == null) {
             return;
         }
-        if ((colorMode == ActivityInfo.COLOR_MODE_HDR || colorMode == ActivityInfo.COLOR_MODE_HDR10)
-                && !mDisplay.isHdrSdrRatioAvailable()) {
+        boolean isHdr = colorMode == ActivityInfo.COLOR_MODE_HDR
+                || colorMode == ActivityInfo.COLOR_MODE_HDR10;
+        if (isHdr && !mDisplay.isHdrSdrRatioAvailable()) {
             colorMode = ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT;
+            isHdr = false;
         }
         // TODO: Centralize this sanitization? Why do we let setting bad modes?
         // Alternatively, can we just let HWUI figure it out? Do we need to care here?
@@ -5846,7 +5899,7 @@ public final class ViewRootImpl implements ViewParent,
             desiredRatio = automaticRatio;
         }
 
-        mHdrRenderState.setDesiredHdrSdrRatio(desiredRatio);
+        mHdrRenderState.setDesiredHdrSdrRatio(isHdr, desiredRatio);
     }
 
     @Override
@@ -6132,6 +6185,7 @@ public final class ViewRootImpl implements ViewParent,
     private static final int MSG_TOUCH_BOOST_TIMEOUT = 39;
     private static final int MSG_CHECK_INVALIDATION_IDLE = 40;
     private static final int MSG_REFRESH_POINTER_ICON = 41;
+    private static final int MSG_FRAME_RATE_SETTING = 42;
 
     final class ViewRootHandler extends Handler {
         @Override
@@ -6470,6 +6524,10 @@ public final class ViewRootImpl implements ViewParent,
                         break;
                     }
                     updatePointerIcon(mPointerIconEvent);
+                    break;
+                case MSG_FRAME_RATE_SETTING:
+                    mPreferredFrameRate = 0;
+                    setPreferredFrameRate(mPreferredFrameRate);
                     break;
             }
         }
@@ -7289,8 +7347,18 @@ public final class ViewRootImpl implements ViewParent,
             if (direction != 0) {
                 View focused = mView.findFocus();
                 if (focused != null) {
+                    mAttachInfo.mNextFocusLooped = false;
                     View v = focused.focusSearch(direction);
                     if (v != null && v != focused) {
+                        if (mAttachInfo.mNextFocusLooped) {
+                            // The next focus is looped. Let's try to move the focus to the adjacent
+                            // window. Note: we still need to move the focus in this window
+                            // regardless of what moveFocusToAdjacentWindow returns, so the focus
+                            // can be looped back from the focus in the adjacent window to next
+                            // focus of this window.
+                            moveFocusToAdjacentWindow(direction);
+                        }
+
                         // do the math the get the interesting rect
                         // of previous focused into the coord system of
                         // newly focused view
@@ -7482,7 +7550,7 @@ public final class ViewRootImpl implements ViewParent,
              * MotionEvent.ACTION_CANCEL is detected.
              * Not using ACTION_MOVE to avoid checking and sending messages too frequently.
              */
-            if (mIsFrameRateBoosting && (action == MotionEvent.ACTION_UP
+            if (mIsTouchBoosting && (action == MotionEvent.ACTION_UP
                     || action == MotionEvent.ACTION_CANCEL)) {
                 mHandler.removeMessages(MSG_TOUCH_BOOST_TIMEOUT);
                 mHandler.sendEmptyMessageDelayed(MSG_TOUCH_BOOST_TIMEOUT,
@@ -7566,6 +7634,15 @@ public final class ViewRootImpl implements ViewParent,
             }
             return FORWARD;
         }
+    }
+
+    /**
+     * Returns whether this view is currently handling a pointer event.
+     *
+     * @hide
+     */
+    public boolean isHandlingPointerEvent() {
+        return mAttachInfo.mHandlingPointerEvent;
     }
 
     private void resetPointerIcon(MotionEvent event) {
@@ -8570,6 +8647,10 @@ public final class ViewRootImpl implements ViewParent,
                         mAttachInfo.mDragSurface.release();
                         mAttachInfo.mDragSurface = null;
                     }
+                    if (mAttachInfo.mDragData != null) {
+                        View.cleanUpPendingIntents(mAttachInfo.mDragData);
+                        mAttachInfo.mDragData = null;
+                    }
                 }
             }
         }
@@ -8592,6 +8673,12 @@ public final class ViewRootImpl implements ViewParent,
         ArrayList<KeyboardShortcutGroup> list = new ArrayList<>();
         if (mView != null) {
             mView.requestKeyboardShortcuts(list, deviceId);
+        }
+        int numGroups = list.size();
+        for (int i = 0; i < numGroups; ++i) {
+            final KeyboardShortcutGroup group = list.get(i);
+            group.setPackageName(mBasePackageName);
+
         }
         data.putParcelableArrayList(WindowManager.PARCEL_KEY_SHORTCUTS_ARRAY, list);
         try {
@@ -11203,16 +11290,18 @@ public final class ViewRootImpl implements ViewParent,
     }
 
     /**
-     * @return Returns a token used for associating the root surface
-     * to {@link SurfaceControlViewHost}.
+     * {@inheritDoc}
      */
-    @Nullable
+    @NonNull
     @Override
-    @FlaggedApi(Flags.FLAG_GET_HOST_TOKEN_API)
-    public IBinder getHostToken() {
-        return getInputToken();
+    public InputTransferToken getInputTransferToken() {
+        IBinder inputToken = getInputToken();
+        if (inputToken == null) {
+            throw new IllegalStateException(
+                    "Called getInputTransferToken for Window with no input channel");
+        }
+        return new InputTransferToken(inputToken);
     }
-
     @NonNull
     public IBinder getWindowToken() {
         return mAttachInfo.mWindowToken;
@@ -11547,15 +11636,6 @@ public final class ViewRootImpl implements ViewParent,
                 event.setContentChangeTypes(mChangeTypes);
                 if (mAction.isPresent()) event.setAction(mAction.getAsInt());
                 if (AccessibilityEvent.DEBUG_ORIGIN) event.originStackTrace = mOrigin;
-
-                if (fixMergedContentChangeEvent()) {
-                    if ((mChangeTypes & AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE) != 0) {
-                        final View importantParent = source.getSelfOrParentImportantForA11y();
-                        if (importantParent != null) {
-                            source = importantParent;
-                        }
-                    }
-                }
                 source.sendAccessibilityEventUnchecked(event);
             } else {
                 mLastEventTimeMillis = 0;
@@ -11592,6 +11672,9 @@ public final class ViewRootImpl implements ViewParent,
             if (mSource != null) {
                 if (fixMergedContentChangeEvent()) {
                     View newSource = getCommonPredecessor(mSource, source);
+                    if (newSource != null) {
+                        newSource = newSource.getSelfOrParentImportantForA11y();
+                    }
                     if (newSource == null) {
                         // If there is no common predecessor, then mSource points to
                         // a removed view, hence in this case always prefer the source.
@@ -12033,7 +12116,7 @@ public final class ViewRootImpl implements ViewParent,
                         Runnable timeoutRunnable = () -> Log.e(mTag,
                                 "Failed to submit the sync transaction after 4s. Likely to ANR "
                                         + "soon");
-                        mHandler.postDelayed(timeoutRunnable, 4L * Build.HW_TIMEOUT_MULTIPLIER);
+                        mHandler.postDelayed(timeoutRunnable, 4000L * Build.HW_TIMEOUT_MULTIPLIER);
                         transaction.addTransactionCommittedListener(mSimpleExecutor,
                                 () -> mHandler.removeCallbacks(timeoutRunnable));
                         surfaceSyncGroup.addTransaction(transaction);
@@ -12255,12 +12338,19 @@ public final class ViewRootImpl implements ViewParent,
 
         try {
             if (mLastPreferredFrameRateCategory != frameRateCategory) {
+                if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
+                    Trace.traceBegin(
+                            Trace.TRACE_TAG_VIEW, "ViewRootImpl#setFrameRateCategory "
+                                + frameRateCategory);
+                }
                 mFrameRateTransaction.setFrameRateCategory(mSurfaceControl,
                         frameRateCategory, false).applyAsyncUnsafe();
                 mLastPreferredFrameRateCategory = frameRateCategory;
             }
         } catch (Exception e) {
             Log.e(mTag, "Unable to set frame rate category", e);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         }
 
         if (mPreferredFrameRateCategory != FRAME_RATE_CATEGORY_NO_PREFERENCE && !mHasIdledMessage) {
@@ -12278,13 +12368,21 @@ public final class ViewRootImpl implements ViewParent,
         }
 
         try {
-            if (mLastPreferredFrameRate != preferredFrameRate) {
+            if (mLastPreferredFrameRate != preferredFrameRate
+                    && preferredFrameRate >= 0) {
+                if (Trace.isTagEnabled(Trace.TRACE_TAG_VIEW)) {
+                    Trace.traceBegin(
+                            Trace.TRACE_TAG_VIEW, "ViewRootImpl#setFrameRate "
+                                + preferredFrameRate);
+                }
                 mFrameRateTransaction.setFrameRate(mSurfaceControl, preferredFrameRate,
                     Surface.FRAME_RATE_COMPATIBILITY_DEFAULT).applyAsyncUnsafe();
                 mLastPreferredFrameRate = preferredFrameRate;
             }
         } catch (Exception e) {
             Log.e(mTag, "Unable to set frame rate", e);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         }
     }
 
@@ -12296,21 +12394,21 @@ public final class ViewRootImpl implements ViewParent,
 
     private boolean shouldSetFrameRateCategory() {
         // use toolkitSetFrameRate flag to gate the change
-        return  mSurface.isValid() && sToolkitSetFrameRateReadOnlyFlagValue;
+        return  mSurface.isValid() && shouldEnableDvrr();
     }
 
     private boolean shouldSetFrameRate() {
         // use toolkitSetFrameRate flag to gate the change
-        return mPreferredFrameRate > 0 && sToolkitSetFrameRateReadOnlyFlagValue;
+        return mSurface.isValid() && mPreferredFrameRate > 0 && shouldEnableDvrr();
     }
 
     private boolean shouldTouchBoost(int motionEventAction, int windowType) {
         boolean desiredAction = motionEventAction == MotionEvent.ACTION_DOWN
                 || motionEventAction == MotionEvent.ACTION_MOVE
                 || motionEventAction == MotionEvent.ACTION_UP;
-        boolean undesiredType = windowType == TYPE_INPUT_METHOD;
+        boolean undesiredType = windowType == TYPE_INPUT_METHOD && mShouldSuppressBoostOnTyping;
         // use toolkitSetFrameRate flag to gate the change
-        return desiredAction && !undesiredType && sToolkitSetFrameRateReadOnlyFlagValue
+        return desiredAction && !undesiredType && shouldEnableDvrr()
                 && getFrameRateBoostOnTouchEnabled();
     }
 
@@ -12321,7 +12419,25 @@ public final class ViewRootImpl implements ViewParent,
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PROTECTED)
     public void votePreferredFrameRateCategory(int frameRateCategory) {
-        mPreferredFrameRateCategory = Math.max(mPreferredFrameRateCategory, frameRateCategory);
+        if (frameRateCategory == FRAME_RATE_CATEGORY_HIGH) {
+            mFrameRateCategoryHighCount = FRAME_RATE_CATEGORY_COUNT;
+        } else if (frameRateCategory == FRAME_RATE_CATEGORY_HIGH_HINT) {
+            mFrameRateCategoryHighHintCount = FRAME_RATE_CATEGORY_COUNT;
+        } else if (frameRateCategory == FRAME_RATE_CATEGORY_NORMAL) {
+            mFrameRateCategoryNormalCount = FRAME_RATE_CATEGORY_COUNT;
+        } else if (frameRateCategory == FRAME_RATE_CATEGORY_LOW) {
+            mFrameRateCategoryLowCount = FRAME_RATE_CATEGORY_COUNT;
+        }
+
+        if (mFrameRateCategoryHighCount > 0) {
+            mPreferredFrameRateCategory = FRAME_RATE_CATEGORY_HIGH;
+        } else if (mFrameRateCategoryHighHintCount > 0) {
+            mPreferredFrameRateCategory = FRAME_RATE_CATEGORY_HIGH_HINT;
+        } else if (mFrameRateCategoryNormalCount > 0) {
+            mPreferredFrameRateCategory = FRAME_RATE_CATEGORY_NORMAL;
+        } else if (mFrameRateCategoryLowCount > 0) {
+            mPreferredFrameRateCategory = FRAME_RATE_CATEGORY_LOW;
+        }
         mHasInvalidation = true;
     }
 
@@ -12343,15 +12459,12 @@ public final class ViewRootImpl implements ViewParent,
             return;
         }
 
-        if (mPreferredFrameRate == 0) {
-            mPreferredFrameRate = frameRate;
-        } else if (frameRate > 60 || mPreferredFrameRate > 60) {
-            mPreferredFrameRate = Math.max(mPreferredFrameRate, frameRate);
-        } else if (mPreferredFrameRate != frameRate) {
-            mPreferredFrameRate = 60;
-        }
+        mPreferredFrameRate = Math.max(mPreferredFrameRate, frameRate);
 
         mHasInvalidation = true;
+        mHandler.removeMessages(MSG_FRAME_RATE_SETTING);
+        mHandler.sendEmptyMessageDelayed(MSG_FRAME_RATE_SETTING,
+                FRAME_RATE_SETTING_REEVALUATE_TIME);
     }
 
     /**
@@ -12375,7 +12488,7 @@ public final class ViewRootImpl implements ViewParent,
      */
     @VisibleForTesting
     public float getPreferredFrameRate() {
-        return mPreferredFrameRate;
+        return mPreferredFrameRate >= 0 ? mPreferredFrameRate : mLastPreferredFrameRate;
     }
 
     /**
@@ -12403,19 +12516,6 @@ public final class ViewRootImpl implements ViewParent,
                 boostTimeOut);
     }
 
-    @Override
-    public boolean transferHostTouchGestureToEmbedded(
-            @NonNull SurfaceControlViewHost.SurfacePackage surfacePackage) {
-        final IWindowSession realWm = WindowManagerGlobal.getWindowSession();
-        try {
-            return realWm.transferHostTouchGestureToEmbedded(mWindow,
-                    surfacePackage.getInputToken());
-        } catch (RemoteException e) {
-            e.rethrowAsRuntimeException();
-        }
-        return false;
-    }
-
     /**
      * Set the default back key callback for windowless window, to forward the back key event
      * to host app.
@@ -12429,5 +12529,28 @@ public final class ViewRootImpl implements ViewParent,
         if (!Trace.isEnabled()) return;
         // Record the largest view of percentage to the display size.
         mLargestChildPercentage = Math.max(percentage, mLargestChildPercentage);
+    }
+
+    /**
+     * Get the value of mIsFrameRatePowerSavingsBalanced
+     * Can be used to checked if toolkit dVRR feature is enabled. The default value is true.
+     */
+    @VisibleForTesting
+    public boolean isFrameRatePowerSavingsBalanced() {
+        return mIsFrameRatePowerSavingsBalanced;
+    }
+
+    /**
+     * Set the value of mIsFrameRatePowerSavingsBalanced
+     * Can be used to checked if toolkit dVRR feature is enabled.
+     */
+    public void setFrameRatePowerSavingsBalanced(boolean enabled) {
+        if (sToolkitSetFrameRateReadOnlyFlagValue) {
+            mIsFrameRatePowerSavingsBalanced = enabled;
+        }
+    }
+
+    private boolean shouldEnableDvrr() {
+        return sToolkitSetFrameRateReadOnlyFlagValue && mIsFrameRatePowerSavingsBalanced;
     }
 }

@@ -20,6 +20,7 @@ import android.animation.FloatEvaluator
 import android.animation.IntEvaluator
 import com.android.keyguard.KeyguardViewController
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntrySourceInteractor
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryUdfpsInteractor
 import com.android.systemui.keyguard.domain.interactor.BurnInInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
@@ -33,9 +34,11 @@ import com.android.systemui.util.kotlin.sample
 import dagger.Lazy
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -56,6 +59,7 @@ constructor(
     private val sceneContainerFlags: SceneContainerFlags,
     private val keyguardViewController: Lazy<KeyguardViewController>,
     private val deviceEntryInteractor: DeviceEntryInteractor,
+    private val deviceEntrySourceInteractor: DeviceEntrySourceInteractor,
 ) {
     private val intEvaluator = IntEvaluator()
     private val floatEvaluator = FloatEvaluator()
@@ -173,19 +177,33 @@ constructor(
                 flowOf(BurnInOffsets(x = 0, y = 0, progress = 0f))
             }
         }
+
+    private val isUnlocked: Flow<Boolean> =
+        deviceEntryInteractor.isUnlocked.flatMapLatest { isUnlocked ->
+            if (!isUnlocked) {
+                flowOf(false)
+            } else {
+                flow {
+                    // delay in case device ends up transitioning away from the lock screen;
+                    // we don't want to animate to the unlocked icon and just let the
+                    // icon fade with the transition to GONE
+                    delay(UNLOCKED_DELAY_MS)
+                    emit(true)
+                }
+            }
+        }
+
     val iconType: Flow<DeviceEntryIconView.IconType> =
         combine(
             deviceEntryUdfpsInteractor.isListeningForUdfps,
-            deviceEntryInteractor.isUnlocked,
+            keyguardInteractor.isKeyguardDismissible,
         ) { isListeningForUdfps, isUnlocked ->
-            if (isUnlocked) {
+            if (isListeningForUdfps) {
+                DeviceEntryIconView.IconType.FINGERPRINT
+            } else if (isUnlocked) {
                 DeviceEntryIconView.IconType.UNLOCK
             } else {
-                if (isListeningForUdfps) {
-                    DeviceEntryIconView.IconType.FINGERPRINT
-                } else {
-                    DeviceEntryIconView.IconType.LOCK
-                }
+                DeviceEntryIconView.IconType.LOCK
             }
         }
     val isLongPressEnabled: Flow<Boolean> =
@@ -208,14 +226,13 @@ constructor(
             }
         }
 
-    fun onLongPress() {
-        // TODO (b/309804148): play auth ripple via an interactor
-
+    suspend fun onLongPress() {
         if (sceneContainerFlags.isEnabled()) {
             deviceEntryInteractor.attemptDeviceEntry()
         } else {
             keyguardViewController.get().showPrimaryBouncer(/* scrim */ true)
         }
+        deviceEntrySourceInteractor.attemptEnterDeviceFromDeviceEntryIcon()
     }
 
     private fun DeviceEntryIconView.IconType.toAccessibilityHintType():
@@ -227,6 +244,10 @@ constructor(
             DeviceEntryIconView.IconType.FINGERPRINT ->
                 DeviceEntryIconView.AccessibilityHintType.NONE
         }
+    }
+
+    companion object {
+        const val UNLOCKED_DELAY_MS = 50L
     }
 }
 

@@ -29,10 +29,13 @@ import android.os.ParcelFileDescriptor;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
 import android.os.SharedMemory;
+import android.provider.Settings;
 import android.service.voice.IDetectorSessionVisualQueryDetectionCallback;
 import android.service.voice.IMicrophoneHotwordDetectionVoiceInteractionCallback;
 import android.service.voice.ISandboxedDetectionService;
 import android.service.voice.IVisualQueryDetectionVoiceInteractionCallback;
+import android.service.voice.VisualQueryAttentionResult;
+import android.service.voice.VisualQueryDetectedResult;
 import android.service.voice.VisualQueryDetectionServiceFailure;
 import android.util.Slog;
 
@@ -58,6 +61,7 @@ final class VisualQueryDetectorSession extends DetectorSession {
     private IVisualQueryDetectionAttentionListener mAttentionListener;
     private boolean mEgressingData;
     private boolean mQueryStreaming;
+    private boolean mEnableAccessibilityDataEgress;
 
     //TODO(b/261783819): Determines actual functionalities, e.g., startRecognition etc.
     VisualQueryDetectorSession(
@@ -66,13 +70,17 @@ final class VisualQueryDetectorSession extends DetectorSession {
             @NonNull IHotwordRecognitionStatusCallback callback, int voiceInteractionServiceUid,
             Identity voiceInteractorIdentity,
             @NonNull ScheduledExecutorService scheduledExecutorService, boolean logging,
-            @NonNull DetectorRemoteExceptionListener listener) {
+            @NonNull DetectorRemoteExceptionListener listener, int userId) {
         super(remoteService, lock, context, token, callback,
                 voiceInteractionServiceUid, voiceInteractorIdentity, scheduledExecutorService,
-                logging, listener);
+                logging, listener, userId);
         mEgressingData = false;
         mQueryStreaming = false;
         mAttentionListener = null;
+        mEnableAccessibilityDataEgress = Settings.Secure.getIntForUser(
+                mContext.getContentResolver(),
+                Settings.Secure.VISUAL_QUERY_ACCESSIBILITY_DETECTION_ENABLED, 0,
+                mUserId) == 1;
         // TODO: handle notify RemoteException to client
     }
 
@@ -104,7 +112,7 @@ final class VisualQueryDetectorSession extends DetectorSession {
                 new IDetectorSessionVisualQueryDetectionCallback.Stub(){
 
             @Override
-            public void onAttentionGained() {
+            public void onAttentionGained(VisualQueryAttentionResult attentionResult) {
                 Slog.v(TAG, "BinderCallback#onAttentionGained");
                 synchronized (mLock) {
                     mEgressingData = true;
@@ -112,7 +120,7 @@ final class VisualQueryDetectorSession extends DetectorSession {
                         return;
                     }
                     try {
-                        mAttentionListener.onAttentionGained();
+                        mAttentionListener.onAttentionGained(attentionResult);
                     } catch (RemoteException e) {
                         Slog.e(TAG, "Error delivering attention gained event.", e);
                         try {
@@ -128,7 +136,7 @@ final class VisualQueryDetectorSession extends DetectorSession {
             }
 
             @Override
-            public void onAttentionLost() {
+            public void onAttentionLost(int interactionIntention) {
                 Slog.v(TAG, "BinderCallback#onAttentionLost");
                 synchronized (mLock) {
                     mEgressingData = false;
@@ -136,7 +144,7 @@ final class VisualQueryDetectorSession extends DetectorSession {
                         return;
                     }
                     try {
-                        mAttentionListener.onAttentionLost();
+                        mAttentionListener.onAttentionLost(interactionIntention);
                     } catch (RemoteException e) {
                         Slog.e(TAG, "Error delivering attention lost event.", e);
                         try {
@@ -166,6 +174,36 @@ final class VisualQueryDetectorSession extends DetectorSession {
                     }
                     mQueryStreaming = true;
                     callback.onQueryDetected(partialQuery);
+                    Slog.i(TAG, "Egressed from visual query detection process.");
+                }
+            }
+
+            @Override
+            public void onResultDetected(@NonNull VisualQueryDetectedResult partialResult)
+                    throws RemoteException {
+                Slog.v(TAG, "BinderCallback#onResultDetected");
+                synchronized (mLock) {
+                    Objects.requireNonNull(partialResult);
+                    if (!mEgressingData) {
+                        Slog.v(TAG, "Result should not be egressed within the unattention state.");
+                        callback.onVisualQueryDetectionServiceFailure(
+                                new VisualQueryDetectionServiceFailure(
+                                        ERROR_CODE_ILLEGAL_STREAMING_STATE,
+                                        "Cannot stream results without attention signals."));
+                        return;
+                    }
+                    if (!checkDetectedResultDataLocked(partialResult)) {
+                        Slog.v(TAG, "Accessibility data can be egressed only when the "
+                                        + "isAccessibilityDetectionEnabled() is true.");
+                        callback.onVisualQueryDetectionServiceFailure(
+                                new VisualQueryDetectionServiceFailure(
+                                        ERROR_CODE_ILLEGAL_STREAMING_STATE,
+                                        "Cannot stream accessibility data without "
+                                                + "enabling the setting."));
+                        return;
+                    }
+                    mQueryStreaming = true;
+                    callback.onResultDetected(partialResult);
                     Slog.i(TAG, "Egressed from visual query detection process.");
                 }
             }
@@ -205,6 +243,12 @@ final class VisualQueryDetectorSession extends DetectorSession {
                     mQueryStreaming = false;
                 }
             }
+
+            @SuppressWarnings("GuardedBy")
+            private boolean checkDetectedResultDataLocked(VisualQueryDetectedResult result) {
+                return result.getAccessibilityDetectionData() == null
+                        || mEnableAccessibilityDataEgress;
+            }
         };
         return mRemoteDetectionService.run(
                 service -> service.detectWithVisualSignals(internalCallback));
@@ -229,6 +273,12 @@ final class VisualQueryDetectorSession extends DetectorSession {
                 + " should not be called from VisualQueryDetectorSession.");
     }
 
+    void updateAccessibilityEgressStateLocked(boolean enable) {
+        if (DEBUG) {
+            Slog.d(TAG, "updateAccessibilityEgressStateLocked");
+        }
+        mEnableAccessibilityDataEgress = enable;
+    }
 
     @SuppressWarnings("GuardedBy")
     public void dumpLocked(String prefix, PrintWriter pw) {

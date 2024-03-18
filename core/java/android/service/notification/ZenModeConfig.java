@@ -27,6 +27,7 @@ import static android.app.NotificationManager.Policy.SUPPRESSED_EFFECT_SCREEN_OF
 
 import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.AlarmManager;
@@ -65,17 +66,21 @@ import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Persisted configuration for zen mode.
@@ -185,7 +190,13 @@ public class ZenModeConfig implements Parcelable {
             SUPPRESSED_EFFECT_SCREEN_OFF | SUPPRESSED_EFFECT_FULL_SCREEN_INTENT
                     | SUPPRESSED_EFFECT_LIGHTS | SUPPRESSED_EFFECT_PEEK | SUPPRESSED_EFFECT_AMBIENT;
 
-    public static final int XML_VERSION = 8;
+    // ZenModeConfig XML versions distinguishing key changes.
+    public static final int XML_VERSION_ZEN_UPGRADE = 8;
+    public static final int XML_VERSION_MODES_API = 11;
+
+    // TODO: b/310620812 - Update XML_VERSION and update default_zen_config.xml accordingly when
+    //       modes_api is inlined.
+    private static final int XML_VERSION = 10;
     public static final String ZEN_TAG = "zen";
     private static final String ZEN_ATT_VERSION = "version";
     private static final String ZEN_ATT_USER = "user";
@@ -205,7 +216,7 @@ public class ZenModeConfig implements Parcelable {
     private static final String ALLOW_ATT_SCREEN_ON = "visualScreenOn";
     private static final String ALLOW_ATT_CONV = "convos";
     private static final String ALLOW_ATT_CONV_FROM = "convosFrom";
-    private static final String ALLOW_ATT_CHANNELS = "priorityChannels";
+    private static final String ALLOW_ATT_CHANNELS = "priorityChannelsAllowed";
     private static final String POLICY_USER_MODIFIED_FIELDS = "policyUserModifiedFields";
     private static final String DISALLOW_TAG = "disallow";
     private static final String DISALLOW_ATT_VISUAL_EFFECTS = "visualEffects";
@@ -266,7 +277,12 @@ public class ZenModeConfig implements Parcelable {
     private static final String DEVICE_EFFECT_DISABLE_TOUCH = "zdeDisableTouch";
     private static final String DEVICE_EFFECT_MINIMIZE_RADIO_USAGE = "zdeMinimizeRadioUsage";
     private static final String DEVICE_EFFECT_MAXIMIZE_DOZE = "zdeMaximizeDoze";
+    private static final String DEVICE_EFFECT_EXTRAS = "zdeExtraEffects";
     private static final String DEVICE_EFFECT_USER_MODIFIED_FIELDS = "zdeUserModifiedFields";
+
+    private static final String ITEM_SEPARATOR = ",";
+    private static final String ITEM_SEPARATOR_ESCAPE = "\\";
+    private static final Pattern ITEM_SPLITTER_REGEX = Pattern.compile("(?<!\\\\),");
 
     @UnsupportedAppUsage
     public boolean allowAlarms = DEFAULT_ALLOW_ALARMS;
@@ -586,6 +602,10 @@ public class ZenModeConfig implements Parcelable {
         }
     }
 
+    public static int getCurrentXmlVersion() {
+        return Flags.modesApi() ? XML_VERSION_MODES_API : XML_VERSION;
+    }
+
     public static ZenModeConfig readXml(TypedXmlPullParser parser)
             throws XmlPullParserException, IOException {
         int type = parser.getEventType();
@@ -593,7 +613,7 @@ public class ZenModeConfig implements Parcelable {
         String tag = parser.getName();
         if (!ZEN_TAG.equals(tag)) return null;
         final ZenModeConfig rt = new ZenModeConfig();
-        rt.version = safeInt(parser, ZEN_ATT_VERSION, XML_VERSION);
+        rt.version = safeInt(parser, ZEN_ATT_VERSION, getCurrentXmlVersion());
         rt.user = safeInt(parser, ZEN_ATT_USER, rt.user);
         boolean readSuppressedEffects = false;
         while ((type = parser.next()) != XmlPullParser.END_DOCUMENT) {
@@ -707,14 +727,16 @@ public class ZenModeConfig implements Parcelable {
     /**
      * Writes XML of current ZenModeConfig
      * @param out serializer
-     * @param version uses XML_VERSION if version is null
+     * @param version uses the current XML version if version is null
      * @throws IOException
      */
+
     public void writeXml(TypedXmlSerializer out, Integer version, boolean forBackup)
             throws IOException {
+        int xmlVersion = getCurrentXmlVersion();
         out.startTag(null, ZEN_TAG);
         out.attribute(null, ZEN_ATT_VERSION, version == null
-                ? Integer.toString(XML_VERSION) : Integer.toString(version));
+                ? Integer.toString(xmlVersion) : Integer.toString(version));
         out.attributeInt(null, ZEN_ATT_USER, user);
         out.startTag(null, ALLOW_TAG);
         out.attributeBoolean(null, ALLOW_ATT_CALLS, allowCalls);
@@ -791,9 +813,9 @@ public class ZenModeConfig implements Parcelable {
         rt.enabler = parser.getAttributeValue(null, RULE_ATT_ENABLER);
         rt.condition = readConditionXml(parser);
 
-        // all default rules and user created rules updated to zenMode important interruptions
-        if (rt.zenMode != Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS
+        if (!Flags.modesApi() && rt.zenMode != Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS
                 && Condition.isValidId(rt.conditionId, SYSTEM_AUTHORITY)) {
+            // all default rules and user created rules updated to zenMode important interruptions
             Slog.i(TAG, "Updating zenMode of automatic rule " + rt.name);
             rt.zenMode = Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS;
         }
@@ -1041,7 +1063,7 @@ public class ZenModeConfig implements Parcelable {
                 out);
 
         if (Flags.modesApi()) {
-            writeZenPolicyState(ALLOW_ATT_CHANNELS, policy.getPriorityChannels(), out);
+            writeZenPolicyState(ALLOW_ATT_CHANNELS, policy.getPriorityChannelsAllowed(), out);
         }
     }
 
@@ -1087,6 +1109,7 @@ public class ZenModeConfig implements Parcelable {
                 .setShouldMinimizeRadioUsage(
                         safeBoolean(parser, DEVICE_EFFECT_MINIMIZE_RADIO_USAGE, false))
                 .setShouldMaximizeDoze(safeBoolean(parser, DEVICE_EFFECT_MAXIMIZE_DOZE, false))
+                .setExtraEffects(safeStringSet(parser, DEVICE_EFFECT_EXTRAS))
                 .build();
 
         return deviceEffects.hasEffects() ? deviceEffects : null;
@@ -1111,6 +1134,7 @@ public class ZenModeConfig implements Parcelable {
         writeBooleanIfTrue(out, DEVICE_EFFECT_MINIMIZE_RADIO_USAGE,
                 deviceEffects.shouldMinimizeRadioUsage());
         writeBooleanIfTrue(out, DEVICE_EFFECT_MAXIMIZE_DOZE, deviceEffects.shouldMaximizeDoze());
+        writeStringSet(out, DEVICE_EFFECT_EXTRAS, deviceEffects.getExtraEffects());
     }
 
     private static void writeBooleanIfTrue(TypedXmlSerializer out, String att, boolean value)
@@ -1118,6 +1142,26 @@ public class ZenModeConfig implements Parcelable {
         if (value) {
             out.attributeBoolean(null, att, true);
         }
+    }
+
+    private static void writeStringSet(TypedXmlSerializer out, String att, Set<String> values)
+            throws IOException {
+        if (values.isEmpty()) {
+            return;
+        }
+        // We escape each item  by replacing "\" by "\\" and "," by "\,". Then we concatenate with
+        // "," as separator. Reading performs the same operations in the opposite order.
+        List<String> escapedItems = new ArrayList<>();
+        for (String item : values) {
+            escapedItems.add(
+                    item
+                            .replace(ITEM_SEPARATOR_ESCAPE,
+                                    ITEM_SEPARATOR_ESCAPE + ITEM_SEPARATOR_ESCAPE)
+                            .replace(ITEM_SEPARATOR,
+                                    ITEM_SEPARATOR_ESCAPE + ITEM_SEPARATOR));
+        }
+        String serialized = String.join(ITEM_SEPARATOR, escapedItems);
+        out.attribute(null, att, serialized);
     }
 
     public static boolean isValidHour(int val) {
@@ -1168,6 +1212,26 @@ public class ZenModeConfig implements Parcelable {
     private static long safeLong(TypedXmlPullParser parser, String att, long defValue) {
         final String val = parser.getAttributeValue(null, att);
         return tryParseLong(val, defValue);
+    }
+
+    @NonNull
+    private static Set<String> safeStringSet(TypedXmlPullParser parser, String att) {
+        Set<String> values = new HashSet<>();
+
+        String serialized = parser.getAttributeValue(null, att);
+        if (!TextUtils.isEmpty(serialized)) {
+            // We split on every "," that is *not preceded* by the escape character "\".
+            // Then we reverse the escaping done on each individual item.
+            String[] escapedItems = ITEM_SPLITTER_REGEX.split(serialized);
+            for (String escapedItem : escapedItems) {
+                values.add(escapedItem
+                        .replace(ITEM_SEPARATOR_ESCAPE + ITEM_SEPARATOR_ESCAPE,
+                                ITEM_SEPARATOR_ESCAPE)
+                        .replace(ITEM_SEPARATOR_ESCAPE + ITEM_SEPARATOR,
+                                ITEM_SEPARATOR));
+            }
+        }
+        return values;
     }
 
     @Override
@@ -1369,7 +1433,7 @@ public class ZenModeConfig implements Parcelable {
         int state = defaultPolicy.state;
         if (Flags.modesApi()) {
             state = Policy.policyState(defaultPolicy.hasPriorityChannels(),
-                    ZenPolicy.stateToBoolean(zenPolicy.getPriorityChannels(),
+                    ZenPolicy.stateToBoolean(zenPolicy.getPriorityChannelsAllowed(),
                             DEFAULT_ALLOW_PRIORITY_CHANNELS));
         }
 
@@ -2283,6 +2347,18 @@ public class ZenModeConfig implements Parcelable {
             }
             return Objects.hash(enabled, snoozing, name, zenMode, conditionId, condition,
                     component, configurationActivity, pkg, id, enabler, zenPolicy, modified);
+        }
+
+        /** Returns a deep copy of the {@link ZenRule}. */
+        public ZenRule copy() {
+            final Parcel parcel = Parcel.obtain();
+            try {
+                writeToParcel(parcel, 0);
+                parcel.setDataPosition(0);
+                return new ZenRule(parcel);
+            } finally {
+                parcel.recycle();
+            }
         }
 
         public boolean isAutomaticActive() {

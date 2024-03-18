@@ -140,7 +140,7 @@ public class PipBoundsState {
         // spec takes the aspect ratio of the bounds into account, so both width and height
         // scale by the same factor.
         addPipExclusionBoundsChangeCallback((bounds) -> {
-            mBoundsScale = Math.min((float) bounds.width() / mMaxSize.x, 1.0f);
+            updateBoundsScale();
         });
     }
 
@@ -150,6 +150,11 @@ public class PipBoundsState {
 
         // update the size spec resources upon config change too
         mSizeSpecSource.onConfigurationChanged();
+    }
+
+    /** Update the bounds scale percentage value. */
+    public void updateBoundsScale() {
+        mBoundsScale = Math.min((float) mBounds.width() / mMaxSize.x, 1.0f);
     }
 
     private void reloadResources() {
@@ -255,7 +260,7 @@ public class PipBoundsState {
 
         mStashedState = stashedState;
         try {
-            ActivityTaskManager.getService().onPictureInPictureStateChanged(
+            ActivityTaskManager.getService().onPictureInPictureUiStateChanged(
                     new PictureInPictureUiState(stashedState != STASH_TYPE_NONE /* isStashed */)
             );
         } catch (RemoteException | IllegalStateException e) {
@@ -293,8 +298,8 @@ public class PipBoundsState {
     }
 
     /** Save the reentry state to restore to when re-entering PIP mode. */
-    public void saveReentryState(Size size, float fraction) {
-        mPipReentryState = new PipReentryState(size, fraction);
+    public void saveReentryState(float fraction) {
+        mPipReentryState = new PipReentryState(mBoundsScale, fraction);
     }
 
     /** Returns the saved reentry state. */
@@ -596,17 +601,16 @@ public class PipBoundsState {
     public static final class PipReentryState {
         private static final String TAG = PipReentryState.class.getSimpleName();
 
-        private final @Nullable Size mSize;
         private final float mSnapFraction;
+        private final float mBoundsScale;
 
-        PipReentryState(@Nullable Size size, float snapFraction) {
-            mSize = size;
+        PipReentryState(float boundsScale, float snapFraction) {
+            mBoundsScale = boundsScale;
             mSnapFraction = snapFraction;
         }
 
-        @Nullable
-        public Size getSize() {
-            return mSize;
+        public float getBoundsScale() {
+            return mBoundsScale;
         }
 
         public float getSnapFraction() {
@@ -616,7 +620,7 @@ public class PipBoundsState {
         void dump(PrintWriter pw, String prefix) {
             final String innerPrefix = prefix + "  ";
             pw.println(prefix + TAG);
-            pw.println(innerPrefix + "mSize=" + mSize);
+            pw.println(innerPrefix + "mBoundsScale=" + mBoundsScale);
             pw.println(innerPrefix + "mSnapFraction=" + mSnapFraction);
         }
     }

@@ -270,7 +270,7 @@ public class PackageArchiverTest {
         assertThat(value.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME)).isEqualTo(PACKAGE);
         assertThat(value.getIntExtra(PackageInstaller.EXTRA_STATUS, 0)).isEqualTo(
                 PackageInstaller.STATUS_FAILURE);
-        assertThat(value.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)).isEqualTo(
+        assertThat(value.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)).contains(
                 String.format("Package %s not found.", PACKAGE));
     }
 
@@ -367,7 +367,7 @@ public class PackageArchiverTest {
         verify(mInstallerService).uninstall(
                 eq(new VersionedPackage(PACKAGE, PackageManager.VERSION_CODE_HIGHEST)),
                 eq(CALLER_PACKAGE), eq(DELETE_ARCHIVE | DELETE_KEEP_DATA), eq(mIntentSender),
-                eq(UserHandle.CURRENT.getIdentifier()), anyInt());
+                eq(UserHandle.CURRENT.getIdentifier()), anyInt(), anyInt());
 
         ArchiveState expectedArchiveState = createArchiveState();
         ArchiveState actualArchiveState = mPackageSetting.readUserState(
@@ -391,7 +391,7 @@ public class PackageArchiverTest {
                 eq(CALLER_PACKAGE),
                 eq(DELETE_ARCHIVE | DELETE_KEEP_DATA),
                 eq(mIntentSender),
-                eq(UserHandle.CURRENT.getIdentifier()), anyInt());
+                eq(UserHandle.CURRENT.getIdentifier()), anyInt(), anyInt());
 
         ArchiveState expectedArchiveState = createArchiveState();
         ArchiveState actualArchiveState = mPackageSetting.readUserState(
@@ -552,20 +552,22 @@ public class PackageArchiverTest {
         when(mComputer.getPackageStateFiltered(eq(PACKAGE), anyInt(), anyInt())).thenReturn(
                 null);
 
-        assertThat(mArchiveManager.getArchivedAppIcon(PACKAGE, UserHandle.CURRENT)).isNull();
+        assertThat(mArchiveManager.getArchivedAppIcon(PACKAGE, UserHandle.CURRENT,
+                CALLER_PACKAGE)).isNull();
     }
 
     @Test
     public void getArchivedAppIcon_notArchived() {
-        assertThat(mArchiveManager.getArchivedAppIcon(PACKAGE, UserHandle.CURRENT)).isNull();
+        assertThat(mArchiveManager.getArchivedAppIcon(PACKAGE, UserHandle.CURRENT,
+                CALLER_PACKAGE)).isNull();
     }
 
     @Test
     public void getArchivedAppIcon_success() {
         mUserState.setArchiveState(createArchiveState()).setInstalled(false);
 
-        assertThat(mArchiveManager.getArchivedAppIcon(PACKAGE, UserHandle.CURRENT)).isEqualTo(
-                mIcon);
+        assertThat(mArchiveManager.getArchivedAppIcon(PACKAGE, UserHandle.CURRENT,
+                CALLER_PACKAGE)).isEqualTo(mIcon);
     }
 
 

@@ -20,11 +20,19 @@ import com.android.systemui.communal.data.repository.communalMediaRepository
 import com.android.systemui.communal.data.repository.communalPrefsRepository
 import com.android.systemui.communal.data.repository.communalRepository
 import com.android.systemui.communal.data.repository.communalWidgetRepository
+import com.android.systemui.communal.widgets.EditWidgetsActivityStarter
+import com.android.systemui.flags.Flags
+import com.android.systemui.flags.fakeFeatureFlagsClassic
+import com.android.systemui.keyguard.data.repository.fakeKeyguardRepository
 import com.android.systemui.keyguard.domain.interactor.keyguardInteractor
 import com.android.systemui.kosmos.Kosmos
 import com.android.systemui.kosmos.Kosmos.Fixture
 import com.android.systemui.kosmos.applicationCoroutineScope
+import com.android.systemui.log.logcatLogBuffer
+import com.android.systemui.scene.domain.interactor.sceneInteractor
+import com.android.systemui.scene.shared.flag.fakeSceneContainerFlags
 import com.android.systemui.smartspace.data.repository.smartspaceRepository
+import com.android.systemui.user.data.repository.fakeUserRepository
 import com.android.systemui.util.mockito.mock
 
 val Kosmos.communalInteractor by Fixture {
@@ -37,6 +45,24 @@ val Kosmos.communalInteractor by Fixture {
         smartspaceRepository = smartspaceRepository,
         appWidgetHost = mock(),
         keyguardInteractor = keyguardInteractor,
-        editWidgetsActivityStarter = mock(),
+        editWidgetsActivityStarter = editWidgetsActivityStarter,
+        logBuffer = logcatLogBuffer("CommunalInteractor"),
+        tableLogBuffer = mock(),
+        communalSettingsInteractor = communalSettingsInteractor,
+        sceneInteractor = sceneInteractor,
+        sceneContainerFlags = fakeSceneContainerFlags,
     )
+}
+
+val Kosmos.editWidgetsActivityStarter by Fixture<EditWidgetsActivityStarter> { mock() }
+
+suspend fun Kosmos.setCommunalAvailable(available: Boolean) {
+    fakeFeatureFlagsClassic.set(Flags.COMMUNAL_SERVICE_ENABLED, available)
+    if (available) {
+        fakeUserRepository.asMainUser()
+        with(fakeKeyguardRepository) {
+            setIsEncryptedOrLockdown(false)
+            setKeyguardShowing(true)
+        }
+    }
 }

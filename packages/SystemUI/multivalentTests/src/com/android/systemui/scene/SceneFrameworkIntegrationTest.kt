@@ -50,8 +50,9 @@ import com.android.systemui.keyguard.domain.interactor.keyguardInteractor
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardLongPressViewModel
 import com.android.systemui.keyguard.ui.viewmodel.LockscreenSceneViewModel
 import com.android.systemui.kosmos.testScope
-import com.android.systemui.media.controls.pipeline.MediaDataManager
+import com.android.systemui.media.controls.domain.pipeline.MediaDataManager
 import com.android.systemui.model.SysUiState
+import com.android.systemui.model.sceneContainerPlugin
 import com.android.systemui.power.domain.interactor.PowerInteractor.Companion.setAsleepForTest
 import com.android.systemui.power.domain.interactor.PowerInteractor.Companion.setAwakeForTest
 import com.android.systemui.power.domain.interactor.powerInteractor
@@ -61,11 +62,14 @@ import com.android.systemui.scene.domain.startable.SceneContainerStartable
 import com.android.systemui.scene.shared.flag.fakeSceneContainerFlags
 import com.android.systemui.scene.shared.model.ObservableTransitionState
 import com.android.systemui.scene.shared.model.SceneKey
-import com.android.systemui.scene.shared.model.SceneModel
+import com.android.systemui.scene.shared.model.fakeSceneDataSource
 import com.android.systemui.scene.ui.viewmodel.SceneContainerViewModel
 import com.android.systemui.settings.FakeDisplayTracker
+import com.android.systemui.shade.domain.interactor.privacyChipInteractor
+import com.android.systemui.shade.domain.interactor.shadeHeaderClockInteractor
 import com.android.systemui.shade.ui.viewmodel.ShadeHeaderViewModel
 import com.android.systemui.shade.ui.viewmodel.ShadeSceneViewModel
+import com.android.systemui.statusbar.notification.stack.domain.interactor.headsUpNotificationInteractor
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.notificationsPlaceholderViewModel
 import com.android.systemui.statusbar.pipeline.airplane.data.repository.FakeAirplaneModeRepository
 import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.AirplaneModeInteractor
@@ -75,6 +79,8 @@ import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.FakeMobi
 import com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel.MobileIconsViewModel
 import com.android.systemui.statusbar.pipeline.mobile.util.FakeMobileMappingsProxy
 import com.android.systemui.statusbar.pipeline.shared.data.repository.FakeConnectivityRepository
+import com.android.systemui.statusbar.policy.data.repository.fakeDeviceProvisioningRepository
+import com.android.systemui.statusbar.policy.domain.interactor.deviceProvisioningInteractor
 import com.android.systemui.telephony.data.repository.fakeTelephonyRepository
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
@@ -123,30 +129,33 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
 
     private val kosmos = testKosmos().apply { fakeSceneContainerFlags.enabled = true }
     private val testScope = kosmos.testScope
-    private val sceneContainerConfig = kosmos.sceneContainerConfig
-    private val sceneInteractor = kosmos.sceneInteractor
-    private val authenticationInteractor = kosmos.authenticationInteractor
-    private val deviceEntryInteractor = kosmos.deviceEntryInteractor
-    private val communalInteractor = kosmos.communalInteractor
+    private val sceneContainerConfig by lazy { kosmos.sceneContainerConfig }
+    private val sceneInteractor by lazy { kosmos.sceneInteractor }
+    private val authenticationInteractor by lazy { kosmos.authenticationInteractor }
+    private val deviceEntryInteractor by lazy { kosmos.deviceEntryInteractor }
+    private val communalInteractor by lazy { kosmos.communalInteractor }
 
-    private val transitionState =
+    private val transitionState by lazy {
         MutableStateFlow<ObservableTransitionState>(
             ObservableTransitionState.Idle(sceneContainerConfig.initialSceneKey)
         )
-    private val sceneContainerViewModel =
+    }
+    private val sceneContainerViewModel by lazy {
         SceneContainerViewModel(
                 sceneInteractor = sceneInteractor,
                 falsingInteractor = kosmos.falsingInteractor,
+                powerInteractor = kosmos.powerInteractor,
             )
             .apply { setTransitionState(transitionState) }
+    }
 
-    private val bouncerInteractor = kosmos.bouncerInteractor
+    private val bouncerInteractor by lazy { kosmos.bouncerInteractor }
 
     private lateinit var mobileConnectionsRepository: FakeMobileConnectionsRepository
     private lateinit var bouncerActionButtonInteractor: BouncerActionButtonInteractor
     private lateinit var bouncerViewModel: BouncerViewModel
 
-    private val lockscreenSceneViewModel =
+    private val lockscreenSceneViewModel by lazy {
         LockscreenSceneViewModel(
             applicationScope = testScope.backgroundScope,
             deviceEntryInteractor = deviceEntryInteractor,
@@ -157,6 +166,7 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
                 ),
             notifications = kosmos.notificationsPlaceholderViewModel,
         )
+    }
 
     private val mobileIconsInteractor = FakeMobileIconsInteractor(FakeMobileMappingsProxy(), mock())
 
@@ -179,8 +189,8 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     private lateinit var shadeHeaderViewModel: ShadeHeaderViewModel
     private lateinit var shadeSceneViewModel: ShadeSceneViewModel
 
-    private val keyguardInteractor = kosmos.keyguardInteractor
-    private val powerInteractor = kosmos.powerInteractor
+    private val keyguardInteractor by lazy { kosmos.keyguardInteractor }
+    private val powerInteractor by lazy { kosmos.powerInteractor }
 
     private var bouncerSceneJob: Job? = null
 
@@ -190,6 +200,7 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
 
     private lateinit var emergencyAffordanceManager: EmergencyAffordanceManager
     private lateinit var telecomManager: TelecomManager
+    private val fakeSceneDataSource = kosmos.fakeSceneDataSource
 
     @Before
     fun setUp() {
@@ -222,9 +233,10 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
             ShadeHeaderViewModel(
                 applicationScope = testScope.backgroundScope,
                 context = context,
-                sceneInteractor = sceneInteractor,
                 mobileIconsInteractor = mobileIconsInteractor,
                 mobileIconsViewModel = mobileIconsViewModel,
+                privacyChipInteractor = kosmos.privacyChipInteractor,
+                clockInteractor = kosmos.shadeHeaderClockInteractor,
                 broadcastDispatcher = fakeBroadcastDispatcher,
             )
 
@@ -241,7 +253,7 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
         kosmos.fakeDeviceEntryRepository.setUnlocked(false)
 
         val displayTracker = FakeDisplayTracker(context)
-        val sysUiState = SysUiState(displayTracker)
+        val sysUiState = SysUiState(displayTracker, kosmos.sceneContainerPlugin)
         val startable =
             SceneContainerStartable(
                 applicationScope = testScope.backgroundScope,
@@ -258,11 +270,14 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
                 simBouncerInteractor = dagger.Lazy { kosmos.simBouncerInteractor },
                 authenticationInteractor = dagger.Lazy { kosmos.authenticationInteractor },
                 windowController = mock(),
+                deviceProvisioningInteractor = kosmos.deviceProvisioningInteractor,
+                centralSurfaces = mock(),
+                headsUpInteractor = kosmos.headsUpNotificationInteractor,
             )
         startable.start()
 
         assertWithMessage("Initial scene key mismatch!")
-            .that(sceneContainerViewModel.currentScene.value.key)
+            .that(sceneContainerViewModel.currentScene.value)
             .isEqualTo(sceneContainerConfig.initialSceneKey)
         assertWithMessage("Initial scene container visibility mismatch!")
             .that(sceneContainerViewModel.isVisible.value)
@@ -277,11 +292,12 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
         testScope.runTest {
             emulateUserDrivenTransition(SceneKey.Bouncer)
 
+            fakeSceneDataSource.pause()
             enterPin()
-            assertCurrentScene(SceneKey.Gone)
-            emulateUiSceneTransition(
+            emulatePendingTransitionProgress(
                 expectedVisible = false,
             )
+            assertCurrentScene(SceneKey.Gone)
         }
 
     @Test
@@ -294,11 +310,12 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
                 to = upDestinationSceneKey,
             )
 
+            fakeSceneDataSource.pause()
             enterPin()
-            assertCurrentScene(SceneKey.Gone)
-            emulateUiSceneTransition(
+            emulatePendingTransitionProgress(
                 expectedVisible = false,
             )
+            assertCurrentScene(SceneKey.Gone)
         }
 
     @Test
@@ -443,10 +460,11 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
                 to = upDestinationSceneKey,
             )
 
+            fakeSceneDataSource.pause()
             dismissIme()
 
+            emulatePendingTransitionProgress()
             assertCurrentScene(SceneKey.Lockscreen)
-            emulateUiSceneTransition()
         }
 
     @Test
@@ -499,8 +517,9 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     @Test
     fun goesToGone_whenSimUnlocked_whileDeviceUnlocked() =
         testScope.runTest {
+            fakeSceneDataSource.pause()
             introduceLockedSim()
-            emulateUiSceneTransition(expectedVisible = true)
+            emulatePendingTransitionProgress(expectedVisible = true)
             enterSimPin(authMethodAfterSimUnlock = AuthenticationMethodModel.None)
             assertCurrentScene(SceneKey.Gone)
         }
@@ -508,10 +527,26 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     @Test
     fun showLockscreen_whenSimUnlocked_whileDeviceLocked() =
         testScope.runTest {
+            fakeSceneDataSource.pause()
             introduceLockedSim()
-            emulateUiSceneTransition(expectedVisible = true)
+            emulatePendingTransitionProgress(expectedVisible = true)
             enterSimPin(authMethodAfterSimUnlock = AuthenticationMethodModel.Pin)
             assertCurrentScene(SceneKey.Lockscreen)
+        }
+
+    @Test
+    fun deviceProvisioningAndFactoryResetProtection() =
+        testScope.runTest {
+            val isVisible by collectLastValue(sceneContainerViewModel.isVisible)
+            kosmos.fakeDeviceProvisioningRepository.setDeviceProvisioned(false)
+            kosmos.fakeDeviceProvisioningRepository.setFactoryResetProtectionActive(true)
+            assertThat(isVisible).isFalse()
+
+            kosmos.fakeDeviceProvisioningRepository.setFactoryResetProtectionActive(false)
+            assertThat(isVisible).isFalse()
+
+            kosmos.fakeDeviceProvisioningRepository.setDeviceProvisioned(true)
+            assertThat(isVisible).isTrue()
         }
 
     /**
@@ -522,7 +557,7 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     private fun TestScope.assertCurrentScene(expected: SceneKey) {
         runCurrent()
         assertWithMessage("Current scene mismatch!")
-            .that(sceneContainerViewModel.currentScene.value.key)
+            .that(sceneContainerViewModel.currentScene.value)
             .isEqualTo(expected)
     }
 
@@ -569,35 +604,32 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     }
 
     /**
-     * Emulates a complete transition in the UI from whatever the current scene is in the UI to
-     * whatever the current scene should be, based on the value in
-     * [SceneContainerViewModel.onSceneChanged].
+     * Emulates a gradual transition to the currently pending scene that's sitting in the
+     * [fakeSceneDataSource]. This emits a series of progress updates to the [transitionState] and
+     * finishes by committing the pending scene as the current scene.
      *
-     * This should post a series of values into [transitionState] to emulate a gradual scene
-     * transition and culminate with a call to [SceneContainerViewModel.onSceneChanged].
-     *
-     * The method asserts that a transition is actually required. E.g. it will fail if the current
-     * scene in [transitionState] is already caught up with the scene in
-     * [SceneContainerViewModel.currentScene].
-     *
-     * @param expectedVisible Whether [SceneContainerViewModel.isVisible] should be set at the end
-     *   of the UI transition.
+     * In order to use this, the [fakeSceneDataSource] must be paused before this method is called.
      */
-    private fun TestScope.emulateUiSceneTransition(
+    private fun TestScope.emulatePendingTransitionProgress(
         expectedVisible: Boolean = true,
     ) {
-        val to = sceneContainerViewModel.currentScene.value
+        assertWithMessage("The FakeSceneDataSource has to be paused for this to do anything.")
+            .that(fakeSceneDataSource.isPaused)
+            .isTrue()
+
+        val to = fakeSceneDataSource.pendingScene ?: return
         val from = getCurrentSceneInUi()
-        assertWithMessage("Cannot transition to ${to.key} as the UI is already on that scene!")
-            .that(to.key)
-            .isNotEqualTo(from)
+
+        if (to == from) {
+            return
+        }
 
         // Begin to transition.
         val progressFlow = MutableStateFlow(0f)
         transitionState.value =
             ObservableTransitionState.Transition(
                 fromScene = getCurrentSceneInUi(),
-                toScene = to.key,
+                toScene = to,
                 progress = progressFlow,
                 isInitiatedByUserInput = false,
                 isUserInputOngoing = flowOf(false),
@@ -611,17 +643,18 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
         }
 
         // End the transition and report the change.
-        transitionState.value = ObservableTransitionState.Idle(to.key)
+        transitionState.value = ObservableTransitionState.Idle(to)
 
-        sceneContainerViewModel.onSceneChanged(to)
+        fakeSceneDataSource.unpause(force = true)
         runCurrent()
 
-        assertWithMessage("Visibility mismatch after scene transition from $from to ${to.key}!")
+        assertWithMessage("Visibility mismatch after scene transition from $from to $to!")
             .that(sceneContainerViewModel.isVisible.value)
             .isEqualTo(expectedVisible)
+        assertThat(sceneContainerViewModel.currentScene.value).isEqualTo(to)
 
         bouncerSceneJob =
-            if (to.key == SceneKey.Bouncer) {
+            if (to == SceneKey.Bouncer) {
                 testScope.backgroundScope.launch {
                     bouncerViewModel.authMethodViewModel.collect {
                         // Do nothing. Need this to turn this otherwise cold flow, hot.
@@ -639,7 +672,7 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
      * causes a scene change to the [to] scene.
      *
      * This also includes the emulation of the resulting UI transition that culminates with the UI
-     * catching up with the requested scene change (see [emulateUiSceneTransition]).
+     * catching up with the requested scene change (see [emulatePendingTransitionProgress]).
      *
      * @param to The scene to transition to.
      */
@@ -648,10 +681,10 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     ) {
         checkNotNull(to)
 
-        sceneInteractor.changeScene(SceneModel(to), "reason")
-        assertThat(sceneContainerViewModel.currentScene.value.key).isEqualTo(to)
+        fakeSceneDataSource.pause()
+        sceneInteractor.changeScene(to, "reason")
 
-        emulateUiSceneTransition(
+        emulatePendingTransitionProgress(
             expectedVisible = to != SceneKey.Gone,
         )
     }
@@ -680,11 +713,12 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
             .isFalse()
 
         emulateUserDrivenTransition(SceneKey.Bouncer)
+        fakeSceneDataSource.pause()
         enterPin()
         // This repository state is not changed by the AuthInteractor, it relies on
         // KeyguardStateController.
         kosmos.fakeDeviceEntryRepository.setUnlocked(true)
-        emulateUiSceneTransition(
+        emulatePendingTransitionProgress(
             expectedVisible = false,
         )
     }
@@ -772,14 +806,9 @@ class SceneFrameworkIntegrationTest : SysuiTestCase() {
     }
 
     /** Emulates the dismissal of the IME (soft keyboard). */
-    private suspend fun TestScope.dismissIme(
-        showImeBeforeDismissing: Boolean = true,
-    ) {
+    private fun TestScope.dismissIme() {
         (bouncerViewModel.authMethodViewModel.value as? PasswordBouncerViewModel)?.let {
-            if (showImeBeforeDismissing) {
-                it.onImeVisibilityChanged(true)
-            }
-            it.onImeVisibilityChanged(false)
+            it.onImeDismissed()
             runCurrent()
         }
     }

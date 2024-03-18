@@ -39,6 +39,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -339,8 +340,8 @@ public class VirtualDeviceManagerServiceTest {
         LocalServices.addService(DisplayManagerInternal.class, mDisplayManagerInternalMock);
 
         mSetFlagsRule.initAllFlagsToReleaseConfigDefault();
+        mSetFlagsRule.enableFlags(com.android.input.flags.Flags.FLAG_ENABLE_POINTER_CHOREOGRAPHER);
 
-        doReturn(true).when(mInputManagerInternalMock).setVirtualMousePointerDisplayId(anyInt());
         doNothing().when(mInputManagerInternalMock)
                 .setMousePointerAccelerationEnabled(anyBoolean(), anyInt());
         doNothing().when(mInputManagerInternalMock).setPointerIconVisible(anyBoolean(), anyInt());
@@ -388,7 +389,8 @@ public class VirtualDeviceManagerServiceTest {
         final InputController.DeviceCreationThreadVerifier threadVerifier = () -> true;
         mInputController = new InputController(mNativeWrapperMock,
                 new Handler(TestableLooper.get(this).getLooper()),
-                mContext.getSystemService(WindowManager.class), threadVerifier);
+                mContext.getSystemService(WindowManager.class),
+                AttributionSource.myAttributionSource(), threadVerifier);
         mCameraAccessController =
                 new CameraAccessController(mContext, mLocalService, mCameraAccessBlockedCallback);
 
@@ -826,6 +828,40 @@ public class VirtualDeviceManagerServiceTest {
         TestableLooper.get(this).processAllMessages();
 
         assertThat(mLocalService.getAllPersistentDeviceIds()).isEmpty();
+    }
+
+    @Test
+    public void getDisplayNameForPersistentDeviceId_nonExistentPeristentId_returnsNull() {
+        assertThat(mVdm.getDisplayNameForPersistentDeviceId("nonExistentPersistentId")).isNull();
+    }
+
+    @Test
+    public void getDisplayNameForPersistentDeviceId_defaultDevicePeristentId_returnsNull() {
+        assertThat(mVdm.getDisplayNameForPersistentDeviceId(
+                VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT))
+                .isNull();
+    }
+
+    @Test
+    public void getDisplayNameForPersistentDeviceId_validVirtualDevice_returnsCorrectId() {
+        mVdms.onCdmAssociationsChanged(List.of(mAssociationInfo));
+        CharSequence persistentIdDisplayName =
+                mVdm.getDisplayNameForPersistentDeviceId(mDeviceImpl.getPersistentDeviceId());
+        assertThat(persistentIdDisplayName.toString())
+                .isEqualTo(mAssociationInfo.getDisplayName().toString());
+    }
+
+    @Test
+    public void getDisplayNameForPersistentDeviceId_noVirtualDevice_returnsCorrectId() {
+        CharSequence displayName = "New display name for the new association";
+        mVdms.onCdmAssociationsChanged(List.of(
+                createAssociationInfo(2, AssociationRequest.DEVICE_PROFILE_APP_STREAMING,
+                        displayName)));
+
+        CharSequence persistentIdDisplayName =
+                mVdm.getDisplayNameForPersistentDeviceId(
+                        VirtualDeviceImpl.createPersistentDeviceId(2));
+        assertThat(persistentIdDisplayName.toString()).isEqualTo(displayName.toString());
     }
 
     @Test
@@ -1299,7 +1335,6 @@ public class VirtualDeviceManagerServiceTest {
         mInputController.addDeviceForTesting(BINDER, fd,
                 InputController.InputDeviceDescriptor.TYPE_MOUSE, DISPLAY_ID_1, PHYS,
                 DEVICE_NAME_1, INPUT_DEVICE_ID);
-        doReturn(DISPLAY_ID_1).when(mInputManagerInternalMock).getVirtualMousePointerDisplayId();
         assertThat(mDeviceImpl.sendButtonEvent(BINDER,
                 new VirtualMouseButtonEvent.Builder()
                         .setButtonCode(buttonCode)
@@ -1329,7 +1364,6 @@ public class VirtualDeviceManagerServiceTest {
         mInputController.addDeviceForTesting(BINDER, fd,
                 InputController.InputDeviceDescriptor.TYPE_MOUSE, DISPLAY_ID_1, PHYS, DEVICE_NAME_1,
                 INPUT_DEVICE_ID);
-        doReturn(DISPLAY_ID_1).when(mInputManagerInternalMock).getVirtualMousePointerDisplayId();
         assertThat(mDeviceImpl.sendRelativeEvent(BINDER,
                 new VirtualMouseRelativeEvent.Builder()
                         .setRelativeX(x)
@@ -1360,7 +1394,6 @@ public class VirtualDeviceManagerServiceTest {
         mInputController.addDeviceForTesting(BINDER, fd,
                 InputController.InputDeviceDescriptor.TYPE_MOUSE, DISPLAY_ID_1, PHYS, DEVICE_NAME_1,
                 INPUT_DEVICE_ID);
-        doReturn(DISPLAY_ID_1).when(mInputManagerInternalMock).getVirtualMousePointerDisplayId();
         assertThat(mDeviceImpl.sendScrollEvent(BINDER,
                 new VirtualMouseScrollEvent.Builder()
                         .setXAxisMovement(x)
@@ -1984,6 +2017,13 @@ public class VirtualDeviceManagerServiceTest {
                 eq(virtualDevice), any(), any())).thenReturn(displayId);
         virtualDevice.createVirtualDisplay(VIRTUAL_DISPLAY_CONFIG, mVirtualDisplayCallback,
                 NONBLOCKED_APP_PACKAGE_NAME);
+        final String uniqueId = UNIQUE_ID + displayId;
+        doAnswer(inv -> {
+            final DisplayInfo displayInfo = new DisplayInfo();
+            displayInfo.uniqueId = uniqueId;
+            return displayInfo;
+        }).when(mDisplayManagerInternalMock).getDisplayInfo(eq(displayId));
+        mInputManagerMockHelper.addDisplayIdMapping(uniqueId, displayId);
     }
 
     private ComponentName getPermissionDialogComponent() {
@@ -1994,8 +2034,14 @@ public class VirtualDeviceManagerServiceTest {
     }
 
     private AssociationInfo createAssociationInfo(int associationId, String deviceProfile) {
+        return createAssociationInfo(
+                associationId, deviceProfile, /* displayName= */ deviceProfile);
+    }
+
+    private AssociationInfo createAssociationInfo(int associationId, String deviceProfile,
+            CharSequence displayName) {
         return new AssociationInfo(associationId, /* userId= */ 0, /* packageName=*/ null,
-                /* tag= */ null, MacAddress.BROADCAST_ADDRESS, /* displayName= */ "", deviceProfile,
+                /* tag= */ null, MacAddress.BROADCAST_ADDRESS, displayName, deviceProfile,
                 /* associatedDevice= */ null, /* selfManaged= */ true,
                 /* notifyOnDeviceNearby= */ false, /* revoked= */ false, /* pending= */ false,
                 /* timeApprovedMs= */0, /* lastTimeConnectedMs= */0, /* systemDataSyncFlags= */ -1);

@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar;
 
+import static android.adaptiveauth.Flags.enableAdaptiveAuth;
 import static android.app.admin.DevicePolicyManager.DEVICE_OWNER_TYPE_FINANCED;
 import static android.app.admin.DevicePolicyResources.Strings.SystemUi.KEYGUARD_MANAGEMENT_DISCLOSURE;
 import static android.app.admin.DevicePolicyResources.Strings.SystemUi.KEYGUARD_NAMED_MANAGEMENT_DISCLOSURE;
@@ -32,6 +33,7 @@ import static com.android.systemui.DejankUtils.whitelistIpcs;
 import static com.android.systemui.flags.Flags.LOCKSCREEN_WALLPAPER_DREAM_ENABLED;
 import static com.android.systemui.keyguard.KeyguardIndicationRotateTextViewController.IMPORTANT_MSG_MIN_DURATION;
 import static com.android.systemui.keyguard.KeyguardIndicationRotateTextViewController.INDICATION_IS_DISMISSIBLE;
+import static com.android.systemui.keyguard.KeyguardIndicationRotateTextViewController.INDICATION_TYPE_ADAPTIVE_AUTH;
 import static com.android.systemui.keyguard.KeyguardIndicationRotateTextViewController.INDICATION_TYPE_ALIGNMENT;
 import static com.android.systemui.keyguard.KeyguardIndicationRotateTextViewController.INDICATION_TYPE_BATTERY;
 import static com.android.systemui.keyguard.KeyguardIndicationRotateTextViewController.INDICATION_TYPE_BIOMETRIC_MESSAGE;
@@ -87,6 +89,7 @@ import com.android.settingslib.Utils;
 import com.android.settingslib.fuelgauge.BatteryStatus;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.biometrics.FaceHelpMessageDeferral;
+import com.android.systemui.biometrics.FaceHelpMessageDeferralFactory;
 import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor;
 import com.android.systemui.bouncer.domain.interactor.BouncerMessageInteractor;
 import com.android.systemui.broadcast.BroadcastDispatcher;
@@ -270,7 +273,7 @@ public class KeyguardIndicationController {
             ScreenLifecycle screenLifecycle,
             KeyguardBypassController keyguardBypassController,
             AccessibilityManager accessibilityManager,
-            FaceHelpMessageDeferral faceHelpMessageDeferral,
+            FaceHelpMessageDeferralFactory faceHelpMessageDeferral,
             KeyguardLogger keyguardLogger,
             AlternateBouncerInteractor alternateBouncerInteractor,
             AlarmManager alarmManager,
@@ -308,7 +311,7 @@ public class KeyguardIndicationController {
         mIndicationHelper = indicationHelper;
         mKeyguardInteractor = keyguardInteractor;
 
-        mFaceAcquiredMessageDeferral = faceHelpMessageDeferral;
+        mFaceAcquiredMessageDeferral = faceHelpMessageDeferral.create();
         mCoExFaceAcquisitionMsgIdsToShow = new HashSet<>();
         int[] msgIds = context.getResources().getIntArray(
                 com.android.systemui.res.R.array.config_face_help_msgs_when_fingerprint_enrolled);
@@ -453,6 +456,9 @@ public class KeyguardIndicationController {
         updateLockScreenAlignmentMsg();
         updateLockScreenLogoutView();
         updateLockScreenPersistentUnlockMsg();
+        if (enableAdaptiveAuth()) {
+            updateLockScreenAdaptiveAuthMsg(userId);
+        }
     }
 
     private void updateOrganizedOwnedDevice() {
@@ -591,8 +597,10 @@ public class KeyguardIndicationController {
     }
 
     private void updateLockScreenUserLockedMsg(int userId) {
-        if (!mKeyguardUpdateMonitor.isUserUnlocked(userId)
-                || mKeyguardUpdateMonitor.isEncryptedOrLockdown(userId)) {
+        boolean userUnlocked = mKeyguardUpdateMonitor.isUserUnlocked(userId);
+        boolean encryptedOrLockdown = mKeyguardUpdateMonitor.isEncryptedOrLockdown(userId);
+        mKeyguardLogger.logUpdateLockScreenUserLockedMsg(userId, userUnlocked, encryptedOrLockdown);
+        if (!userUnlocked || encryptedOrLockdown) {
             mRotateTextViewController.updateIndication(
                     INDICATION_TYPE_USER_LOCKED,
                     new KeyguardIndication.Builder()
@@ -734,6 +742,22 @@ public class KeyguardIndicationController {
                     false);
         } else {
             mRotateTextViewController.hideIndication(INDICATION_TYPE_LOGOUT);
+        }
+    }
+
+    private void updateLockScreenAdaptiveAuthMsg(int userId) {
+        final boolean deviceLocked = mKeyguardUpdateMonitor.isDeviceLockedByAdaptiveAuth(userId);
+        if (deviceLocked) {
+            mRotateTextViewController.updateIndication(
+                    INDICATION_TYPE_ADAPTIVE_AUTH,
+                    new KeyguardIndication.Builder()
+                            .setMessage(mContext
+                                    .getString(R.string.kg_prompt_after_adaptive_auth_lock))
+                            .setTextColor(mInitialTextColorState)
+                            .build(),
+                    true);
+        } else {
+            mRotateTextViewController.hideIndication(INDICATION_TYPE_ADAPTIVE_AUTH);
         }
     }
 

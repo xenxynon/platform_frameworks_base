@@ -22,18 +22,12 @@ import com.android.systemui.SysuiTestCase
 import com.android.systemui.communal.shared.model.CommunalSceneKey
 import com.android.systemui.communal.shared.model.ObservableCommunalTransitionState
 import com.android.systemui.coroutines.collectLastValue
-import com.android.systemui.flags.FakeFeatureFlagsClassic
-import com.android.systemui.flags.Flags
-import com.android.systemui.scene.data.repository.SceneContainerRepository
+import com.android.systemui.kosmos.testScope
 import com.android.systemui.scene.data.repository.sceneContainerRepository
-import com.android.systemui.scene.shared.flag.FakeSceneContainerFlags
-import com.android.systemui.scene.shared.model.SceneKey
-import com.android.systemui.scene.shared.model.SceneModel
+import com.android.systemui.scene.shared.flag.fakeSceneContainerFlags
 import com.android.systemui.testKosmos
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -44,71 +38,22 @@ import org.junit.runner.RunWith
 class CommunalRepositoryImplTest : SysuiTestCase() {
     private lateinit var underTest: CommunalRepositoryImpl
 
-    private val testDispatcher = StandardTestDispatcher()
-    private val testScope = TestScope(testDispatcher)
-
-    private lateinit var featureFlagsClassic: FakeFeatureFlagsClassic
-    private lateinit var sceneContainerRepository: SceneContainerRepository
+    private val kosmos = testKosmos()
+    private val testScope = kosmos.testScope
+    private val sceneContainerRepository = kosmos.sceneContainerRepository
 
     @Before
     fun setUp() {
-        val kosmos = testKosmos()
-        sceneContainerRepository = kosmos.sceneContainerRepository
-        featureFlagsClassic = FakeFeatureFlagsClassic()
-
-        featureFlagsClassic.set(Flags.COMMUNAL_SERVICE_ENABLED, true)
-
         underTest = createRepositoryImpl(false)
     }
 
     private fun createRepositoryImpl(sceneContainerEnabled: Boolean): CommunalRepositoryImpl {
         return CommunalRepositoryImpl(
             testScope.backgroundScope,
-            featureFlagsClassic,
-            FakeSceneContainerFlags(enabled = sceneContainerEnabled),
+            kosmos.fakeSceneContainerFlags.apply { enabled = sceneContainerEnabled },
             sceneContainerRepository,
         )
     }
-
-    @Test
-    fun isCommunalShowing_sceneContainerDisabled_onCommunalScene_true() =
-        testScope.runTest {
-            underTest.setDesiredScene(CommunalSceneKey.Communal)
-
-            val isCommunalHubShowing by collectLastValue(underTest.isCommunalHubShowing)
-            assertThat(isCommunalHubShowing).isTrue()
-        }
-
-    @Test
-    fun isCommunalShowing_sceneContainerDisabled_onBlankScene_false() =
-        testScope.runTest {
-            underTest.setDesiredScene(CommunalSceneKey.Blank)
-
-            val isCommunalHubShowing by collectLastValue(underTest.isCommunalHubShowing)
-            assertThat(isCommunalHubShowing).isFalse()
-        }
-
-    @Test
-    fun isCommunalShowing_sceneContainerEnabled_onCommunalScene_true() =
-        testScope.runTest {
-            underTest = createRepositoryImpl(true)
-
-            sceneContainerRepository.setDesiredScene(SceneModel(key = SceneKey.Communal))
-
-            val isCommunalHubShowing by collectLastValue(underTest.isCommunalHubShowing)
-            assertThat(isCommunalHubShowing).isTrue()
-        }
-
-    @Test
-    fun isCommunalShowing_sceneContainerEnabled_onLockscreenScene_false() =
-        testScope.runTest {
-            underTest = createRepositoryImpl(true)
-
-            sceneContainerRepository.setDesiredScene(SceneModel(key = SceneKey.Lockscreen))
-
-            val isCommunalHubShowing by collectLastValue(underTest.isCommunalHubShowing)
-            assertThat(isCommunalHubShowing).isFalse()
-        }
 
     @Test
     fun transitionState_idleByDefault() =

@@ -3657,8 +3657,8 @@ public abstract class Context {
      * On Android {@link android.os.Build.VERSION_CODES#S} and later,
      * if the application is in a state where the service
      * can not be started (such as not in the foreground in a state when services are allowed),
-     * {@link android.app.BackgroundServiceStartNotAllowedException} is thrown
-     * This excemption extends {@link IllegalStateException}, so apps can
+     * {@link android.app.BackgroundServiceStartNotAllowedException} is thrown.
+     * This exception extends {@link IllegalStateException}, so apps can
      * use {@code catch (IllegalStateException)} to catch both.
      *
      * @see #startForegroundService(Intent)
@@ -4244,6 +4244,7 @@ public abstract class Context {
             GRAMMATICAL_INFLECTION_SERVICE,
             SECURITY_STATE_SERVICE,
            //@hide: ECM_ENHANCED_CONFIRMATION_SERVICE,
+            CONTACT_KEYS_SERVICE,
 
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -4822,7 +4823,9 @@ public abstract class Context {
      * @see android.net.thread.ThreadNetworkManager
      * @hide
      */
-    @FlaggedApi("com.android.net.thread.flags.thread_enabled")
+    // TODO (b/325886480): update the flag to
+    // "com.android.net.thread.platform.flags.Flags.FLAG_THREAD_ENABLED_PLATFORM"
+    @FlaggedApi("com.android.net.thread.flags.thread_enabled_platform")
     @SystemApi
     public static final String THREAD_NETWORK_SERVICE = "thread_network";
 
@@ -5073,6 +5076,7 @@ public abstract class Context {
      * {@link android.hardware.fingerprint.FingerprintManager} for handling management
      * of fingerprints.
      *
+     * @removed See {@link android.hardware.biometrics.BiometricPrompt}
      * @see #getSystemService(String)
      * @see android.hardware.fingerprint.FingerprintManager
      */
@@ -5087,6 +5091,8 @@ public abstract class Context {
      * @see #getSystemService
      * @see android.hardware.face.FaceManager
      */
+    @FlaggedApi(android.hardware.biometrics.Flags.FLAG_FACE_BACKGROUND_AUTHENTICATION)
+    @SystemApi
     public static final String FACE_SERVICE = "face";
 
     /**
@@ -6455,6 +6461,19 @@ public abstract class Context {
     @SystemApi
     public static final String WEARABLE_SENSING_SERVICE = "wearable_sensing";
 
+
+    /**
+     * Use with {@link #getSystemService(String)} to retrieve a
+     * {@link android.app.ondeviceintelligence.OnDeviceIntelligenceManager}.
+     *
+     * @see #getSystemService(String)
+     * @see OnDeviceIntelligenceManager
+     * @hide
+     */
+    @SystemApi
+    @FlaggedApi(android.app.ondeviceintelligence.flags.Flags.FLAG_ENABLE_ON_DEVICE_INTELLIGENCE)
+    public static final String ON_DEVICE_INTELLIGENCE_SERVICE = "on_device_intelligence";
+
     /**
      * Use with {@link #getSystemService(String)} to retrieve a
      * {@link android.health.connect.HealthConnectManager}.
@@ -6546,6 +6565,45 @@ public abstract class Context {
     @FlaggedApi(android.permission.flags.Flags.FLAG_ENHANCED_CONFIRMATION_MODE_APIS_ENABLED)
     @SystemApi
     public static final String ECM_ENHANCED_CONFIRMATION_SERVICE = "ecm_enhanced_confirmation";
+
+    /**
+     * Service to protect sensitive content during screen share.
+     * @hide
+     */
+    public static final String SENSITIVE_CONTENT_PROTECTION_SERVICE =
+            "sensitive_content_protection_service";
+
+    /**
+     * Use with {@link #getSystemService(String)} to retrieve a
+     * {@link android.provider.ContactKeysManager} to managing contact keys.
+     *
+     * @see #getSystemService(String)
+     * @see android.provider.ContactKeysManager
+     */
+    @FlaggedApi(android.provider.Flags.FLAG_USER_KEYS)
+    public static final String CONTACT_KEYS_SERVICE = "contact_keys";
+
+    /**
+     * Use with {@link #getSystemService(String)} to retrieve an
+     * {@link android.os.ProfilingManager}.
+     *
+     * @see #getSystemService(String)
+     */
+    @FlaggedApi(android.os.Flags.FLAG_TELEMETRY_APIS_FRAMEWORK_INITIALIZATION)
+    public static final String PROFILING_SERVICE = "profiling";
+
+    /**
+     * Use with {@link #getSystemService(String)} to retrieve a {@link
+     * android.webkit.WebViewUpdateManager} for accessing the WebView update service.
+     *
+     * @see #getSystemService(String)
+     * @see android.webkit.WebViewUpdateManager
+     * @hide
+     */
+    @FlaggedApi(android.webkit.Flags.FLAG_UPDATE_SERVICE_IPC_WRAPPER)
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    @SuppressLint("ServiceName")
+    public static final String WEBVIEW_UPDATE_SERVICE = "webviewupdate";
 
     /**
      * Determine whether the given permission is allowed for a particular
@@ -7701,9 +7759,13 @@ public abstract class Context {
     }
 
     /**
+     * Updates the display association of this Context with the display with the given ID.
+     *
      * @hide
      */
     @SuppressWarnings("HiddenAbstractMethod")
+    @SuppressLint("UnflaggedApi") // @TestApi without associated feature.
+    @TestApi
     public abstract void updateDisplay(int displayId);
 
     /**

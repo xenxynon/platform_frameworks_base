@@ -16,52 +16,56 @@
 
 package com.android.systemui.qs.ui.composable
 
-import android.view.ContextThemeWrapper
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.defaultMinSize
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.compose.animation.scene.ElementKey
+import com.android.compose.animation.scene.MovableElementScenePicker
 import com.android.compose.animation.scene.SceneScope
 import com.android.compose.animation.scene.TransitionState
-import com.android.compose.theme.colorAttr
+import com.android.compose.animation.scene.ValueKey
+import com.android.compose.modifiers.thenIf
 import com.android.systemui.qs.ui.adapter.QSSceneAdapter
 import com.android.systemui.qs.ui.adapter.QSSceneAdapter.State.Companion.Collapsing
 import com.android.systemui.qs.ui.adapter.QSSceneAdapter.State.Expanding
-import com.android.systemui.res.R
-import com.android.systemui.scene.ui.composable.Gone
-import com.android.systemui.scene.ui.composable.Lockscreen
+import com.android.systemui.qs.ui.adapter.QSSceneAdapter.State.Unsquishing
 import com.android.systemui.scene.ui.composable.QuickSettings as QuickSettingsSceneKey
 import com.android.systemui.scene.ui.composable.Shade
 
 object QuickSettings {
+    private val SCENES =
+        setOf(
+            QuickSettingsSceneKey,
+            Shade,
+        )
+
     object Elements {
-        // TODO RENAME
-        val Content = ElementKey("QuickSettingsContent")
-        val CollapsedGrid = ElementKey("QuickSettingsCollapsedGrid")
+        val Content =
+            ElementKey("QuickSettingsContent", scenePicker = MovableElementScenePicker(SCENES))
         val FooterActions = ElementKey("QuickSettingsFooterActions")
+    }
+
+    object SharedValues {
+        val TilesSquishiness = ValueKey("QuickSettingsTileSquishiness")
+        object SquishinessValues {
+            val Default = 1f
+            val LockscreenSceneStarting = 0f
+            val GoneSceneStarting = 0.3f
+        }
     }
 }
 
-@Composable
-private fun QuickSettingsTheme(content: @Composable () -> Unit) {
-    val context = LocalContext.current
-    val themedContext =
-        remember(context) { ContextThemeWrapper(context, R.style.Theme_SystemUI_QuickSettings) }
-    CompositionLocalProvider(LocalContext provides themedContext) { content() }
-}
-
-private fun SceneScope.stateForQuickSettingsContent(): QSSceneAdapter.State {
+private fun SceneScope.stateForQuickSettingsContent(
+    squishiness: Float = QuickSettings.SharedValues.SquishinessValues.Default
+): QSSceneAdapter.State {
     return when (val transitionState = layoutState.transitionState) {
         is TransitionState.Idle -> {
             when (transitionState.currentScene) {
@@ -75,10 +79,10 @@ private fun SceneScope.stateForQuickSettingsContent(): QSSceneAdapter.State {
                 when {
                     fromScene == Shade && toScene == QuickSettingsSceneKey -> Expanding(progress)
                     fromScene == QuickSettingsSceneKey && toScene == Shade -> Collapsing(progress)
-                    toScene == Shade -> QSSceneAdapter.State.QQS
-                    toScene == QuickSettingsSceneKey -> QSSceneAdapter.State.QS
-                    toScene == Gone -> QSSceneAdapter.State.CLOSED
-                    toScene == Lockscreen -> QSSceneAdapter.State.CLOSED
+                    fromScene == Shade || toScene == Shade -> Unsquishing(squishiness)
+                    fromScene == QuickSettingsSceneKey || toScene == QuickSettingsSceneKey -> {
+                        QSSceneAdapter.State.QS
+                    }
                     else ->
                         error(
                             "Bad transition for QuickSettings: fromScene=$fromScene," +
@@ -92,17 +96,35 @@ private fun SceneScope.stateForQuickSettingsContent(): QSSceneAdapter.State {
 /**
  * This composable will show QuickSettingsContent in the correct state (as determined by its
  * [SceneScope]).
+ *
+ * If adding to scenes not in:
+ * * QuickSettingsScene
+ * * ShadeScene
+ *
+ * amend:
+ * * [stateForQuickSettingsContent],
+ * * [QuickSettings.SCENES],
+ * * this doc.
  */
 @Composable
 fun SceneScope.QuickSettings(
-    modifier: Modifier = Modifier,
     qsSceneAdapter: QSSceneAdapter,
+    heightProvider: () -> Int,
+    modifier: Modifier = Modifier,
+    squishiness: Float = QuickSettings.SharedValues.SquishinessValues.Default,
 ) {
-    val contentState = stateForQuickSettingsContent()
+    val contentState = stateForQuickSettingsContent(squishiness)
 
     MovableElement(
         key = QuickSettings.Elements.Content,
-        modifier = modifier.fillMaxWidth().defaultMinSize(minHeight = 300.dp)
+        modifier =
+            modifier.fillMaxWidth().layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                // Use the height of the correct view based on the scene it is being composed in
+                val height = heightProvider()
+
+                layout(placeable.width, height) { placeable.placeRelative(0, 0) }
+            }
     ) {
         content { QuickSettingsContent(qsSceneAdapter = qsSceneAdapter, contentState) }
     }
@@ -115,6 +137,7 @@ private fun QuickSettingsContent(
     modifier: Modifier = Modifier,
 ) {
     val qsView by qsSceneAdapter.qsView.collectAsState(null)
+    val isCustomizing by qsSceneAdapter.isCustomizing.collectAsState()
     QuickSettingsTheme {
         val context = LocalContext.current
 
@@ -124,14 +147,19 @@ private fun QuickSettingsContent(
             }
         }
         qsView?.let { view ->
-            AndroidView(
-                modifier = modifier.fillMaxSize().background(colorAttr(R.attr.underSurface)),
-                factory = { _ ->
-                    qsSceneAdapter.setState(state)
-                    view
-                },
-                update = { qsSceneAdapter.setState(state) }
-            )
+            Box(
+                modifier =
+                    modifier.fillMaxWidth().thenIf(isCustomizing) { Modifier.fillMaxHeight() }
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth(),
+                    factory = { _ ->
+                        qsSceneAdapter.setState(state)
+                        view
+                    },
+                    update = { qsSceneAdapter.setState(state) }
+                )
+            }
         }
     }
 }

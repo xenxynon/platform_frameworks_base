@@ -93,6 +93,12 @@ interface ITelecomService {
     PhoneAccount getPhoneAccount(in PhoneAccountHandle account, String callingPackage);
 
     /**
+     * @see TelecomManager#getPhoneAccount
+     */
+    ParceledListSlice<PhoneAccount> getRegisteredPhoneAccounts(String callingPackage,
+            String callingFeatureId);
+
+    /**
      * @see TelecomManager#getAllPhoneAccountsCount
      */
     int getAllPhoneAccountsCount();
@@ -395,7 +401,7 @@ interface ITelecomService {
      * @see TelecomServiceImpl#isInSelfManagedCall
      */
     boolean isInSelfManagedCall(String packageName, in UserHandle userHandle,
-        String callingPackage);
+        String callingPackage, boolean detectForAllUsers);
 
     /**
      * @see TelecomServiceImpl#addCall

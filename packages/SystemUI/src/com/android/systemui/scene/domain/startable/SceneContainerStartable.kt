@@ -18,6 +18,7 @@
 
 package com.android.systemui.scene.domain.startable
 
+import android.app.StatusBarManager
 import com.android.systemui.CoreStartable
 import com.android.systemui.authentication.domain.interactor.AuthenticationInteractor
 import com.android.systemui.authentication.shared.model.AuthenticationMethodModel
@@ -30,6 +31,7 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.DisplayId
 import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.model.SceneContainerPlugin
 import com.android.systemui.model.SysUiState
 import com.android.systemui.model.updateFlags
 import com.android.systemui.power.domain.interactor.PowerInteractor
@@ -38,14 +40,11 @@ import com.android.systemui.scene.shared.flag.SceneContainerFlags
 import com.android.systemui.scene.shared.logger.SceneLogger
 import com.android.systemui.scene.shared.model.ObservableTransitionState
 import com.android.systemui.scene.shared.model.SceneKey
-import com.android.systemui.scene.shared.model.SceneModel
-import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_BOUNCER_SHOWING
-import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED
-import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_NOTIFICATION_PANEL_VISIBLE
-import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_QUICK_SETTINGS_EXPANDED
-import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING
 import com.android.systemui.statusbar.NotificationShadeWindowController
+import com.android.systemui.statusbar.notification.domain.interactor.HeadsUpNotificationInteractor
 import com.android.systemui.statusbar.notification.stack.shared.flexiNotifsEnabled
+import com.android.systemui.statusbar.phone.CentralSurfaces
+import com.android.systemui.statusbar.policy.domain.interactor.DeviceProvisioningInteractor
 import com.android.systemui.util.asIndenting
 import com.android.systemui.util.printSection
 import com.android.systemui.util.println
@@ -55,10 +54,12 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
@@ -85,6 +86,9 @@ constructor(
     private val simBouncerInteractor: Lazy<SimBouncerInteractor>,
     private val authenticationInteractor: Lazy<AuthenticationInteractor>,
     private val windowController: NotificationShadeWindowController,
+    private val deviceProvisioningInteractor: DeviceProvisioningInteractor,
+    private val centralSurfaces: CentralSurfaces,
+    private val headsUpInteractor: HeadsUpNotificationInteractor,
 ) : CoreStartable {
 
     override fun start() {
@@ -95,6 +99,7 @@ constructor(
             hydrateSystemUiState()
             collectFalsingSignals()
             hydrateWindowFocus()
+            hydrateInteractionState()
         } else {
             sceneLogger.logFrameworkEnabled(
                 isEnabled = false,
@@ -116,26 +121,48 @@ constructor(
     private fun hydrateVisibility() {
         applicationScope.launch {
             // TODO(b/296114544): Combine with some global hun state to make it visible!
-            sceneInteractor.transitionState
-                .mapNotNull { state ->
-                    when (state) {
-                        is ObservableTransitionState.Idle -> {
-                            if (state.scene != SceneKey.Gone) {
-                                true to "scene is not Gone"
-                            } else {
-                                false to "scene is Gone"
-                            }
-                        }
-                        is ObservableTransitionState.Transition -> {
-                            if (state.fromScene == SceneKey.Gone) {
-                                true to "scene transitioning away from Gone"
-                            } else {
-                                null
-                            }
-                        }
-                    }
+            combine(
+                    deviceProvisioningInteractor.isDeviceProvisioned,
+                    deviceProvisioningInteractor.isFactoryResetProtectionActive,
+                ) { isDeviceProvisioned, isFrpActive ->
+                    isDeviceProvisioned && !isFrpActive
                 }
                 .distinctUntilChanged()
+                .flatMapLatest { isAllowedToBeVisible ->
+                    if (isAllowedToBeVisible) {
+                        sceneInteractor.transitionState
+                            .mapNotNull { state ->
+                                when (state) {
+                                    is ObservableTransitionState.Idle -> {
+                                        if (state.scene != SceneKey.Gone) {
+                                            true to "scene is not Gone"
+                                        } else {
+                                            false to "scene is Gone"
+                                        }
+                                    }
+                                    is ObservableTransitionState.Transition -> {
+                                        if (state.fromScene == SceneKey.Gone) {
+                                            true to "scene transitioning away from Gone"
+                                        } else {
+                                            null
+                                        }
+                                    }
+                                }
+                            }
+                            .combine(headsUpInteractor.isHeadsUpOrAnimatingAway) {
+                                visibilityForTransitionState,
+                                isHeadsUpOrAnimatingAway ->
+                                if (isHeadsUpOrAnimatingAway) {
+                                    true to "showing a HUN"
+                                } else {
+                                    visibilityForTransitionState
+                                }
+                            }
+                            .distinctUntilChanged()
+                    } else {
+                        flowOf(false to "Device not provisioned or Factory Reset Protection active")
+                    }
+                }
                 .collect { (isVisible, loggingReason) ->
                     sceneInteractor.setVisible(isVisible, loggingReason)
                 }
@@ -147,9 +174,9 @@ constructor(
         applicationScope.launch {
             // TODO (b/308001302): Move this to a bouncer specific interactor.
             bouncerInteractor.onImeHiddenByUser.collectLatest {
-                if (sceneInteractor.desiredScene.value.key == SceneKey.Bouncer) {
+                if (sceneInteractor.currentScene.value == SceneKey.Bouncer) {
                     sceneInteractor.changeScene(
-                        scene = SceneModel(SceneKey.Lockscreen),
+                        toScene = SceneKey.Lockscreen,
                         loggingReason = "IME hidden",
                     )
                 }
@@ -291,12 +318,10 @@ constructor(
                 .collect { sceneKey ->
                     sysUiState.updateFlags(
                         displayId,
-                        SYSUI_STATE_NOTIFICATION_PANEL_VISIBLE to (sceneKey != SceneKey.Gone),
-                        SYSUI_STATE_NOTIFICATION_PANEL_EXPANDED to (sceneKey == SceneKey.Shade),
-                        SYSUI_STATE_QUICK_SETTINGS_EXPANDED to (sceneKey == SceneKey.QuickSettings),
-                        SYSUI_STATE_BOUNCER_SHOWING to (sceneKey == SceneKey.Bouncer),
-                        SYSUI_STATE_STATUS_BAR_KEYGUARD_SHOWING to
-                            (sceneKey == SceneKey.Lockscreen),
+                        *SceneContainerPlugin.EvaluatorByFlag.map { (flag, evaluator) ->
+                                flag to evaluator.invoke(sceneKey)
+                            }
+                            .toTypedArray(),
                     )
                 }
         }
@@ -313,7 +338,7 @@ constructor(
         }
 
         applicationScope.launch {
-            keyguardInteractor.isDozing.distinctUntilChanged().collect { isDozing ->
+            keyguardInteractor.isDozing.collect { isDozing ->
                 falsingCollector.setShowingAod(isDozing)
             }
         }
@@ -338,8 +363,8 @@ constructor(
         }
 
         applicationScope.launch {
-            sceneInteractor.desiredScene
-                .map { it.key == SceneKey.Bouncer }
+            sceneInteractor.currentScene
+                .map { it == SceneKey.Bouncer }
                 .distinctUntilChanged()
                 .collect { switchedToBouncerScene ->
                     if (switchedToBouncerScene) {
@@ -365,9 +390,49 @@ constructor(
         }
     }
 
+    /** Keeps the interaction state of [CentralSurfaces] up-to-date. */
+    private fun hydrateInteractionState() {
+        applicationScope.launch {
+            deviceEntryInteractor.isUnlocked
+                .map { !it }
+                .flatMapLatest { isDeviceLocked ->
+                    if (isDeviceLocked) {
+                        sceneInteractor.transitionState
+                            .mapNotNull { it as? ObservableTransitionState.Idle }
+                            .map { it.scene }
+                            .distinctUntilChanged()
+                            .map { sceneKey ->
+                                when (sceneKey) {
+                                    // When locked, showing the lockscreen scene should be reported
+                                    // as "interacting" while showing other scenes should report as
+                                    // "not interacting".
+                                    //
+                                    // This is done here in order to match the legacy
+                                    // implementation. The real reason why is lost to lore and myth.
+                                    SceneKey.Lockscreen -> true
+                                    SceneKey.Bouncer -> false
+                                    SceneKey.Shade -> false
+                                    else -> null
+                                }
+                            }
+                    } else {
+                        flowOf(null)
+                    }
+                }
+                .collect { isInteractingOrNull ->
+                    isInteractingOrNull?.let { isInteracting ->
+                        centralSurfaces.setInteracting(
+                            StatusBarManager.WINDOW_STATUS_BAR,
+                            isInteracting,
+                        )
+                    }
+                }
+        }
+    }
+
     private fun switchToScene(targetSceneKey: SceneKey, loggingReason: String) {
         sceneInteractor.changeScene(
-            scene = SceneModel(targetSceneKey),
+            toScene = targetSceneKey,
             loggingReason = loggingReason,
         )
     }

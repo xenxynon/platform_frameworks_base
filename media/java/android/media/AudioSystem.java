@@ -36,6 +36,7 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Vibrator;
 import android.telephony.TelephonyManager;
+import android.util.IntArray;
 import android.util.Log;
 import android.util.Pair;
 
@@ -1970,6 +1971,8 @@ public class AudioSystem
     /** @hide */
     public static native int listAudioPorts(ArrayList<AudioPort> ports, int[] generation);
     /** @hide */
+    public static native int getSupportedDeviceTypes(int flags, IntArray internalDeviceTypes);
+    /** @hide */
     public static native int createAudioPatch(AudioPatch[] patch,
                                             AudioPortConfig[] sources, AudioPortConfig[] sinks);
     /** @hide */
@@ -2002,6 +2005,9 @@ public class AudioSystem
 
     /** @hide */
     public static native int registerPolicyMixes(ArrayList<AudioMix> mixes, boolean register);
+
+    /** @hide */
+    public static native int getRegisteredPolicyMixes(@NonNull List<AudioMix> devices);
 
     /** @hide */
     public static native int updatePolicyMixes(

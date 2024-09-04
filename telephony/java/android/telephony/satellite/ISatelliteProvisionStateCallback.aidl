@@ -16,8 +16,6 @@
 
 package android.telephony.satellite;
 
-import android.telephony.satellite.SatelliteSubscriberProvisionStatus;
-
 /**
  * Interface for satellite provision state callback.
  * @hide
@@ -29,14 +27,4 @@ oneway interface ISatelliteProvisionStateCallback {
      * @param provisioned True means the service is provisioned and false means it is not.
      */
     void onSatelliteProvisionStateChanged(in boolean provisioned);
-
-    /**
-     * Called when the provisioning state of one or more SatelliteSubscriberInfos changes.
-     *
-     * @param satelliteSubscriberProvisionStatus The List contains the latest provisioning states of
-     * the SatelliteSubscriberInfos.
-     * @hide
-     */
-    void onSatelliteSubscriptionProvisionStateChanged(in List<SatelliteSubscriberProvisionStatus>
-        satelliteSubscriberProvisionStatus);
 }

@@ -78,7 +78,7 @@ import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
-import android.telephony.satellite.SatelliteSubscriberInfo;
+import android.telephony.satellite.ProvisionSubscriberId;
 import com.android.ims.internal.IImsServiceFeatureCallback;
 import com.android.internal.telephony.CellNetworkScanResult;
 import com.android.internal.telephony.IBooleanConsumer;
@@ -2743,6 +2743,7 @@ interface ITelephony {
     /**
      * Request to enable or disable the satellite modem.
      *
+     * @param subId The subId of the subscription to enable or disable the satellite modem for.
      * @param enableSatellite True to enable the satellite modem and false to disable.
      * @param enableDemoMode True if demo mode is enabled and false otherwise. When
      *                       disabling satellite, {@code enableDemoMode} is always considered as
@@ -2754,83 +2755,93 @@ interface ITelephony {
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestSatelliteEnabled(boolean enableSatellite, boolean enableDemoMode,
+    void requestSatelliteEnabled(int subId, boolean enableSatellite, boolean enableDemoMode,
             boolean isEmergency, in IIntegerConsumer callback);
 
     /**
      * Request to get whether the satellite modem is enabled.
      *
+     * @param subId The subId of the subscription to request whether satellite is enabled for.
      * @param receiver Result receiver to get the error code of the request and whether the
      *                 satellite modem is enabled.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestIsSatelliteEnabled(in ResultReceiver receiver);
+    void requestIsSatelliteEnabled(int subId, in ResultReceiver receiver);
 
     /**
      * Request to get whether the satellite service demo mode is enabled.
      *
+     * @param subId The subId of the subscription to request whether the satellite demo mode is
+     *              enabled for.
      * @param receiver Result receiver to get the error code of the request and whether the
      *                 satellite demo mode is enabled.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestIsDemoModeEnabled(in ResultReceiver receiver);
+    void requestIsDemoModeEnabled(int subId, in ResultReceiver receiver);
 
     /**
      * Request to get whether the satellite service is enabled with emergency mode.
      *
+     * @param subId The subId of the subscription to request whether the satellite demo mode is
+     *              enabled for.
      * @param receiver Result receiver to get the error code of the request and whether the
      *                 satellite is enabled with emergency mode.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestIsEmergencyModeEnabled(in ResultReceiver receiver);
+    void requestIsEmergencyModeEnabled(int subId, in ResultReceiver receiver);
 
     /**
      * Request to get whether the satellite service is supported on the device.
      *
+     * @param subId The subId of the subscription to check whether satellite is supported for.
      * @param receiver Result receiver to get the error code of the request and whether the
      *                 satellite service is supported on the device.
      */
-    void requestIsSatelliteSupported(in ResultReceiver receiver);
+    void requestIsSatelliteSupported(int subId, in ResultReceiver receiver);
 
     /**
      * Request to get the capabilities of the satellite service.
      *
+     * @param subId The subId of the subscription to get the capabilities for.
      * @param receiver Result receiver to get the error code of the request and the requested
      *                 capabilities of the satellite service.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestSatelliteCapabilities(in ResultReceiver receiver);
+    void requestSatelliteCapabilities(int subId, in ResultReceiver receiver);
 
     /**
      * Start receiving satellite transmission updates.
      *
+     * @param subId The subId of the subscription to stop satellite transmission updates for.
      * @param resultCallback The callback to get the result of the request.
      * @param callback The callback to handle transmission updates.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void startSatelliteTransmissionUpdates(in IIntegerConsumer resultCallback,
+    void startSatelliteTransmissionUpdates(int subId, in IIntegerConsumer resultCallback,
             in ISatelliteTransmissionUpdateCallback callback);
 
     /**
      * Stop receiving satellite transmission updates.
      *
+     * @param subId The subId of the subscritpion to stop satellite transmission updates for.
      * @param resultCallback The callback to get the result of the request.
      * @param callback The callback that was passed to startSatelliteTransmissionUpdates.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void stopSatelliteTransmissionUpdates(in IIntegerConsumer resultCallback,
+    void stopSatelliteTransmissionUpdates(int subId, in IIntegerConsumer resultCallback,
             in ISatelliteTransmissionUpdateCallback callback);
 
     /**
      * Register the subscription with a satellite provider.
      * This is needed to register the subscription if the provider allows dynamic registration.
      *
+     * @param subId The subId of the subscription to be provisioned.
      * @param token The token to be used as a unique identifier for provisioning with satellite
      *              gateway.
      * @provisionData Data from the provisioning app that can be used by provisioning server
@@ -2840,7 +2851,7 @@ interface ITelephony {
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    ICancellationSignal provisionSatelliteService(in String token,
+    ICancellationSignal provisionSatelliteService(int subId, in String token,
             in byte[] provisionData, in IIntegerConsumer callback);
 
     /**
@@ -2850,99 +2861,110 @@ interface ITelephony {
      * {@link SatelliteCallback.SatelliteProvisionStateListener#onSatelliteProvisionStateChanged}
      * should report as deprovisioned.
      *
+     * @param subId The subId of the subscription to be deprovisioned.
      * @param token The token of the device/subscription to be deprovisioned.
      * @param callback The callback to get the result of the request.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void deprovisionSatelliteService(in String token, in IIntegerConsumer callback);
+    void deprovisionSatelliteService(int subId, in String token, in IIntegerConsumer callback);
 
     /**
      * Registers for provision state changed from satellite modem.
      *
+     * @param subId The subId of the subscription to register for provision state changed.
      * @param callback The callback to handle the satellite provision state changed event.
      *
      * @return The {@link SatelliteError} result of the operation.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    int registerForSatelliteProvisionStateChanged(in ISatelliteProvisionStateCallback callback);
+    int registerForSatelliteProvisionStateChanged(int subId,
+            in ISatelliteProvisionStateCallback callback);
 
     /**
      * Unregisters for provision state changed from satellite modem.
      * If callback was not registered before, the request will be ignored.
      *
+     * @param subId The subId of the subscription to unregister for provision state changed.
      * @param callback The callback that was passed to registerForSatelliteProvisionStateChanged.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void unregisterForSatelliteProvisionStateChanged(
+    void unregisterForSatelliteProvisionStateChanged(int subId,
             in ISatelliteProvisionStateCallback callback);
 
     /**
      * Request to get whether the device is provisioned with a satellite provider.
      *
+     * @param subId The subId of the subscription to get whether the device is provisioned for.
      * @param receiver Result receiver to get the error code of the request and whether the
      *                 device is provisioned with a satellite provider.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestIsSatelliteProvisioned(in ResultReceiver receiver);
+    void requestIsSatelliteProvisioned(int subId, in ResultReceiver receiver);
 
     /**
      * Registers for modem state changed from satellite modem.
      *
+     * @param subId The subId of the subscription to register for satellite modem state changed.
      * @param callback The callback to handle the satellite modem state changed event.
      *
      * @return The {@link SatelliteError} result of the operation.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    int registerForSatelliteModemStateChanged(ISatelliteModemStateCallback callback);
+    int registerForSatelliteModemStateChanged(int subId, ISatelliteModemStateCallback callback);
 
     /**
      * Unregisters for modem state changed from satellite modem.
      * If callback was not registered before, the request will be ignored.
      *
+     * @param subId The subId of the subscription to unregister for satellite modem state changed.
      * @param callback The callback that was passed to registerForSatelliteStateChanged.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void unregisterForModemStateChanged(ISatelliteModemStateCallback callback);
+    void unregisterForModemStateChanged(int subId, ISatelliteModemStateCallback callback);
 
    /**
      * Register to receive incoming datagrams over satellite.
      *
+     * @param subId The subId of the subscription to register for incoming satellite datagrams.
      * @param callback The callback to handle the incoming datagrams.
      *
      * @return The {@link SatelliteError} result of the operation.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    int registerForIncomingDatagram(ISatelliteDatagramCallback callback);
+    int registerForIncomingDatagram(int subId, ISatelliteDatagramCallback callback);
 
    /**
      * Unregister to stop receiving incoming datagrams over satellite.
      * If callback was not registered before, the request will be ignored.
      *
+     * @param subId The subId of the subscription to unregister for incoming satellite datagrams.
      * @param callback The callback that was passed to registerForIncomingDatagram.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void unregisterForIncomingDatagram(ISatelliteDatagramCallback callback);
+    void unregisterForIncomingDatagram(int subId, ISatelliteDatagramCallback callback);
 
    /**
     * Poll pending satellite datagrams over satellite.
     *
+    * @param subId The subId of the subscription used for receiving datagrams.
     * @param callback The callback to get the result of the request.
     */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
                 + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void pollPendingDatagrams(IIntegerConsumer callback);
+    void pollPendingDatagrams(int subId, IIntegerConsumer callback);
 
    /**
     * Send datagram over satellite.
     *
+    * @param subId The subId of the subscription to send satellite datagrams for.
     * @param datagramType Type of datagram.
     * @param datagram Datagram to send over satellite.
     * @param needFullScreenPointingUI this is used to indicate pointingUI app to open in
@@ -2951,7 +2973,7 @@ interface ITelephony {
     */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void sendDatagram(int datagramType, in SatelliteDatagram datagram,
+    void sendDatagram(int subId, int datagramType, in SatelliteDatagram datagram,
             in boolean needFullScreenPointingUI, IIntegerConsumer callback);
 
     /**
@@ -2969,12 +2991,13 @@ interface ITelephony {
     /**
      * Request to get the time after which the satellite will be visible.
      *
+     * @param subId The subId to get the time after which the satellite will be visible for.
      * @param receiver Result receiver to get the error code of the request and the requested
      *                 time after which the satellite will be visible.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestTimeForNextSatelliteVisibility(in ResultReceiver receiver);
+    void requestTimeForNextSatelliteVisibility(int subId, in ResultReceiver receiver);
 
     /**
      * Inform whether the device is aligned with the satellite within in margin for demo mode.
@@ -2984,18 +3007,16 @@ interface ITelephony {
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void setDeviceAlignedWithSatellite(boolean isAligned);
+    void setDeviceAlignedWithSatellite(int subId, in boolean isAligned);
 
     /**
      * This API can be used by only CTS to update satellite vendor service package name.
      *
      * @param servicePackageName The package name of the satellite vendor service.
-     * @param provisioned Whether satellite should be provisioned or not.
-     *
      * @return {@code true} if the satellite vendor service is set successfully,
      * {@code false} otherwise.
      */
-    boolean setSatelliteServicePackageName(in String servicePackageName, in String provisioned);
+    boolean setSatelliteServicePackageName(in String servicePackageName);
 
     /**
      * This API can be used by only CTS to update satellite gateway service package name.
@@ -3140,18 +3161,20 @@ interface ITelephony {
     /**
      * Request to get the signal strength of the satellite connection.
      *
+     * @param subId The subId of the subscription to request for.
      * @param receiver Result receiver to get the error code of the request and the current signal
      * strength of the satellite connection.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestNtnSignalStrength(in ResultReceiver receiver);
+    void requestNtnSignalStrength(int subId, in ResultReceiver receiver);
 
     /**
      * Registers for NTN signal strength changed from satellite modem. If the registration operation
      * is not successful, a {@link SatelliteException} that contains {@link SatelliteResult} will be
      * thrown.
      *
+     * @param subId The subId of the subscription to request for.
      * @param callback The callback to handle the NTN signal strength changed event. If the
      * operation is successful, {@link NtnSignalStrengthCallback#onNtnSignalStrengthChanged(
      * NtnSignalStrength)} will return an instance of {@link NtnSignalStrength} with a value of
@@ -3160,27 +3183,30 @@ interface ITelephony {
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void registerForNtnSignalStrengthChanged(in INtnSignalStrengthCallback callback);
+    void registerForNtnSignalStrengthChanged(int subId,
+            in INtnSignalStrengthCallback callback);
 
     /**
      * Unregisters for NTN signal strength changed from satellite modem.
      * If callback was not registered before, the request will be ignored.
      *
+     * @param subId The subId of the subscription to unregister for provision state changed.
      * @param callback The callback that was passed to
      * {@link #registerForNtnSignalStrengthChanged(Executor, NtnSignalStrengthCallback)}.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void unregisterForNtnSignalStrengthChanged(in INtnSignalStrengthCallback callback);
+    void unregisterForNtnSignalStrengthChanged(int subId, in INtnSignalStrengthCallback callback);
 
     /**
      * Registers for satellite capabilities change event from the satellite service.
      *
+     * @param executor The executor on which the callback will be called.
      * @param callback The callback to handle the satellite capabilities changed event.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    int registerForCapabilitiesChanged(in ISatelliteCapabilitiesCallback callback);
+    int registerForCapabilitiesChanged(int subId, in ISatelliteCapabilitiesCallback callback);
 
     /**
      * Unregisters for satellite capabilities change event from the satellite service.
@@ -3191,7 +3217,8 @@ interface ITelephony {
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void unregisterForCapabilitiesChanged(in ISatelliteCapabilitiesCallback callback);
+    void unregisterForCapabilitiesChanged(int subId,
+            in ISatelliteCapabilitiesCallback callback);
 
     /**
      * This API can be used by only CTS to override the cached value for the device overlay config
@@ -3300,24 +3327,26 @@ interface ITelephony {
     /**
      * Registers for supported state changed from satellite modem.
      *
+     * @param subId The subId of the subscription to register for supported state changed.
      * @param callback The callback to handle the satellite supported state changed event.
      *
      * @return The {@link SatelliteError} result of the operation.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    int registerForSatelliteSupportedStateChanged(
+    int registerForSatelliteSupportedStateChanged(int subId,
             in ISatelliteSupportedStateCallback callback);
 
     /**
      * Unregisters for supported state changed from satellite modem.
      * If callback was not registered before, the request will be ignored.
      *
+     * @param subId The subId of the subscription to unregister for supported state changed.
      * @param callback The callback that was passed to registerForSatelliteSupportedStateChanged.
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void unregisterForSatelliteSupportedStateChanged(
+    void unregisterForSatelliteSupportedStateChanged(int subId,
             in ISatelliteSupportedStateCallback callback);
 
     /**
@@ -3382,16 +3411,28 @@ interface ITelephony {
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void requestSatelliteSubscriberProvisionStatus(in ResultReceiver result);
+    void requestProvisionSubscriberIds(in ResultReceiver result);
 
     /**
-     * Deliver the list of provisioned satellite subscriber infos.
+     * Request to get provisioned status for given a satellite subscriber id.
      *
-     * @param list The list of provisioned satellite subscriber infos.
+     * @param satelliteSubscriberId Satellite subscriber id requiring provisioned status check.
+     * @param result The result receiver, which returns the provisioned status of the token if the
+     * request is successful or an error code if the request failed.
+     * @hide
+     */
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
+            + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
+    void requestIsProvisioned(in String satelliteSubscriberId, in ResultReceiver result);
+
+    /**
+     * Deliver the list of provisioned satellite subscriber ids.
+     *
+     * @param list List of provisioned satellite subscriber ids.
      * @param result The result receiver that returns whether deliver success or fail.
      * @hide
      */
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission("
             + "android.Manifest.permission.SATELLITE_COMMUNICATION)")
-    void provisionSatellite(in List<SatelliteSubscriberInfo> list, in ResultReceiver result);
+    void provisionSatellite(in List<ProvisionSubscriberId> list, in ResultReceiver result);
 }

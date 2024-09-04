@@ -134,7 +134,7 @@ constructor(
                         bool1 = shouldShow
                         str1 = connectionState.name
                     },
-                    { "Updating carrier text. shouldShow=$bool1 connectionState=$str1" }
+                    { "Updating carrier text. shouldActuallyShow=$bool1 connectionState=$str1" }
                 )
                 if (shouldShow) {
                     when (connectionState) {
@@ -143,9 +143,7 @@ constructor(
                             context.getString(R.string.satellite_connected_carrier_text)
                         SatelliteConnectionState.Off,
                         SatelliteConnectionState.Unknown -> {
-                            // If we're showing the satellite icon opportunistically, use the
-                            // emergency-only version of the carrier string
-                            context.getString(R.string.satellite_emergency_only_carrier_text)
+                            null
                         }
                     }
                 } else {

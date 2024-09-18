@@ -59,6 +59,7 @@ import android.os.PowerManager;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.sysprop.BluetoothProperties;
@@ -782,7 +783,12 @@ public class AudioDeviceBroker {
      * @return true if Bluetooth SCO is preferred , false otherwise.
      */
     /*package*/ boolean isBluetoothScoOn() {
-        return isDeviceOnForCommunication(AudioDeviceInfo.TYPE_BLUETOOTH_SCO);
+        boolean mVoipLeaWarEnabled =
+                SystemProperties.getBoolean("persist.enable.bluetooth.voipleawar", false);
+        return isDeviceOnForCommunication(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
+                || (mVoipLeaWarEnabled && isBluetoothScoRequested()
+                && mActiveCommunicationDevice != null
+                && mActiveCommunicationDevice.getType() == AudioDeviceInfo.TYPE_BLE_HEADSET);
     }
 
     /*package*/ boolean isBluetoothScoActive() {
@@ -1128,7 +1134,12 @@ public class AudioDeviceBroker {
                     AudioSystem.setParameters("A2dpSuspended=true");
                     mBluetoothA2dpSuspendedApplied = true;
                 }
-                if (!mBluetoothLeSuspendedApplied) {
+                boolean mVoipLeaWarEnabled =
+                        SystemProperties.getBoolean("persist.enable.bluetooth.voipleawar", false);
+                boolean isLeVoIPOngoing = mVoipLeaWarEnabled && !mBtHelper.isAudioConnected();
+                if (isLeVoIPOngoing) {
+                    Log.v(TAG, "skip set LeAudioSuspended to true when LEA VoIP was ongoing");
+                } else if (!mBluetoothLeSuspendedApplied) {
                     AudioSystem.setParameters("LeAudioSuspended=true");
                     mBluetoothLeSuspendedApplied = true;
                 }
@@ -1138,7 +1149,9 @@ public class AudioDeviceBroker {
                 AudioSystem.setParameters("bt_headset_name=" + mBtHeadsetName
                         + ";bt_headset_nrec=" + (mHasNrecEnabled ? "on" : "off")
                         + ";bt_wbs=" + (mHasWbsEnabled ? "on" : "off"));
-                AudioSystem.setParameters("BT_SCO=on");
+                if (!isLeVoIPOngoing) {
+                    AudioSystem.setParameters("BT_SCO=on");
+                }
             } else {
                 AudioSystem.setParameters("BT_SCO=off");
             }
@@ -1219,9 +1232,16 @@ public class AudioDeviceBroker {
         if (AudioService.DEBUG_COMM_RTE) {
             Log.v(TAG, "setBluetoothScoOn: " + on + " " + eventSource);
         }
+        boolean mVoipLeaWarEnabled =
+                SystemProperties.getBoolean("persist.enable.bluetooth.voipleawar", false);
         synchronized (mBluetoothAudioStateLock) {
             mBluetoothScoOn = on;
-            updateAudioHalBluetoothState();
+            // Avoid update BT_SCO=on to Audio Hal if SCO is not connected in BT app
+            if (mVoipLeaWarEnabled && on && !mBtHelper.isBluetoothScoOn()) {
+                Log.v(TAG, "skip updateAudioHalBluetoothState if SCO is not on" );
+            } else {
+                updateAudioHalBluetoothState();
+            }
             postUpdateCommunicationRouteClient(isBluetoothScoRequested(), eventSource);
         }
     }
@@ -2556,6 +2576,26 @@ public class AudioDeviceBroker {
 
         if (preferredCommunicationDevice == null) {
             AudioDeviceAttributes defaultDevice = getDefaultCommunicationDevice();
+            boolean mVoipLeaWarEnabled =
+                    SystemProperties.getBoolean("persist.enable.bluetooth.voipleawar", false);
+            if (AudioService.DEBUG_COMM_RTE) {
+                Log.v(TAG, "onUpdateCommunicationRoute, voipLeaEnabled " + mVoipLeaWarEnabled);
+            }
+            if (mVoipLeaWarEnabled) {
+                AudioDeviceAttributes requestedDevice = requestedCommunicationDevice();
+                if ((defaultDevice == null
+                     || defaultDevice.getType() == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                    && requestedDevice != null
+                    && requestedDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                    Log.w(TAG, "onUpdateCommunicationRoute, set it to active BLE device");
+                    defaultDevice =
+                        mDeviceInventory.getDeviceOfType(AudioSystem.DEVICE_OUT_BLE_HEADSET);
+                } else if (defaultDevice != null && requestedDevice == null
+                           && defaultDevice.getType() == AudioDeviceInfo.TYPE_BLE_HEADSET) {
+                    Log.w(TAG, "onUpdateCommunicationRoute, clear default BLE device");
+                    defaultDevice = null;
+                }
+            }
             if (defaultDevice != null) {
                 mDeviceInventory.setPreferredDevicesForStrategyInt(
                         mCommunicationStrategyId, Arrays.asList(defaultDevice));

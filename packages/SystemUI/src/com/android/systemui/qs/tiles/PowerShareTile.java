@@ -24,27 +24,27 @@ import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.service.quicksettings.Tile;
+import android.view.View;
 
 import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
-import com.android.systemui.animation.Expandable;
+import com.android.systemui.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.FalsingManager;
-import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.plugins.qs.QSTile.BooleanState;
+import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
-import com.android.systemui.qs.QsEventLogger;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
-import com.android.systemui.res.R;
 import com.android.systemui.statusbar.policy.BatteryController;
 
-import vendor.lineage.powershare.V1_0.IPowerShare;
+import vendor.p404.powershare.IPowerShare;
 
 import java.util.NoSuchElementException;
 
@@ -53,19 +53,18 @@ import javax.inject.Inject;
 public class PowerShareTile extends QSTileImpl<BooleanState>
         implements BatteryController.BatteryStateChangeCallback {
 
-    public static final String TILE_SPEC = "powershare";
-
     private IPowerShare mPowerShare;
     private BatteryController mBatteryController;
     private NotificationManager mNotificationManager;
     private Notification mNotification;
-    private static final String CHANNEL_ID = TILE_SPEC;
+    private static final String CHANNEL_ID = "powershare";
     private static final int NOTIFICATION_ID = 273298;
+
+    private static final String POWERSHARE_SERVICE_NAME = "vendor.p404.powershare.IPowerShare/default";
 
     @Inject
     public PowerShareTile(
             QSHost host,
-            QsEventLogger uiEventLogger,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
             FalsingManager falsingManager,
@@ -73,9 +72,8 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
-            BatteryController batteryController
-    ) {
-        super(host, uiEventLogger, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+            BatteryController batteryController) {
+        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
                 statusBarStateController, activityStarter, qsLogger);
         mPowerShare = getPowerShare();
         if (mPowerShare == null) {
@@ -151,7 +149,7 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
     }
 
     @Override
-    public void handleClick(@Nullable Expandable expandable) {
+    public void handleClick(@Nullable View view) {
         try {
             boolean powerShareEnabled = mPowerShare.isEnabled();
 
@@ -187,6 +185,10 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
             return;
         }
 
+        if (state.slash == null) {
+            state.slash = new SlashState();
+        }
+
         state.icon = ResourceIcon.get(R.drawable.ic_qs_powershare);
         try {
             state.value = mPowerShare.isEnabled();
@@ -194,6 +196,7 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
             state.value = false;
             ex.printStackTrace();
         }
+        state.slash.isSlashed = state.value;
         state.label = mContext.getString(R.string.quick_settings_powershare_label);
 
         if (mBatteryController.isPowerSave() || getBatteryLevel() < getMinBatteryLevel()) {
@@ -207,7 +210,7 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
 
     @Override
     public int getMetricsCategory() {
-        return MetricsEvent.CLOVER;
+        return MetricsEvent.QS_CUSTOM;
     }
 
     @Override
@@ -216,9 +219,7 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
 
     private synchronized IPowerShare getPowerShare() {
         try {
-            return IPowerShare.getService();
-        } catch (RemoteException ex) {
-            ex.printStackTrace();
+            return IPowerShare.Stub.asInterface(ServiceManager.getService(POWERSHARE_SERVICE_NAME));
         } catch (NoSuchElementException ex) {
             // service not available
         }
